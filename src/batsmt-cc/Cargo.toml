@@ -1,0 +1,11 @@
+[package]
+name = "batsmt-cc"
+version = "0.1.0"
+authors = ["Simon Cruanes <simon.cruanes.2007@m4x.org>"]
+
+[dependencies]
+
+batsmt-core = { path="../batsmt-core" }
+smallvec = "0.6"
+bit-vec = "0.5.0"
+log = "0.4"
