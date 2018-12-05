@@ -11,10 +11,10 @@ clean:
 	cargo clean
 
 test:
-	cargo test
+	cargo test -- --nocapture
 
 test-release:
-	cargo test --release
+	cargo test --release -- --nocapture
 
 watch:
 	while find src/ -print0 | xargs -0 inotifywait -e delete_self -e modify ; do \

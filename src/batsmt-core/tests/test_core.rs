@@ -65,4 +65,60 @@ mod ast {
         assert!(match m.view(t10) { View::App{f:f2, args} => f2 == f && args==&[a;10], _ => false });
         assert!(match m.view(t11) { View::App{f:f2, args} => f2 == f && args==&[b;10], _ => false });
     }
+
+    fn mk_stress_app(n: usize, long_apps: bool) {
+        use std::time::Instant;
+
+        let mut m = AstManager::new();
+        let f = m.mk_const("f");
+        let g = m.mk_const("g");
+        let a = m.mk_const("a");
+        let b = m.mk_const("b");
+
+        let mut n_app_created = 0;
+        let start = Instant::now();
+        {
+            let mut terms = vec![a,b];
+            // create a bunch of terms
+            let mut i = 0;
+            let mut tmp = vec![];
+            while terms.len () < n {
+                for &t1 in terms[i..].iter() {
+                    for &t2 in terms.iter() {
+                        let t = m.mk_app(f, &[t1,t2]);
+                        tmp.push(t);
+                        n_app_created += 1;
+                        let t = m.mk_app(g, &[t1,t2]);
+                        tmp.push(t);
+                        n_app_created += 1;
+                    }
+
+                    if long_apps {
+                        let t = m.mk_app(f, &[t1; 5]);
+                        tmp.push(t);
+                        n_app_created += 1;
+                        let t = m.mk_app(g, &[t1; 5]);
+                        tmp.push(t);
+                        n_app_created += 1;
+                    }
+                }
+                i = terms.len();
+                terms.extend(&tmp);
+                tmp.clear();
+            }
+        }
+        let duration = Instant::now() - start;
+        let dur_as_f = duration.as_secs() as f64 + (duration.subsec_micros() as f64 * 1e-6);
+        eprintln!("took {:?} to create {} applications \
+                  (including long ones: {}, {} in manager, {}/s)",
+            duration, n_app_created, long_apps, m.n_apps(), n_app_created as f64 / dur_as_f);
+    }
+
+    #[test]
+    fn test_stress_apps() {
+        mk_stress_app(100, true);
+        mk_stress_app(100, false);
+        mk_stress_app(1000, false);
+        mk_stress_app(1000, false);
+    }
 }
