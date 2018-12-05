@@ -66,7 +66,13 @@ mod ast {
         assert!(match m.view(t11) { View::App{f:f2, args} => f2 == f && args==&[b;10], _ => false });
     }
 
-    fn mk_stress_app(n: usize, long_apps: bool) {
+    struct StressApp {
+        n: usize,
+        long_apps: bool,
+        verbose: bool,
+    }
+
+    fn mk_stress_app(s: StressApp) -> (AstManager, Vec<AST>) {
         use std::time::Instant;
 
         let mut m = AstManager::new();
@@ -77,12 +83,12 @@ mod ast {
 
         let mut n_app_created = 0;
         let start = Instant::now();
+        let mut terms = vec![a,b];
         {
-            let mut terms = vec![a,b];
             // create a bunch of terms
             let mut i = 0;
             let mut tmp = vec![];
-            while terms.len () < n {
+            while terms.len () < s.n {
                 for &t1 in terms[i..].iter() {
                     for &t2 in terms.iter() {
                         let t = m.mk_app(f, &[t1,t2]);
@@ -93,7 +99,7 @@ mod ast {
                         n_app_created += 1;
                     }
 
-                    if long_apps {
+                    if s.long_apps {
                         let t = m.mk_app(f, &[t1; 5]);
                         tmp.push(t);
                         n_app_created += 1;
@@ -108,17 +114,65 @@ mod ast {
             }
         }
         let duration = Instant::now() - start;
-        let dur_as_f = duration.as_secs() as f64 + (duration.subsec_micros() as f64 * 1e-6);
-        eprintln!("took {:?} to create {} applications \
-                  (including long ones: {}, {} in manager, {}/s)",
-            duration, n_app_created, long_apps, m.n_apps(), n_app_created as f64 / dur_as_f);
+        if s.verbose {
+            let dur_as_f =
+                duration.as_secs() as f64 + (duration.subsec_micros() as f64 * 1e-6);
+            eprintln!("took {:?} to create {} applications \
+                      (including long ones: {}, {} in manager, {}/s)",
+                duration, n_app_created, s.long_apps, m.n_apps(),
+                n_app_created as f64 / dur_as_f);
+        }
+        (m, terms)
     }
+
+    impl StressApp {
+        fn new(n: usize) -> Self { StressApp{n, long_apps: false, verbose: false} }
+        fn long_apps(mut self, b: bool) -> Self { self.long_apps = b; self }
+        fn verbose(mut self, b: bool) -> Self { self.verbose = b; self }
+        fn run(self) -> (AstManager, Vec<AST>) { mk_stress_app(self) }
+    }
+
 
     #[test]
     fn test_stress_apps() {
-        mk_stress_app(100, true);
-        mk_stress_app(100, false);
-        mk_stress_app(1000, false);
-        mk_stress_app(1000, false);
+        StressApp::new(100).verbose(true).long_apps(false).run();
+        StressApp::new(100).verbose(true).long_apps(true).run();
+        StressApp::new(1000).verbose(true).long_apps(false).run();
+        StressApp::new(1000).verbose(true).long_apps(true).run();
+    }
+
+    #[test]
+    fn test_bitset_add_rm() {
+        // create a bunch of terms
+        let (_m, terms) = StressApp::new(100).verbose(false).long_apps(true).run();
+        let mut bs = AstBitset::new();
+        for &t in terms.iter() {
+            assert!(! bs.get(t));
+            bs.add(t);
+        }
+        for &t in terms.iter() {
+            assert!(bs.get(t));
+        }
+        for &t in terms.iter() {
+            bs.remove(t);
+        }
+        for &t in terms.iter() {
+            assert!(! bs.get(t));
+        }
+    }
+
+    #[test]
+    fn test_bitset_clear() {
+        // create a bunch of terms
+        let (_m, terms) = StressApp::new(100).verbose(false).long_apps(true).run();
+        let mut bs = AstBitset::new();
+        bs.add_slice(&terms);
+        for &t in terms.iter() {
+            assert!(bs.get(t));
+        }
+        bs.clear();
+        for &t in terms.iter() {
+            assert!(! bs.get(t));
+        }
     }
 }

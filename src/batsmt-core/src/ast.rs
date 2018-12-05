@@ -4,15 +4,34 @@
 //! The AST manager stores AST nodes, referred to via `ID`. These nodes can
 //! be used to represent sorts, terms, formulas, theory terms, etc.
 
+use std::ops::Deref;
 use std::slice;
-use super::symbol::Symbol;
+use super::{Symbol,GC};
 use fxhash::FxHashMap;
+use bit_vec::BitVec;
 
 /* Note: positive IDs are applications, negative IDs are symbols
  */
 /// The unique identifier of an AST node.
 #[derive(Copy,Clone,Eq,PartialEq,Hash,Ord,PartialOrd,Debug)]
 pub struct AST(i32);
+
+impl AST {
+    #[inline(always)]
+    fn is_const(self) -> bool { self.0 < 0 }
+    #[inline(always)]
+    fn is_app(self) -> bool { self.0 >= 0 }
+    #[inline(always)]
+    fn const_idx(self) -> usize {
+        debug_assert!(self.is_const());
+        ((-self.0)-1) as usize
+    }
+    #[inline(always)]
+    fn app_idx(self) -> usize {
+        debug_assert!(self.is_app());
+        self.0 as usize
+    }
+}
 
 /// The definition of an AST node, as seen from outside
 #[derive(Debug,Copy,Clone)]
@@ -161,29 +180,36 @@ pub struct AstManager {
     consts: Vec<Symbol>,
     apps: Vec<app_key::T<'static>>,
     tbl_app: FxHashMap<app_key::T<'static>, AST>, // for hashconsing
+    roots: AstBitset, // for GC
 }
 
 impl AstManager {
     /// Create a new AST manager
     pub fn new() -> Self {
+        let mut tbl_app = FxHashMap::default();
+        tbl_app.reserve(1_024);
         AstManager {
             consts: Vec::with_capacity(512),
             apps: Vec::with_capacity(1_024),
-            tbl_app: FxHashMap::default(),
+            tbl_app,
+            roots: AstBitset::new(),
         }
     }
 
     /// View the definition of an AST node
     #[inline]
     pub fn view(&self, ast: AST) -> View {
-        if ast.0 < 0 {
-            let s = & self.consts[((- ast.0)-1) as usize];
+        if ast.is_const() {
+            let s = & self.consts[ast.const_idx()];
             View::Const(s)
         } else {
-            let k = & self.apps[ast.0 as usize];
+            let k = & self.apps[ast.app_idx()];
             View::App {f: k.f(), args: k.args()}
         }
     }
+
+    /// Number of applications
+    pub fn n_apps(&self) -> usize { self.apps.len() }
 
     fn mk_symbol(&mut self, s: Symbol) -> AST {
         let n = - (1 + self.consts.len() as i32);
@@ -210,15 +236,9 @@ impl AstManager {
         let tbl_app = &mut self.tbl_app;
         //let AstManager {ref mut apps, ref mut tbl_app,..} = self;
 
-        let ast =
-            match tbl_app.get(&k) {
-                Some(a) => Ok(*a), // fast path
-                None => Err(()),
-            };
-
-        match ast {
-            Ok(a) => a,
-            Err(_) => {
+        match tbl_app.get(&k) {
+            Some(&a) => a, // fast path
+            None => {
                 // insert
                 let n = apps.len();
                 let ast = AST(n as i32);
@@ -231,5 +251,72 @@ impl AstManager {
                 ast
             }
         }
+    }
+}
+
+/// A bitset whose elements are AST nodes
+pub struct AstBitset {
+    consts: BitVec,
+    apps: BitVec,
+}
+
+impl AstBitset {
+    /// New bitset
+    pub fn new() -> Self {
+        Self{consts: BitVec::new(), apps: BitVec::new(),}
+    }
+
+    /// Clear all bits
+    pub fn clear(&mut self) { self.consts.clear(); self.apps.clear(); }
+
+    pub fn get(&self, ast: AST) -> bool {
+        let (bv,i) =
+            if ast.is_const() { (&self.consts, ast.const_idx()) }
+            else { (&self.apps, ast.app_idx()) };
+        bv.get(i).unwrap_or(false)
+    }
+
+    /// Set to `b` the bit for this AST
+    pub fn set(&mut self, ast: AST, b: bool) {
+        let (bv,i) =
+            if ast.is_const() { (&mut self.consts, ast.const_idx()) }
+            else { (&mut self.apps, ast.app_idx()) };
+        // if needed, extend vector
+        let len = bv.len();
+        if len <= i {
+            bv.grow(i + 1 - len, false);
+        }
+        assert!(bv.len() > i);
+        bv.set(i, b)
+    }
+
+    #[inline]
+    pub fn add(&mut self, ast: AST) { self.set(ast, true) }
+    #[inline]
+    pub fn remove(&mut self, ast: AST) { self.set(ast, false) }
+
+    pub fn add_slice(&mut self, arr: &[AST]) {
+        for &ast in arr { self.add(ast) }
+    }
+
+    /// Add all the ASTs in the given iterator
+    pub fn add_iter<Q, I>(&mut self, iter:I)
+        where I: Iterator<Item=Q>, Q: Deref<Target=AST>
+    {
+        for ast in iter {
+            self.add(*ast)
+        }
+    }
+}
+
+impl GC for AstManager {
+    type Element = AST;
+
+    fn mark_root(&mut self, ast: &AST) {
+        self.roots.add(*ast);
+    }
+
+    fn collect(&mut self) -> usize {
+        unimplemented!() // TODO
     }
 }

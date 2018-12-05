@@ -6,8 +6,9 @@ extern crate fxhash;
 
 pub mod symbol;
 pub mod ast;
+pub mod gc;
 
 pub use symbol::Symbol;
 pub use ast::{AST,AstManager};
-
+pub use gc::GC;
 
