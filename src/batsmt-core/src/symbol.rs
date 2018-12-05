@@ -5,15 +5,13 @@
 //! to the logic signature, set of sorts, custom domain elements
 //! (such as arithmetic constants, datatype constructors, etc.)
 
+use std::str::FromStr;
 use std::hash::{Hash,Hasher};
 use std::any::Any;
 use std::fmt::{self,Debug};
 
-/// The unique identifier of a symbol
-#[derive(Copy,Clone,Eq,PartialEq,Hash,Ord,PartialOrd,Debug)]
-pub struct Symbol(u32);
-
-pub enum View {
+/// A logic symbol
+pub enum Symbol {
     Str {
         /// name of this symbol
         name: String,
@@ -51,62 +49,30 @@ impl PartialEq for Custom {
 }
 */
 
-impl Debug for View {
+impl Debug for Symbol {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            View::Str {name} => write!(fmt, "{}", name),
-            View::Custom {content} => content.fmt(fmt),
+            Symbol::Str {name} => write!(fmt, "{}", name),
+            Symbol::Custom {content} => content.fmt(fmt),
         }
     }
 }
 
-/// Manager for symbols.
-pub struct SymbolManager {
-    views: Vec<View>,
-}
+impl Symbol {
+    /// Make a symbol from the given string
+    pub fn mk_str(s: String) -> Self { Symbol::Str {name:s} }
 
-impl SymbolManager {
-    /// Create a new symbol manager
-    pub fn new() -> Self {
-        // TODO: add "kind" builtin symbol
-        SymbolManager {
-            views: Vec::with_capacity(512),
+    pub fn eq_str(&self, s: &str) -> bool {
+        match self {
+            Symbol::Str{name} => s == name,
+            _ => false,
         }
     }
-
-    pub fn len(&self) -> usize { self.views.len() }
-
-    /// Get the definition of the given symbol
-    #[inline]
-    pub fn view(&self, id: Symbol) -> &View {
-        &self.views[id.0 as usize]
-    }
-
-    /// Make a named symbol.
-    ///
-    /// Note that calling this function twice with the same string
-    /// will result in two distinct symbols (as if the second one
-    /// was shadowing the first). Use an auxiliary hashtable if
-    /// you want sharing.
-    pub fn mk_str(&mut self, str: &str) -> Symbol {
-        let view = View::Str{ name: str.to_string(), };
-        let s = Symbol(self.views.len() as u32);
-        self.views.push(view);
-        s
-    }
 }
 
+pub enum Void {}
 
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_mk_str() {
-        let mut m = SymbolManager::new();
-        let s1 = m.mk_str("a");
-        let s2 = m.mk_str("a");
-        assert_ne!(s1, s2);
-    }
-
+impl FromStr for Symbol {
+    type Err = Void;
+    fn from_str(s: &str) -> Result<Self,Self::Err> { Ok(Symbol::mk_str(s.to_string())) }
 }

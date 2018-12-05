@@ -7,7 +7,7 @@ extern crate fxhash;
 pub mod symbol;
 pub mod ast;
 
-pub use symbol::{Symbol,SymbolManager};
+pub use symbol::Symbol;
 pub use ast::{AST,AstManager};
 
 
