@@ -39,6 +39,12 @@ mod ast {
         assert_ne!(t1,t3);
         assert_ne!(t2,t3);
         assert_eq!(t4,t5);
+
+        let t10 = m.mk_app(f, &[a; 10]);
+        let t11 = m.mk_app(f, &[a; 10]);
+        let t12 = m.mk_app(f, &[b; 10]);
+        assert_eq!(t10,t11);
+        assert_ne!(t10,t12);
     }
 
     #[test]
@@ -50,9 +56,13 @@ mod ast {
         let b = m.mk_const("b");
         let t1 = m.mk_app(f, &[a,b]);
         let t2 = m.mk_app(f, &[b,a]);
+        let t4 = m.mk_app(g, &[t1]);
         assert!(match m.view(t1) { View::App{f:f2, args} => f2 == f && args==&[a,b], _ => false });
         assert!(match m.view(t2) { View::App{f:f2, args} => f2 == f && args==&[b,a], _ => false });
-        let t4 = m.mk_app(g, &[t1]);
         assert!(match m.view(t4) { View::App{f:f2, args} => f2 == g && args==&[t1], _ => false });
+        let t10 = m.mk_app(f, &[a; 10]);
+        let t11 = m.mk_app(f, &[b; 10]);
+        assert!(match m.view(t10) { View::App{f:f2, args} => f2 == f && args==&[a;10], _ => false });
+        assert!(match m.view(t11) { View::App{f:f2, args} => f2 == f && args==&[b;10], _ => false });
     }
 }

@@ -11,6 +11,9 @@ clean:
 	cargo clean
 
 test:
+	cargo test
+
+test-release:
 	cargo test --release
 
 watch:
