@@ -78,6 +78,7 @@ mod app_stored {
                     // go through a vector to allocate on the heap
                     let mut v = Vec::with_capacity(len);
                     v.extend_from_slice(args);
+                    debug_assert_eq!(v.capacity(), len);
                     let box_ = v.into_boxed_slice();
                     let ptr = box_.as_ptr(); // access the pointer
                     mem::forget(box_);
@@ -89,6 +90,17 @@ mod app_stored {
             };
             debug_assert_eq!(r.args(), args, "expected {:?} got {:?}", args, r.args());
             r
+        }
+
+        // release memory
+        pub unsafe fn free(&mut self) {
+            let len = self.len as usize;
+            if len > N_SMALL_APP {
+                // explicitly release memory
+                let ptr = self.args.ptr as *mut AST;
+                let v = Vec::from_raw_parts(ptr, len, len);
+                drop(v)
+            }
         }
     }
 
@@ -102,7 +114,7 @@ mod app_stored {
             if len <= N_SMALL_APP {
                 unsafe {& self.args.arr[..len]}
             } else {
-                unsafe {slice::from_raw_parts(self.args.ptr, self.len as usize)}
+                unsafe {slice::from_raw_parts(self.args.ptr, len)}
             }
         }
 
@@ -171,7 +183,7 @@ mod node_stored {
     use symbol::Custom;
 
     // One node in the main vector
-    #[derive(Copy,Clone)]
+    #[derive(Clone)]
     pub(crate) struct T {
         pub kind: Kind,
         data: Data,
@@ -220,17 +232,36 @@ mod node_stored {
         }
 
         // view as a string symbol
-        pub unsafe fn as_str(&self) -> &str{
+        pub unsafe fn as_str(&self) -> &str {
             debug_assert!(self.kind() == Kind::Str);
             use std::str;
             let (ptr, len) = self.data.str;
             let slice = std::slice::from_raw_parts(ptr, len);
-            &str::from_utf8_unchecked(slice)
+            &mut str::from_utf8_unchecked(slice)
         }
 
         pub unsafe fn as_custom(&self) -> &Custom {
             debug_assert!(self.kind() == Kind::Custom);
             &* self.data.custom
+        }
+
+        /// release resources
+        pub unsafe fn free(&mut self) {
+            match self.kind {
+                Kind::Undef => (),
+                Kind::App => self.data.app.free(),
+                Kind::Str => {
+                    let (ptr, len) = self.data.str;
+                    let ptr = ptr as *mut u8;
+                    let v = Vec::from_raw_parts(ptr, len, len);
+                    drop(v)
+                },
+                Kind::Custom => {
+                    let ptr = self.data.custom as *mut Custom;
+                    let b = Box::from_raw(ptr);
+                    drop(b)
+                }
+            }
         }
     }
 }
@@ -246,6 +277,16 @@ fn view_node<'a>(ast: AST, n: &'a node_stored::T) -> View<'a> {
         Kind::Custom => View::Const(Symbol::Custom{content: unsafe {n.as_custom()}}),
         Kind::Undef => panic!("cannot access undefined AST {:?}", ast),
     }
+}
+
+// free memory for this node, including its hashmap entry if any
+unsafe fn free_node(tbl: &mut FxHashMap<app_stored::T<'static>, AST>, mut n: node_stored::T) {
+    if n.kind() == Kind::App {
+        let app = n.as_app();
+        // remove from table
+        tbl.remove_entry(&app);
+    }
+    n.free();
 }
 
 /// The AST manager, responsible for storing and creating AST nodes
@@ -398,7 +439,8 @@ impl Manager {
 
     // collect dead values, return number of collected values
     fn gc_retain_roots(&mut self) -> usize {
-        let mut n = 0;
+        use std::mem;
+        let mut count = 0;
 
         let len = self.nodes.len();
         for i in 0 .. len {
@@ -407,13 +449,18 @@ impl Manager {
                 _ if self.gc_alive.get(AST(i as u32)) => (), // keep
                 _ => {
                     // collect
-                    n += 1;
+                    count += 1;
+                    // remove node from `self.nodes[i]` and move it locally
+                    let mut n = node_stored::UNDEF;
+                    mem::swap(&mut self.nodes[i], &mut n);
+                    // free memory of `n`, remove it from hashtable
+                    unsafe { free_node(&mut self.tbl_app, n); }
                     self.nodes[i] = node_stored::UNDEF;
                     self.recycle.push(i as u32)
                 }
             }
         }
-        n
+        count
     }
 }
 
