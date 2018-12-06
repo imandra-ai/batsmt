@@ -232,10 +232,25 @@ mod node_stored {
     }
 }
 
+// helper to make a view from a stored node
+fn view_node<'a>(ast: AST, n: &'a node_stored::T) -> View<'a> {
+    match n.kind() {
+        Kind::App => {
+            let k = unsafe {n.as_app()};
+            View::App {f: k.f(), args: k.args()}
+        },
+        Kind::Str => View::Const(Symbol::Str{name: unsafe {n.as_str()}}),
+        Kind::Custom => View::Const(Symbol::Custom{content: unsafe {n.as_custom()}}),
+        Kind::Undef => panic!("cannot access undefined AST {:?}", ast),
+    }
+}
+
 pub struct Manager {
     nodes: Vec<node_stored::T>,
     tbl_app: FxHashMap<app_stored::T<'static>, AST>, // for hashconsing
-    gc_roots: BitSet, // for GC
+    // TODO: use some bits of nodes[i].kind (a u8) for this?
+    gc_alive: BitSet, // for GC
+    gc_stack: Vec<AST>, // temporary vector for GC marking
     recycle: Vec<u32>, // indices that contain a `undefined`
 }
 
@@ -247,20 +262,9 @@ impl Manager {
         Manager {
             nodes: Vec::with_capacity(512),
             tbl_app,
-            gc_roots: BitSet::new(),
+            gc_alive: BitSet::new(),
+            gc_stack: Vec::new(),
             recycle: Vec::new(),
-        }
-    }
-
-    fn view_node<'a>(&'a self, ast: AST, n: &'a node_stored::T) -> View<'a> {
-        match n.kind() {
-            Kind::App => {
-                let k = unsafe {n.as_app()};
-                View::App {f: k.f(), args: k.args()}
-            },
-            Kind::Str => View::Const(Symbol::Str{name: unsafe {n.as_str()}}),
-            Kind::Custom => View::Const(Symbol::Custom{content: unsafe {n.as_custom()}}),
-            Kind::Undef => panic!("cannot access undefined AST {:?}", ast),
         }
     }
 
@@ -268,7 +272,7 @@ impl Manager {
     #[inline]
     pub fn view(&self, ast: AST) -> View {
         let n = &self.nodes[ast.0 as usize];
-        self.view_node(ast, n)
+        view_node(ast, n)
     }
 
     /// Number of terms
@@ -350,7 +354,7 @@ impl Manager {
                 let a = AST(i as u32);
                 match n.kind {
                     Kind::Undef => None, // skip empty slot
-                    _ => Some((a, self.view_node(a, n))),
+                    _ => Some((a, view_node(a, n))),
                 }
             })
     }
@@ -367,25 +371,22 @@ impl Manager {
             })
     }
 
-    // TODO: optimize traversal so that only fully explored elements are
-    // marked (which may be at odds with the GC API? need temporary struct?)
-
     // traverse and mark all elements on `stack` and their subterms
-    fn gc_traverse_and_mark(&mut self, stack: &mut Vec<AST>) {
-        while let Some(ast) = stack.pop() {
-            self.gc_roots.add(ast);
+    fn gc_traverse_and_mark(&mut self) {
+        //let gc_stack = &mut self.gc_stack;
+        //let gc_alive = &mut self.gc_alive;
+        while let Some(ast) = self.gc_stack.pop() {
+            if self.gc_alive.get(ast) {
+                continue; // subgraph already marked and traversed
+            }
+            self.gc_alive.add(ast);
 
-            // push sub-AST if it's not (recursively) marked/on stack yet
-            let mut push_maybe = |ast| {
-                if ! self.gc_roots.get(ast) { stack.push(ast) }
-            };
-
-            match self.view(ast) {
+            match view_node(ast, &self.nodes[ast.0 as usize]) {
                 View::Const(_) => (),
                 View::App{f, args} => {
                     // explore subterms, too
-                    push_maybe(f);
-                    for &a in args { push_maybe(a) };
+                    self.gc_stack.push(f);
+                    for &a in args { self.gc_stack.push(a) };
                 }
             }
         }
@@ -399,7 +400,7 @@ impl Manager {
         for i in 0 .. len {
             match self.nodes[i].kind() {
                 Kind::Undef => (),
-                _ if self.gc_roots.get(AST(i as u32)) => (), // keep
+                _ if self.gc_alive.get(AST(i as u32)) => (), // keep
                 _ => {
                     // collect
                     n += 1;
@@ -416,23 +417,18 @@ impl Manager {
 impl GC for Manager {
     type Element = AST;
 
-    fn mark_root(&mut self, ast: &AST) {
-        self.gc_roots.add(*ast);
+    fn mark_root(&mut self, &ast: &AST) {
+        // mark subterms transitively, using recursion stack
+        let marked = self.gc_alive.get(ast);
+        if !marked {
+            self.gc_stack.push(ast);
+            self.gc_traverse_and_mark();
+        }
     }
 
     fn collect(&mut self) -> usize {
-        // mark transitively, using recursion `stack`
-        let mut stack = Vec::new();
-        for (ast,_) in self.iter() {
-            // explore recursively applications that are roots
-            if self.gc_roots.get(ast) {
-                stack.push(ast);
-            }
-        }
-        self.gc_traverse_and_mark(&mut stack);
-
         let n = self.gc_retain_roots();
-        self.gc_roots.clear();
+        self.gc_alive.clear();
         n
     }
 }
