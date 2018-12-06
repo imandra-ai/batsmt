@@ -243,4 +243,39 @@ mod ast {
             s.run();
         }
     }
+
+    #[test]
+    fn test_dense_map() {
+        // create a bunch of terms
+        let mut s = StressApp::new(100).verbose(false).long_apps(true);
+        s.run();
+
+        let mut m : AstDenseMap<usize> = AstDenseMap::new(0);
+
+        for (i,&t) in s.terms.iter().enumerate() {
+            assert!(! m.contains(t));
+
+            m.insert(t,i);
+        }
+
+        // ahah just kidding
+        m.clear();
+        assert!(m.is_empty());
+        assert_eq!(0, m.len());
+
+        for (i,&t) in s.terms.iter().enumerate() {
+            assert!(! m.contains(t));
+
+            m.insert(t,i);
+        }
+
+        // now check membership
+        for (i,&t) in s.terms.iter().enumerate() {
+            assert!(m.contains(t));
+            assert_eq!(m.get(t), Some(&i));
+        }
+
+        assert_eq!(m.len(), m.iter().count());
+    }
 }
+

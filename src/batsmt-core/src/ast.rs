@@ -5,11 +5,9 @@
 //! be used to represent sorts, terms, formulas, theory terms, etc.
 
 use std::u32;
-use std::ops::Deref;
 use std::slice;
 use super::{Symbol,GC};
 use fxhash::FxHashMap;
-use bit_vec::BitVec;
 
 /// The unique identifier of an AST node.
 #[derive(Copy,Clone,Eq,PartialEq,Hash,Ord,PartialOrd,Debug)]
@@ -245,6 +243,7 @@ fn view_node<'a>(ast: AST, n: &'a node_stored::T) -> View<'a> {
     }
 }
 
+/// The AST manager, responsible for storing and creating AST nodes
 pub struct Manager {
     nodes: Vec<node_stored::T>,
     tbl_app: FxHashMap<app_stored::T<'static>, AST>, // for hashconsing
@@ -433,50 +432,157 @@ impl GC for Manager {
     }
 }
 
-/// A bitset whose elements are AST nodes
-pub struct BitSet(BitVec);
+mod bit_set {
+    use super::*;
+    use std::ops::Deref;
+    use bit_set::BitSet;
 
-impl BitSet {
-    /// New bitset
-    pub fn new() -> Self { BitSet(BitVec::new()) }
+    pub struct T(BitSet);
 
-    /// Clear all bits
-    pub fn clear(&mut self) { self.0.clear() }
+    impl T {
+        /// New bitset
+        #[inline(always)]
+        pub fn new() -> Self { T(BitSet::new()) }
 
-    pub fn get(&self, ast: AST) -> bool {
-        self.0.get(ast.0 as usize).unwrap_or(false)
-    }
+        /// Clear all bits
+        #[inline(always)]
+        pub fn clear(&mut self) { self.0.clear() }
 
-    /// Set to `b` the bit for this AST
-    pub fn set(&mut self, ast: AST, b: bool) {
-        // if needed, extend vector
-        let i = ast.0 as usize;
-        let len = self.0.len();
-        if len <= i {
-            self.0.grow(i + 1 - len, false);
+        #[inline(always)]
+        pub fn len(&self) -> usize { self.0.len () }
+
+        #[inline(always)]
+        pub fn get(&self, ast: AST) -> bool {
+            self.0.contains(ast.0 as usize)
         }
-        assert!(self.0.len() > i);
-        self.0.set(i, b)
-    }
 
-    #[inline]
-    pub fn add(&mut self, ast: AST) { self.set(ast, true) }
-    #[inline]
-    pub fn remove(&mut self, ast: AST) { self.set(ast, false) }
+        #[inline]
+        pub fn add(&mut self, ast: AST) { self.0.insert(ast.0 as usize); }
 
-    pub fn add_slice(&mut self, arr: &[AST]) {
-        for &ast in arr { self.add(ast) }
-    }
+        #[inline]
+        pub fn remove(&mut self, ast: AST) { self.0.remove(ast.0 as usize); }
 
-    /// Add all the ASTs in the given iterator
-    pub fn add_iter<Q, I>(&mut self, iter:I)
-        where I: Iterator<Item=Q>, Q: Deref<Target=AST>
-    {
-        for ast in iter {
-            self.add(*ast)
+        pub fn add_slice(&mut self, arr: &[AST]) {
+            for &ast in arr { self.add(ast) }
+        }
+
+        /// Add all the ASTs in the given iterator
+        pub fn add_iter<Q, I>(&mut self, iter:I)
+            where I: Iterator<Item=Q>, Q: Deref<Target=AST>
+        {
+            for ast in iter {
+                self.add(*ast)
+            }
         }
     }
 }
 
+/// A bitset whose elements are AST nodes
+pub type BitSet = bit_set::T;
+
 /// A hashmap whose keys are AST nodes
-pub type Map<V> = FxHashMap<AST,V>;
+pub type HashMap<V> = FxHashMap<AST,V>;
+
+mod dense_map {
+    use super::*;
+    use bit_set::BitSet;
+
+    /// An AST map backed by an array, with a default value
+    #[derive(Clone)]
+    pub struct T<V : Clone> {
+        sentinel: V,
+        mem: BitSet,
+        vec: Vec<V>,
+        len: usize, // number of elements
+    }
+
+    impl<V : Clone> T<V> {
+        /// Create a new map with `sentinel` as an element to fill the underlying storage.
+        ///
+        /// It is best if `sentinel` is efficient to clone.
+        pub fn new(sentinel: V) -> Self {
+            DenseMap {sentinel, mem: BitSet::new(), vec: Vec::new(), len: 0, }
+        }
+
+        /// Access the given key
+        pub fn get(&self, ast: AST) -> Option<&V> {
+            let i = ast.0 as usize;
+            if self.mem.contains(i) {
+                debug_assert!(i < self.vec.len());
+                Some(&self.vec[i])
+            } else {
+                None
+            }
+        }
+
+        /// Does the map contain this key?
+        pub fn contains(&self, ast: AST) -> bool {
+            let i = ast.0 as usize;
+            self.mem.contains(i)
+        }
+
+        /// Insert a value
+        pub fn insert(&mut self, ast: AST, v: V) {
+            let i = ast.0 as usize;
+            let len = self.vec.len();
+            // resize arrays if required
+            if len <= i {
+                self.vec.resize(i+1, self.sentinel.clone());
+            }
+            debug_assert!(self.vec.len() > i);
+            self.vec[i] = v;
+            let is_new = self.mem.insert(i);
+            if is_new {
+                self.len += 1;
+            }
+        }
+
+        /// Is the map empty?
+        #[inline(always)]
+        pub fn is_empty(&self) -> bool { self.len == 0 }
+
+        /// Remove all bindings
+        pub fn clear(&mut self) {
+            self.len = 0;
+            self.vec.clear();
+            self.mem.clear();
+        }
+
+        /// Remove the given key
+        pub fn remove(&mut self, ast: AST) {
+            let i = ast.0 as usize;
+
+            if self.mem.contains(i) {
+                self.mem.remove(i);
+                self.vec[i] = self.sentinel.clone();
+
+                debug_assert!(self.len > 0);
+                self.len -= 1;
+            }
+        }
+
+        /// Number of elements
+        #[inline(always)]
+        pub fn len(&self) -> usize {
+            self.len
+        }
+
+        /// Iterate over key/value pairs
+        pub fn iter<'a>(&'a self) -> impl Iterator<Item=(AST, &'a V)> + 'a {
+            self.vec.iter().enumerate().filter_map(move |(i,v)| {
+                if self.mem.contains(i) {
+                    let a = AST(i as u32);
+                    Some((a,v))
+                } else {
+                    None
+                }
+            })
+        }
+    }
+}
+
+/// A map backed by a vector
+///
+/// We assume the existence of a `sentinel` value that is used to fill the
+/// vector.
+pub type DenseMap<V> = dense_map::T<V>;
