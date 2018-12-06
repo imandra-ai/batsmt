@@ -13,6 +13,11 @@ use fxhash::FxHashMap;
 #[derive(Copy,Clone,Eq,PartialEq,Hash,Ord,PartialOrd,Debug)]
 pub struct AST(u32);
 
+impl AST {
+    /// A value of type AST. Only ever use to fill array, do not access.
+    pub const SENTINEL : AST = AST(u32::MAX);
+}
+
 /// The definition of an AST node, as seen from outside
 #[derive(Debug,Copy,Clone)]
 pub enum View<'a> {

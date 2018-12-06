@@ -7,6 +7,7 @@ extern crate fxhash;
 pub mod symbol;
 pub mod ast;
 pub mod gc;
+pub mod shared;
 
 pub use {
   symbol::Symbol,
@@ -19,5 +20,6 @@ pub use {
       View as AstView
   },
   gc::GC,
+  shared::SharedRef,
 };
 
