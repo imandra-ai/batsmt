@@ -5,19 +5,19 @@
 //! to the logic signature, set of sorts, custom domain elements
 //! (such as arithmetic constants, datatype constructors, etc.)
 
-use std::str::FromStr;
 use std::hash::{Hash,Hasher};
 use std::any::Any;
 use std::fmt::{self,Debug};
 
 /// A logic symbol
-pub enum Symbol {
+#[derive(Copy,Clone)]
+pub enum Symbol<'a> {
     Str {
         /// name of this symbol
-        name: String,
+        name: &'a str,
     },
     Custom {
-        content: Box<Custom>,
+        content: &'a Custom,
     }
 }
 
@@ -49,8 +49,8 @@ impl PartialEq for Custom {
 }
 */
 
-impl Debug for Symbol {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+impl<'a> Debug for Symbol<'a> {
+    fn fmt(& self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Symbol::Str {name} => write!(fmt, "{}", name),
             Symbol::Custom {content} => content.fmt(fmt),
@@ -58,17 +58,17 @@ impl Debug for Symbol {
     }
 }
 
-impl Symbol {
-    /// Make a symbol from the given string
-    pub fn mk_str(s: String) -> Self { Symbol::Str {name:s} }
-
+impl<'a> Symbol<'a> {
     pub fn eq_str(&self, s: &str) -> bool {
         match self {
-            Symbol::Str{name} => s == name,
+            Symbol::Str{name} => s == *name,
             _ => false,
         }
     }
 }
+
+/* TODO: remove this?
+use std::str::FromStr;
 
 pub enum Void {}
 
@@ -76,3 +76,5 @@ impl FromStr for Symbol {
     type Err = Void;
     fn from_str(s: &str) -> Result<Self,Self::Err> { Ok(Symbol::mk_str(s.to_string())) }
 }
+
+*/

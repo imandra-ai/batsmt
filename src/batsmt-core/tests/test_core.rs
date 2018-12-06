@@ -2,7 +2,8 @@
 extern crate batsmt_core;
 
 mod ast {
-    use batsmt_core::ast::*;
+    use batsmt_core::*;
+    use batsmt_core::AstView as View;
 
     #[test]
     fn test_mk_const() {
@@ -70,20 +71,23 @@ mod ast {
         n: usize,
         long_apps: bool,
         verbose: bool,
+        m: AstManager,
+        f: AST,
+        g: AST,
+        a: AST,
+        b: AST,
+        terms: Vec<AST>,
     }
 
-    fn mk_stress_app(s: StressApp) -> (AstManager, Vec<AST>) {
+    fn mk_stress_app(s: &mut StressApp) {
         use std::time::Instant;
 
-        let mut m = AstManager::new();
-        let f = m.mk_const("f");
-        let g = m.mk_const("g");
-        let a = m.mk_const("a");
-        let b = m.mk_const("b");
-
+        let m = &mut s.m;
+        let f = s.f;
+        let g = s.g;
         let mut n_app_created = 0;
         let start = Instant::now();
-        let mut terms = vec![a,b];
+        let terms = &mut s.terms;
         {
             // create a bunch of terms
             let mut i = 0;
@@ -119,19 +123,26 @@ mod ast {
                 duration.as_secs() as f64 + (duration.subsec_micros() as f64 * 1e-6);
             eprintln!("took {:?} to create {} applications \
                       (including long ones: {}, {} in manager, {}/s)",
-                duration, n_app_created, s.long_apps, m.n_apps(),
+                duration, n_app_created, s.long_apps, m.n_terms(),
                 n_app_created as f64 / dur_as_f);
         }
-        (m, terms)
     }
 
     impl StressApp {
-        fn new(n: usize) -> Self { StressApp{n, long_apps: false, verbose: false} }
+        fn new(n: usize) -> Self {
+            let mut m = AstManager::new();
+            let f = m.mk_const("f");
+            let g = m.mk_const("g");
+            let a = m.mk_const("a");
+            let b = m.mk_const("b");
+            let terms = vec![a,b];
+            StressApp{n, long_apps: false, verbose: false, f, g, a, b, m, terms, }
+        }
+        fn reset(&mut self) { self.terms = vec![self.a, self.b] }
         fn long_apps(mut self, b: bool) -> Self { self.long_apps = b; self }
         fn verbose(mut self, b: bool) -> Self { self.verbose = b; self }
-        fn run(self) -> (AstManager, Vec<AST>) { mk_stress_app(self) }
+        fn run(&mut self) { self.reset(); mk_stress_app(self) }
     }
-
 
     #[test]
     fn test_stress_apps() {
@@ -144,19 +155,20 @@ mod ast {
     #[test]
     fn test_bitset_add_rm() {
         // create a bunch of terms
-        let (_m, terms) = StressApp::new(100).verbose(false).long_apps(true).run();
-        let mut bs = AstBitset::new();
-        for &t in terms.iter() {
+        let mut s = StressApp::new(100).verbose(false).long_apps(true);
+        s.run();
+        let mut bs = AstBitSet::new();
+        for &t in s.terms.iter() {
             assert!(! bs.get(t));
             bs.add(t);
         }
-        for &t in terms.iter() {
+        for &t in s.terms.iter() {
             assert!(bs.get(t));
         }
-        for &t in terms.iter() {
+        for &t in s.terms.iter() {
             bs.remove(t);
         }
-        for &t in terms.iter() {
+        for &t in s.terms.iter() {
             assert!(! bs.get(t));
         }
     }
@@ -164,15 +176,74 @@ mod ast {
     #[test]
     fn test_bitset_clear() {
         // create a bunch of terms
-        let (_m, terms) = StressApp::new(100).verbose(false).long_apps(true).run();
-        let mut bs = AstBitset::new();
-        bs.add_slice(&terms);
-        for &t in terms.iter() {
+        let mut s = StressApp::new(100).verbose(false).long_apps(true);
+        s.run();
+        let mut bs = AstBitSet::new();
+        bs.add_slice(&s.terms);
+        for &t in s.terms.iter() {
             assert!(bs.get(t));
         }
         bs.clear();
-        for &t in terms.iter() {
+        for &t in s.terms.iter() {
             assert!(! bs.get(t));
+        }
+    }
+
+    #[test]
+    fn test_gc() {
+        // create a bunch of terms
+        let mut s = StressApp::new(100).verbose(false).long_apps(true);
+        s.run();
+
+        let alive = s.terms[..10].iter().map(|a| *a).collect::<Vec<AST>>();
+        {
+            let m = &mut s.m;
+            // mark & collect
+            for t in alive.iter() {
+                m.mark_root(t);
+            }
+            let n_collected = m.collect();
+            // NOTE: because terms that come later in `terms` are created later,
+            // they must all have been collected.
+            assert_eq!(s.terms.len() - alive.len(), n_collected);
+        }
+
+        {
+            // test that we can still create terms
+            let m = &mut s.m;
+            let f = s.f;
+            let a = alive[8]; // last terms, their application should be dead
+            let b = alive[9];
+            assert_ne!(a,b);
+            let t1 = m.mk_app(f, &[a,b]);
+            let t2 = m.mk_app(f, &[a,b]);
+            let t3 = m.mk_app(f, &[b,a]);
+            assert_eq!(t1, t2);
+            assert_ne!(t1, t3);
+            s.terms.push(t1);
+            s.terms.push(t3);
+        }
+
+        {
+            s.run();
+
+            let alive = s.terms[..10].iter().collect::<Vec<_>>();
+
+            // again
+            let m = &mut s.m;
+            // mark & collect
+            for t in alive.iter() {
+                m.mark_root(t);
+            }
+            let n_collected = m.collect();
+            // NOTE: because terms that come later in `terms` are created later,
+            // they must all have been collected.
+            assert_eq!(s.terms.len() - alive.len(), n_collected);
+        }
+
+        {
+            // create terms again
+            s.run();
         }
     }
 }

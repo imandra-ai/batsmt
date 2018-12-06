@@ -9,6 +9,6 @@ pub mod ast;
 pub mod gc;
 
 pub use symbol::Symbol;
-pub use ast::{AST,AstManager};
+pub use ast::{AST,Manager as AstManager,BitSet as AstBitSet,Map as AstMap,View as AstView};
 pub use gc::GC;
 

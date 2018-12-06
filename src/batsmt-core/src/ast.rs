@@ -4,39 +4,21 @@
 //! The AST manager stores AST nodes, referred to via `ID`. These nodes can
 //! be used to represent sorts, terms, formulas, theory terms, etc.
 
+use std::u32;
 use std::ops::Deref;
 use std::slice;
 use super::{Symbol,GC};
 use fxhash::FxHashMap;
 use bit_vec::BitVec;
 
-/* Note: positive IDs are applications, negative IDs are symbols
- */
 /// The unique identifier of an AST node.
 #[derive(Copy,Clone,Eq,PartialEq,Hash,Ord,PartialOrd,Debug)]
-pub struct AST(i32);
-
-impl AST {
-    #[inline(always)]
-    fn is_const(self) -> bool { self.0 < 0 }
-    #[inline(always)]
-    fn is_app(self) -> bool { self.0 >= 0 }
-    #[inline(always)]
-    fn const_idx(self) -> usize {
-        debug_assert!(self.is_const());
-        ((-self.0)-1) as usize
-    }
-    #[inline(always)]
-    fn app_idx(self) -> usize {
-        debug_assert!(self.is_app());
-        self.0 as usize
-    }
-}
+pub struct AST(u32);
 
 /// The definition of an AST node, as seen from outside
 #[derive(Debug,Copy,Clone)]
 pub enum View<'a> {
-    Const(&'a Symbol),
+    Const(Symbol<'a>),
     App {
         f: AST,
         args: &'a [AST],
@@ -49,7 +31,7 @@ pub enum View<'a> {
 // - they don't need any allocation for "small" applications
 // - they only need to allocate one Box for "big" applications, shared between
 //   the map and vector
-mod app_key {
+mod app_stored {
     use super::*;
     use std::marker::PhantomData;
 
@@ -78,8 +60,6 @@ mod app_key {
     }
 
     impl T<'static> {
-        pub fn f(&self) -> AST { self.f }
-
         pub fn new(f: AST, args: &[AST]) -> Self {
             let len = args.len();
             check_len(len);
@@ -95,8 +75,9 @@ mod app_key {
                     // go through a vector to allocate on the heap
                     let mut v = Vec::with_capacity(len);
                     v.extend_from_slice(args);
-                    let ptr = v.as_slice().as_ptr(); // access the pointer
-                    mem::forget(v);
+                    let box_ = v.into_boxed_slice();
+                    let ptr = box_.as_ptr(); // access the pointer
+                    mem::forget(box_);
                     ArrOrVec{ptr}
                 };
             let r = T {
@@ -109,6 +90,9 @@ mod app_key {
     }
 
     impl<'a> T<'a> {
+        #[inline(always)]
+        pub fn f(&self) -> AST { self.f }
+
         #[inline(always)]
         pub fn args<'b: 'a>(&'b self) -> &'b [AST] {
             let len = self.len as usize;
@@ -144,11 +128,9 @@ mod app_key {
         }
     }
 
+    impl Copy for T<'static> {}
     impl Clone for T<'static> {
-        fn clone(&self) -> Self {
-            let &T{f, len, args, phantom} = self;
-            T{f,len,args,phantom}
-        }
+        fn clone(&self) -> Self { *self }
     }
 
     impl<'a> Eq for T<'a> {}
@@ -176,45 +158,148 @@ mod app_key {
     }
 }
 
-pub struct AstManager {
-    consts: Vec<Symbol>,
-    apps: Vec<app_key::T<'static>>,
-    tbl_app: FxHashMap<app_key::T<'static>, AST>, // for hashconsing
-    roots: AstBitset, // for GC
+// The kind of object stored in a given slot
+#[repr(u8)]
+#[derive(Copy,Clone,Debug,Eq,PartialEq,Hash)]
+pub(crate) enum Kind { Undef, App, Str, Custom, }
+
+mod node_stored {
+    use super::*;
+    use symbol::Custom;
+
+    // One node in the main vector
+    #[derive(Copy,Clone)]
+    pub(crate) struct T {
+        pub kind: Kind,
+        data: Data,
+    }
+
+    #[derive(Copy,Clone)]
+    union Data {
+        undef: (),
+        app: app_stored::T<'static>,
+        str: (*const u8, usize), // owned string
+        custom: *const Custom,
+    }
+
+    // Constant for undefined
+    pub(crate) const UNDEF : T = T { kind: Kind::Undef, data: Data {undef: ()}, };
+
+    impl T {
+        pub fn from_string(s:String) -> Self {
+            use std::mem;
+            let ptr = s.as_ptr();
+            let len = s.as_bytes().len();
+            mem::forget(s);
+            let data = Data { str: (ptr, len) };
+            T {kind: Kind::Str, data }
+        }
+        pub fn mk_str(s: &str) -> Self {
+            let s = s.to_string();
+            T::from_string(s)
+        }
+        pub fn mk_app(app: app_stored::T<'static>) -> Self {
+            T {kind: Kind::App, data: Data { app }}
+        }
+
+        #[inline(always)]
+        pub fn kind(&self) -> Kind { self.kind }
+        #[inline(always)]
+        pub fn is_undef(&self) -> bool { self.kind() == Kind::Undef }
+        #[inline(always)]
+        pub fn is_app(&self) -> bool { self.kind() == Kind::App }
+        #[inline(always)]
+        pub fn is_sym(&self) -> bool { let k = self.kind(); k == Kind::Str || k == Kind::Custom  }
+
+        pub unsafe fn as_app(&self) -> &app_stored::T<'static> {
+            debug_assert!(self.kind() == Kind::App);
+            &self.data.app
+        }
+
+        // view as a string symbol
+        pub unsafe fn as_str(&self) -> &str{
+            debug_assert!(self.kind() == Kind::Str);
+            use std::str;
+            let (ptr, len) = self.data.str;
+            let slice = std::slice::from_raw_parts(ptr, len);
+            &str::from_utf8_unchecked(slice)
+        }
+
+        pub unsafe fn as_custom(&self) -> &Custom {
+            debug_assert!(self.kind() == Kind::Custom);
+            &* self.data.custom
+        }
+    }
 }
 
-impl AstManager {
+pub struct Manager {
+    nodes: Vec<node_stored::T>,
+    tbl_app: FxHashMap<app_stored::T<'static>, AST>, // for hashconsing
+    gc_roots: BitSet, // for GC
+    recycle: Vec<u32>, // indices that contain a `undefined`
+}
+
+impl Manager {
     /// Create a new AST manager
     pub fn new() -> Self {
         let mut tbl_app = FxHashMap::default();
         tbl_app.reserve(1_024);
-        AstManager {
-            consts: Vec::with_capacity(512),
-            apps: Vec::with_capacity(1_024),
+        Manager {
+            nodes: Vec::with_capacity(512),
             tbl_app,
-            roots: AstBitset::new(),
+            gc_roots: BitSet::new(),
+            recycle: Vec::new(),
+        }
+    }
+
+    fn view_node<'a>(&'a self, ast: AST, n: &'a node_stored::T) -> View<'a> {
+        match n.kind() {
+            Kind::App => {
+                let k = unsafe {n.as_app()};
+                View::App {f: k.f(), args: k.args()}
+            },
+            Kind::Str => View::Const(Symbol::Str{name: unsafe {n.as_str()}}),
+            Kind::Custom => View::Const(Symbol::Custom{content: unsafe {n.as_custom()}}),
+            Kind::Undef => panic!("cannot access undefined AST {:?}", ast),
         }
     }
 
     /// View the definition of an AST node
     #[inline]
     pub fn view(&self, ast: AST) -> View {
-        if ast.is_const() {
-            let s = & self.consts[ast.const_idx()];
-            View::Const(s)
-        } else {
-            let k = & self.apps[ast.app_idx()];
-            View::App {f: k.f(), args: k.args()}
-        }
+        let n = &self.nodes[ast.0 as usize];
+        self.view_node(ast, n)
     }
 
-    /// Number of applications
-    pub fn n_apps(&self) -> usize { self.apps.len() }
+    /// Number of terms
+    pub fn n_terms(&self) -> usize {
+        let nlen = self.nodes.len();
+        let rlen = self.recycle.len();
+        debug_assert!(nlen >= rlen);
+        nlen - rlen
+    }
 
-    fn mk_symbol(&mut self, s: Symbol) -> AST {
-        let n = - (1 + self.consts.len() as i32);
-        self.consts.push(s);
-        AST(n)
+    // allocate a new AST ID, and return the slot it should live in
+    fn allocate_id(&mut self) -> (AST, &mut node_stored::T) {
+        match self.recycle.pop() {
+            Some(n) => {
+                let ast = AST(n);
+                let slot = &mut self.nodes[n as usize];
+                debug_assert!(slot.kind() == Kind::Undef);
+                (ast,slot)
+            },
+            None => {
+                let n = self.nodes.len();
+                // does `n` fit in an AST?
+                if n > u32::MAX as usize {
+                    panic!("cannot allocate more AST nodes")
+                }
+                self.nodes.push(node_stored::UNDEF);
+                let slot = &mut self.nodes[n];
+                (AST(n as u32), slot)
+            }
+        }
+
     }
 
     /// Make a named symbol.
@@ -223,71 +308,159 @@ impl AstManager {
     /// will result in two distinct symbols (as if the second one
     /// was shadowing the first). Use an auxiliary hashtable if
     /// you want sharing.
-    #[inline]
     pub fn mk_const(&mut self, s: &str) -> AST {
-        self.mk_symbol(Symbol::mk_str(s.to_string()))
+        let (ast, slot) = self.allocate_id();
+        *slot = node_stored::T::mk_str(s);
+        ast
     }
 
+    /// `m.mk_app(f, args)` creates the application of `f` to `args`.
+    ///
+    /// If the term is structurally equal to an existing term, then this
+    /// ensures the exact same AST is returned ("hashconsing")
     pub fn mk_app(&mut self, f: AST, args: &[AST]) -> AST {
-        let k = app_key::T::mk_ref(f, args);
+        let k = app_stored::T::mk_ref(f, args);
 
         // borrow multiple fields
-        let apps = &mut self.apps;
+        let nodes = &mut self.nodes;
         let tbl_app = &mut self.tbl_app;
-        //let AstManager {ref mut apps, ref mut tbl_app,..} = self;
+        //let Manager {ref mut apps, ref mut tbl_app,..} = self;
 
         match tbl_app.get(&k) {
             Some(&a) => a, // fast path
             None => {
                 // insert
-                let n = apps.len();
-                let ast = AST(n as i32);
+                let n = nodes.len();
+                let ast = AST(n as u32);
                 // make 2 owned copies of the key
                 let k1 = k.to_owned();
                 let k2 = k1.clone();
-                apps.push(k1);
+                nodes.push(node_stored::T::mk_app(k1));
                 tbl_app.insert(k2, ast);
                 // return AST
                 ast
             }
         }
     }
+
+    /// Iterate over all ASTs in the manager, along with their view
+    pub fn iter<'a>(&'a self) -> impl Iterator<Item=(AST, View<'a>)> + 'a {
+        self.nodes.iter().enumerate()
+            .filter_map(move |(i,n)| {
+                let a = AST(i as u32);
+                match n.kind {
+                    Kind::Undef => None, // skip empty slot
+                    _ => Some((a, self.view_node(a, n))),
+                }
+            })
+    }
+
+    /// Iterate on the ASTs contained in this manager, without their view
+    pub fn iter_ast<'a>(&'a self) -> impl Iterator<Item=AST> + 'a {
+        self.nodes.iter().enumerate()
+            .filter_map(|(i,n)| {
+                let a = AST(i as u32);
+                match n.kind {
+                    Kind::Undef => None, // skip empty slot
+                    _ => Some(a),
+                }
+            })
+    }
+
+    // TODO: optimize traversal so that only fully explored elements are
+    // marked (which may be at odds with the GC API? need temporary struct?)
+
+    // traverse and mark all elements on `stack` and their subterms
+    fn gc_traverse_and_mark(&mut self, stack: &mut Vec<AST>) {
+        while let Some(ast) = stack.pop() {
+            self.gc_roots.add(ast);
+
+            // push sub-AST if it's not (recursively) marked/on stack yet
+            let mut push_maybe = |ast| {
+                if ! self.gc_roots.get(ast) { stack.push(ast) }
+            };
+
+            match self.view(ast) {
+                View::Const(_) => (),
+                View::App{f, args} => {
+                    // explore subterms, too
+                    push_maybe(f);
+                    for &a in args { push_maybe(a) };
+                }
+            }
+        }
+    }
+
+    // collect dead values, return number of collected values
+    fn gc_retain_roots(&mut self) -> usize {
+        let mut n = 0;
+
+        let len = self.nodes.len();
+        for i in 0 .. len {
+            match self.nodes[i].kind() {
+                Kind::Undef => (),
+                _ if self.gc_roots.get(AST(i as u32)) => (), // keep
+                _ => {
+                    // collect
+                    n += 1;
+                    self.nodes[i] = node_stored::UNDEF;
+                    self.recycle.push(i as u32)
+                }
+            }
+        }
+        n
+    }
+}
+
+/// Iterator over ASTs
+impl GC for Manager {
+    type Element = AST;
+
+    fn mark_root(&mut self, ast: &AST) {
+        self.gc_roots.add(*ast);
+    }
+
+    fn collect(&mut self) -> usize {
+        // mark transitively, using recursion `stack`
+        let mut stack = Vec::new();
+        for (ast,_) in self.iter() {
+            // explore recursively applications that are roots
+            if self.gc_roots.get(ast) {
+                stack.push(ast);
+            }
+        }
+        self.gc_traverse_and_mark(&mut stack);
+
+        let n = self.gc_retain_roots();
+        self.gc_roots.clear();
+        n
+    }
 }
 
 /// A bitset whose elements are AST nodes
-pub struct AstBitset {
-    consts: BitVec,
-    apps: BitVec,
-}
+pub struct BitSet(BitVec);
 
-impl AstBitset {
+impl BitSet {
     /// New bitset
-    pub fn new() -> Self {
-        Self{consts: BitVec::new(), apps: BitVec::new(),}
-    }
+    pub fn new() -> Self { BitSet(BitVec::new()) }
 
     /// Clear all bits
-    pub fn clear(&mut self) { self.consts.clear(); self.apps.clear(); }
+    pub fn clear(&mut self) { self.0.clear() }
 
     pub fn get(&self, ast: AST) -> bool {
-        let (bv,i) =
-            if ast.is_const() { (&self.consts, ast.const_idx()) }
-            else { (&self.apps, ast.app_idx()) };
-        bv.get(i).unwrap_or(false)
+        self.0.get(ast.0 as usize).unwrap_or(false)
     }
 
     /// Set to `b` the bit for this AST
     pub fn set(&mut self, ast: AST, b: bool) {
-        let (bv,i) =
-            if ast.is_const() { (&mut self.consts, ast.const_idx()) }
-            else { (&mut self.apps, ast.app_idx()) };
         // if needed, extend vector
-        let len = bv.len();
+        let i = ast.0 as usize;
+        let len = self.0.len();
         if len <= i {
-            bv.grow(i + 1 - len, false);
+            self.0.grow(i + 1 - len, false);
         }
-        assert!(bv.len() > i);
-        bv.set(i, b)
+        assert!(self.0.len() > i);
+        self.0.set(i, b)
     }
 
     #[inline]
@@ -309,14 +482,5 @@ impl AstBitset {
     }
 }
 
-impl GC for AstManager {
-    type Element = AST;
-
-    fn mark_root(&mut self, ast: &AST) {
-        self.roots.add(*ast);
-    }
-
-    fn collect(&mut self) -> usize {
-        unimplemented!() // TODO
-    }
-}
+/// A hashmap whose keys are AST nodes
+pub type Map<V> = FxHashMap<AST,V>;
