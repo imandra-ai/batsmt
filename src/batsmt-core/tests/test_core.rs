@@ -235,7 +235,8 @@ mod ast {
             for t in alive.iter() {
                 m.mark_root(t);
             }
-            let _ = m.collect();
+            let n = m.collect();
+            assert!(n > 2);
         }
 
         {
