@@ -2,10 +2,13 @@
 build: release
 
 release:
-	cargo build --release
+	cargo build --release --all
+
+debug:
+	cargo build --all
 
 check:
-	cargo check
+	cargo check --all
 
 clean:
 	cargo clean

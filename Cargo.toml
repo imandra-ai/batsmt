@@ -4,11 +4,15 @@
 members = [
   "src/batsmt-core",
   "src/batsmt-cc",
+  "src/batsmt-run",
+  "src/batsmt-parser",
 ]
 
 default-members = [
   "src/batsmt-core",
-  "src/batsmt-cc"
+  "src/batsmt-cc",
+  "src/batsmt-run",
+  "src/batsmt-parser",
 ]
 
 [profile.release]
