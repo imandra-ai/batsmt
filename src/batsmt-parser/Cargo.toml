@@ -1,0 +1,9 @@
+[package]
+name = "batsmt-parser"
+version = "0.1.0"
+authors = ["Simon Cruanes <simon.cruanes.2007@m4x.org>"]
+
+[dependencies]
+
+log = "^0.4"
+fxhash = "0.2"
