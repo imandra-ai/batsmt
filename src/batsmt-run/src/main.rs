@@ -19,19 +19,25 @@ use {
 mod parse_ast {
     use {
         fxhash::FxHashMap,
-        std::{ops::Deref,rc::Rc},
+        std::{ops::Deref,rc::Rc, fmt::{self,Debug}},
         parser::types::{self,Op},
     };
 
-    #[derive(Debug,Eq,PartialEq,Hash)]
+    #[derive(Eq,PartialEq,Hash)]
     pub struct SortCell {
         name: String,
         arity: u8,
     }
 
     /// A sort
-    #[derive(Debug,Clone,Eq,PartialEq,Hash)]
+    #[derive(Clone,Eq,PartialEq,Hash)]
     pub struct Sort(Rc<SortCell>);
+
+    impl Debug for Sort {
+        fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+            self.name.fmt(fmt)
+        }
+    }
 
     impl Sort {
         /// New sort
@@ -44,15 +50,15 @@ mod parse_ast {
         fn deref(&self) -> &Self::Target { &self.0 }
     }
 
-    #[derive(Debug,Eq,PartialEq,Hash)]
-    pub struct FunCell {
+    #[derive(Eq,PartialEq,Hash)]
+    struct FunCell {
         name: String,
         args: Option<Vec<Sort>>,
         ret: Sort,
     }
 
     /// A function
-    #[derive(Debug,Clone,Eq,PartialEq,Hash)]
+    #[derive(Clone,Eq,PartialEq,Hash)]
     pub struct Fun(Rc<FunCell>);
 
     impl Fun {
@@ -60,10 +66,14 @@ mod parse_ast {
         fn new(name: String, args: Option<Vec<Sort>>, ret: Sort) -> Self {
             Fun(Rc::new(FunCell {name, args, ret}))
         }
+        pub fn ret(&self) -> Sort { self.0.ret.clone() }
+        pub fn name(&self) -> &str { &self.0.name }
     }
-    impl Deref for Fun {
-        type Target = FunCell;
-        fn deref(&self) -> &Self::Target { &self.0 }
+
+    impl Debug for Fun {
+        fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+            self.0.name.fmt(fmt)
+        }
     }
 
     #[derive(Debug,Eq,PartialEq,Hash)]
@@ -73,21 +83,24 @@ mod parse_ast {
     }
 
     /// A term
-    #[derive(Debug,Clone,Eq,PartialEq,Hash)]
+    #[derive(Clone,Eq,PartialEq,Hash)]
     pub struct Term(Rc<TermCell>);
 
+    impl Debug for Term {
+        fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+            self.0.fmt(fmt)
+        }
+    }
+
     impl Term {
-        fn app(f: Fun, args: Vec<Term>) -> Self {
+        pub fn app(f: Fun, args: Vec<Term>) -> Self {
             Term(Rc::new(TermCell::App(f, args)))
         }
-        fn app_ref(f: Fun, args: &[Term]) -> Self {
+        pub fn app_ref(f: Fun, args: &[Term]) -> Self {
             let args = args.iter().map(|t| t.clone()).collect();
             Term::app(f, args)
         }
-        fn app0(f: Fun) -> Self {
-            Term(Rc::new(TermCell::App(f, Vec::new())))
-        }
-        fn ite(a: Term, b: Term, c: Term) -> Self {
+        pub fn ite(a: Term, b: Term, c: Term) -> Self {
             Term(Rc::new(TermCell::Ite(a,b,c)))
         }
     }
@@ -101,6 +114,7 @@ mod parse_ast {
         bool_: Sort,
         and_ : Fun,
         or_ : Fun,
+        distinct : Fun,
         imply_ : Fun,
         eq : Fun,
         not_ : Fun,
@@ -119,6 +133,7 @@ mod parse_ast {
                 or_: Fun::new("or".to_string(), None, b.clone()),
                 imply_: Fun::new("=>".to_string(), None, b.clone()),
                 eq: Fun::new("and".to_string(), None, b.clone()),
+                distinct: Fun::new("distinct".to_string(), None, b.clone()),
                 not_: Fun::new("and".to_string(), Some(vec![b.clone()]), b.clone()),
                 vars: FxHashMap::default(),
                 scopes: Vec::new(),
@@ -145,6 +160,7 @@ mod parse_ast {
                 Op::Imply => self.imply_.clone(),
                 Op::Eq => self.eq.clone(),
                 Op::Not => self.not_.clone(),
+                Op::Distinct => self.distinct.clone(),
             }
         }
 

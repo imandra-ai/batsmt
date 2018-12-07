@@ -1,6 +1,8 @@
 
+use std::fmt::Debug;
+
 pub trait SortBuilder {
-    type Sort : Clone;
+    type Sort : Clone + Debug;
 
     fn get_bool(&self) -> Self::Sort;
 
@@ -10,11 +12,11 @@ pub trait SortBuilder {
 
 /// The builtins recognized by the parser
 #[derive(Copy,Debug,Clone)]
-pub enum Op { Or, And, Imply, Eq, Not }
+pub enum Op { Or, And, Imply, Eq, Not, Distinct }
 
 pub trait TermBuilder : SortBuilder {
-    type Fun : Clone;
-    type Term : Clone;
+    type Fun : Clone + Debug;
+    type Term : Clone + Debug;
 
     /// Builtins
 
@@ -44,7 +46,7 @@ pub trait TermBuilder : SortBuilder {
 pub enum Statement<Term, Sort> {
     SetInfo(String,String),
     SetLogic(String),
-    DeclareSort(u8),
+    DeclareSort(String,u8),
     DeclareFun(String,Vec<Sort>,Sort),
     Assert(Term),
     CheckSat,
