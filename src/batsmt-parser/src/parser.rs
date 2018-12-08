@@ -27,7 +27,7 @@ fn mk_err(s: String) -> Box<error::Error> {
 }
 
 // parser's buffer size
-const BUF_SIZE : usize = 1_024;
+const BUF_SIZE : usize = 1_024 * 16;
 
 // A basic SMT-LIB parser
 struct ParserState<'a, R : io::Read, B : TermBuilder> {
@@ -93,9 +93,15 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
 
     // get current char, or fail
     fn get(&mut self) -> Result<u8> {
-        match self.try_get()? {
-            Some(c) => Ok(c),
-            None => self.err_eof(),
+        if self.eof {
+            self.err_eof()
+        } else if self.i < self.len {
+            let c = self.buf[self.i];
+            Ok(c)
+        } else {
+            self.refill()?;
+            debug_assert_eq!(self.i, 0);
+            if self.eof { self.err_eof() } else { Ok(self.buf[0]) }
         }
     }
 
@@ -117,6 +123,7 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
     fn skip_to_eol(&mut self) -> Result<()> {
         while let Some(c) = self.try_get()? {
             if c == b'\n' { break }
+            self.junk();
         }
         Ok(())
     }
@@ -329,7 +336,7 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
                     let a = self.atom()?;
                     let n = self.atom()?.parse::<u8>()?;
                     // make a sort and store it
-                    let sort = self.build.declare_sort(&a, n);
+                    let sort = self.build.declare_sort(a.clone(), n);
                     self.sorts.insert(a.clone(), sort);
                     Statement::DeclareSort(a, n)
                 },
@@ -353,7 +360,7 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
                 }
             };
             self.expect_char(b')')?;
-            info!("parsed statement {:?}", &st);
+            debug!("parsed statement {:?}", &st);
             Ok(Some(st))
         }
     }

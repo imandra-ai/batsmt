@@ -7,3 +7,4 @@ authors = ["Simon Cruanes <simon.cruanes.2007@m4x.org>"]
 
 log = "^0.4"
 fxhash = "0.2"
+batsmt-pretty = {path = "../batsmt-pretty"}
