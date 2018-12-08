@@ -6,14 +6,10 @@ members = [
   "src/batsmt-cc",
   "src/batsmt-run",
   "src/batsmt-parser",
+  "src/batsmt-pretty",
 ]
 
-default-members = [
-  "src/batsmt-core",
-  "src/batsmt-cc",
-  "src/batsmt-run",
-  "src/batsmt-parser",
-]
+# default-members = [ …
 
 [profile.release]
 opt-level = 3
