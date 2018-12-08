@@ -178,10 +178,13 @@ impl Ctx {
     }
 }
 
-/// Printing width
+/// Default printing width, in case one wants to overload `Pretty.width`
 pub const WIDTH : usize = 80;
 
-/// A pretty-printable type
+/// A pretty-printable type.
+///
+/// Pretty printing is done via `pp`, which mutates the context
+/// passed as an argument.
 pub trait Pretty {
     /// Pretty print itself into the given context
     fn pp(&self, ctx: &mut Ctx);
@@ -189,7 +192,7 @@ pub trait Pretty {
     /// Width for printing. Default is `WIDTH`
     fn width(&self) -> usize { WIDTH }
 
-    // auto-display
+    /// Automatic display into a formatter. This can be used to implement `Debug` or `Display`.
     fn pp_fmt(&self, out: &mut fmt::Formatter) -> fmt::Result {
         let mut ctx = Ctx::new();
         self.pp(&mut ctx);
@@ -206,7 +209,7 @@ impl Pretty for Op {
 /// Display a newline
 pub fn newline() -> impl Pretty { Op::Newline }
 
-/// Display a space
+/// Display a space (or break)
 pub fn space() -> impl Pretty { Op::Space }
 
 /// Display a static string

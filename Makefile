@@ -13,6 +13,9 @@ check:
 clean:
 	cargo clean
 
+doc:
+	cargo doc
+
 TEST_FLAGS ?= --test-threads=1 --nocapture
 
 test:
