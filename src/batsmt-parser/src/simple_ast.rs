@@ -233,7 +233,7 @@ impl pp::Pretty for Term {
         match self.0.deref() {
             TermCell::Ite(a,b,c) => {
                 ctx.sexp(|ctx| {
-                    ctx.str("ite ").array(" ", &[a,b,c]);
+                    ctx.str("ite ").array(pp::space(), &[a,b,c]);
                 });
             },
             TermCell::App(f, args) => {
@@ -242,7 +242,7 @@ impl pp::Pretty for Term {
                 } else {
                     ctx.sexp(|ctx| {
                         f.pp(ctx);
-                        ctx.space().array(" ", args);
+                        ctx.space().array(pp::space(), args);
                     });
                 }
             }

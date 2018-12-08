@@ -1,6 +1,5 @@
 
 extern crate batsat;
-extern crate smallvec;
 extern crate bit_set;
 extern crate fxhash;
 

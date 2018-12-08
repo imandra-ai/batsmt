@@ -111,6 +111,7 @@ impl Ctx {
                 Op::Close => {
                     let n = stack.exit_box();
                     let mut d = stack.pop();
+                    d = d.group();
                     if n > 0 { d = d.nest(n) }
                     stack.push(d) // might combine with previous box
                 },
@@ -165,9 +166,10 @@ impl Ctx {
     { self.str("("); self.with_indent(0,f); self.str(")"); self }
 
     /// `ctx.array(sep, arr)` prints elements of `arr` with `str` in between
-    pub fn array<U:Pretty>(&mut self, sep: &'static str, arr: &[U]) -> &mut Self {
+    pub fn array<Sep: Pretty, U:Pretty>(&mut self, sep: Sep, arr: &[U]) -> &mut Self 
+    {
         for (i,x) in arr.iter().enumerate() {
-            if i > 0 { self.str(sep); }
+            if i > 0 { sep.pp(self); }
             x.pp(self)
         }
         self
@@ -193,6 +195,20 @@ pub trait Pretty {
         write!(out, "{}", &s)
     }
 }
+
+// ability to use `Op` directly as a printable object
+impl Pretty for Op {
+    fn pp(&self, ctx: &mut Ctx) { ctx.push_(self.clone()); }
+}
+
+/// Display a newline
+pub fn newline() -> impl Pretty { Op::Newline }
+
+/// Display a space
+pub fn space() -> impl Pretty { Op::Space }
+
+/// Display a static string
+pub fn str(s: &'static str) -> impl Pretty { Op::SStatic(s) }
 
 impl<'a, T: Pretty> Pretty for &'a T {
     fn pp(&self, ctx: &mut Ctx) { (*self).pp(ctx) }

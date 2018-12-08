@@ -79,7 +79,7 @@ impl<T,S> pp::Pretty for Statement<T,S>
             &Statement::DeclareFun(ref f, ref args, ref ret) => {
                 ctx.sexp(|ctx| {
                     ctx.str("declare-fun").space().pp(&f).
-                        sexp(|ctx| { ctx.array(" ", &args); }).space().pp(&ret);
+                        sexp(|ctx| { ctx.array(pp::space(), &args); }).space().pp(&ret);
                 });
             },
             &Statement::Assert(ref t) => {
