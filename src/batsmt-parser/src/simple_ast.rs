@@ -134,9 +134,9 @@ impl Builder {
             and_: Fun::new("and".to_string(), None, b.clone()),
             or_: Fun::new("or".to_string(), None, b.clone()),
             imply_: Fun::new("=>".to_string(), None, b.clone()),
-            eq: Fun::new("and".to_string(), None, b.clone()),
+            eq: Fun::new("=".to_string(), None, b.clone()),
             distinct: Fun::new("distinct".to_string(), None, b.clone()),
-            not_: Fun::new("and".to_string(), Some(vec![b.clone()]), b.clone()),
+            not_: Fun::new("not".to_string(), Some(vec![b.clone()]), b.clone()),
             vars: FxHashMap::default(),
             scopes: Vec::new(),
         }
