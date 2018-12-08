@@ -4,6 +4,8 @@
 //! Objects that can be rendered nicely as trees should implement `Pretty`.
 //! This way, they get a `Display` instance for free.
 
+extern crate pretty;
+
 use {
     std::{
         fmt, borrow::{Borrow,ToOwned},
@@ -163,7 +165,7 @@ impl Ctx {
 
     pub fn sexp<F,U>(&mut self, f: F) -> &mut Self
         where F: FnOnce(&mut Ctx) -> U
-    { self.str("("); self.with_indent(0,f); self.str(")"); self }
+    { self.str("("); self.with_indent(1,f); self.str(")"); self }
 
     /// `ctx.array(sep, arr)` prints elements of `arr` with `str` in between
     pub fn array<Sep: Pretty, U:Pretty>(&mut self, sep: Sep, arr: &[U]) -> &mut Self 
@@ -209,6 +211,12 @@ pub fn space() -> impl Pretty { Op::Space }
 
 /// Display a static string
 pub fn str(s: &'static str) -> impl Pretty { Op::SStatic(s) }
+
+/// Display a dynamic (owned) string
+pub fn string(s: String) -> impl Pretty { Op::Text(s) }
+
+/// Display a dynamic (owned) string
+pub fn text<U:Into<String>>(u: U) -> impl Pretty { Op::Text(u.into()) }
 
 impl<'a, T: Pretty> Pretty for &'a T {
     fn pp(&self, ctx: &mut Ctx) { (*self).pp(ctx) }

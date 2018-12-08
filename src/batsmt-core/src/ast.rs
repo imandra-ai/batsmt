@@ -236,7 +236,7 @@ mod node_stored {
             debug_assert!(self.kind() == Kind::Str);
             use std::str;
             let (ptr, len) = self.data.str;
-            let slice = std::slice::from_raw_parts(ptr, len);
+            let slice = slice::from_raw_parts(ptr, len);
             &mut str::from_utf8_unchecked(slice)
         }
 

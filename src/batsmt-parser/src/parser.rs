@@ -30,7 +30,7 @@ fn mk_err(s: String) -> Box<error::Error> {
 const BUF_SIZE : usize = 1_024 * 16;
 
 // A basic SMT-LIB parser
-struct ParserState<'a, R : io::Read, B : TermBuilder> {
+struct ParserState<'a, R : io::Read, B : TermBuilder + 'a> {
     r: R, // underlying reader
     eof: bool,
     buf: [u8; BUF_SIZE], // internal buffer
