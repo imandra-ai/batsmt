@@ -24,7 +24,7 @@ pub trait Symbol : Copy + Sized {
     type Owned; // owned version
 
     /// Cast the symbol into a (stable) pointer.
-    unsafe fn to_ptr(Self::Owned) -> Self;
+    unsafe fn to_ptr(s: Self::Owned) -> Self;
 
     /// Free resources, given a pointer
     unsafe fn free(self);

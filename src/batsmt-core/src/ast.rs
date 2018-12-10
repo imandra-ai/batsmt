@@ -9,7 +9,7 @@
 
 use {
     std::{slice,u32,marker::PhantomData},
-    super::{Symbol,GC},
+    crate::{Symbol,GC},
     fxhash::FxHashMap,
 };
 
@@ -121,7 +121,7 @@ mod app_stored {
         }
 
         // Temporary-lived key, borrowing the given slice
-        pub fn mk_ref(f: AST, args: &'a [AST]) -> Self {
+        pub fn mk_ref(f: AST, args: &[AST]) -> Self {
             let len = args.len();
             check_len(len);
             let new_args =
@@ -486,17 +486,17 @@ impl<S:Symbol> GC for Manager<S> {
     }
 }
 
+/// A bitset whose elements are AST nodes
+pub struct BitSet(::bit_set::BitSet);
+
 mod bit_set {
     use super::*;
     use std::ops::Deref;
-    use bit_set::BitSet;
 
-    pub struct T(BitSet);
-
-    impl T {
+    impl BitSet {
         /// New bitset
         #[inline(always)]
-        pub fn new() -> Self { T(BitSet::new()) }
+        pub fn new() -> Self { BitSet(::bit_set::BitSet::new()) }
 
         /// Clear all bits
         #[inline(always)]
@@ -531,15 +531,12 @@ mod bit_set {
     }
 }
 
-/// A bitset whose elements are AST nodes
-pub type BitSet = bit_set::T;
-
 /// A hashmap whose keys are AST nodes
 pub type HashMap<V> = FxHashMap<AST,V>;
 
 mod dense_map {
     use super::*;
-    use bit_set::BitSet;
+    use ::bit_set::BitSet;
 
     /// An AST map backed by an array, with a default value
     #[derive(Clone)]

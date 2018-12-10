@@ -11,7 +11,7 @@ pub trait Backtrackable {
     fn push_level(&mut self);
 
     /// Backtrack `n` levels, using `ctx` to undo changes
-    fn pop_levels(&mut self, n: usize, &mut Self::Ctx);
+    fn pop_levels(&mut self, n: usize, ctx: &mut Self::Ctx);
 
     /// How many levels?
     fn n_levels(&self) -> usize;
@@ -26,9 +26,9 @@ pub trait InvertibleOp {
     /// Context needed to perform the operation
     type Ctx;
 
-    fn do_change(&mut self, &mut Self::Ctx);
+    fn do_change(&mut self, ctx: &mut Self::Ctx);
 
-    fn undo_change(&mut self, &mut Self::Ctx);
+    fn undo_change(&mut self, ctx: &mut Self::Ctx);
 }
 
 /// Implementation of `Backtrackable` using a stack of invertible operations
