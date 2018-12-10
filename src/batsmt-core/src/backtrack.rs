@@ -10,8 +10,8 @@ pub trait Backtrackable {
     /// Push one level.
     fn push_level(&mut self);
 
-    /// Backtrack to `lvl`, using `ctx` to undo changes
-    fn backtrack_to(&mut self, lvl: usize, &mut Self::Ctx);
+    /// Backtrack `n` levels, using `ctx` to undo changes
+    fn pop_levels(&mut self, n: usize, &mut Self::Ctx);
 
     /// How many levels?
     fn n_levels(&self) -> usize;
@@ -50,14 +50,18 @@ impl<O : InvertibleOp> Backtrackable for BacktrackStack<O> {
         self.levels.push(cur_size as u32);
     }
 
-    fn backtrack_to(&mut self, lvl: usize, ctx: &mut Self::Ctx) {
-        debug!("backtrack-to {}", lvl);
-        if lvl > self.levels.len() {
-            panic!("cannot backtrack to lvl {} in a stack with only {}", lvl, self.levels.len());
+    fn pop_levels(&mut self, n: usize, ctx: &mut Self::Ctx) {
+        debug!("pop-levels {}", n);
+        if n > self.levels.len() {
+            panic!("cannot backtrack {} levels in a stack with only {}", n, self.levels.len());
         }
         // obtain offset in `self.ops` and resize the `levels` stack
-        let offset = if lvl>0 { self.levels[lvl-1] as usize } else { 0 };
-        self.levels.resize(lvl, 0);
+        let offset = {
+            let idx = self.levels.len() - n;
+            let offset = self.levels[idx];
+            self.levels.resize(idx, 0);
+            offset as usize
+        };
         while self.levels.len() > offset {
             let mut op = self.ops.pop().unwrap();
             op.undo_change(ctx)
