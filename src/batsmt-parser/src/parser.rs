@@ -2,7 +2,7 @@
 use {
     std::{error, result, fmt::{self,Display}, io, ops::Deref},
     fxhash::{FxHashMap,FxHashSet},
-    types::*,
+    crate::types::*,
 };
 
 /// Error messages

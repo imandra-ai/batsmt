@@ -4,7 +4,7 @@
 use {
     fxhash::FxHashMap,
     std::{ops::Deref,rc::Rc, fmt, ptr},
-    types::{self,Op},
+    crate::types::{self,Op},
     batsmt_pretty as pp,
 };
 

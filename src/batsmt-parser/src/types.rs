@@ -9,7 +9,7 @@ pub trait SortBuilder {
     fn get_bool(&self) -> Self::Sort;
 
     /// Declare a sort of the given arity
-    fn declare_sort(&mut self, String, u8) -> Self::Sort;
+    fn declare_sort(&mut self, name: String, arity: u8) -> Self::Sort;
 }
 
 /// The builtins recognized by the parser
@@ -25,19 +25,19 @@ pub trait TermBuilder : SortBuilder {
     fn get_builtin(&self, op: Op) -> Self::Fun;
 
     /// Term from a bound variable
-    fn var(&mut self, &str) -> Option<Self::Term>;
+    fn var(&mut self, name: &str) -> Option<Self::Term>;
 
     /// Declare a function
-    fn declare_fun(&mut self, name: String, &[Self::Sort], Self::Sort) -> Self::Fun;
+    fn declare_fun(&mut self, name: String, args: &[Self::Sort], ret: Self::Sort) -> Self::Fun;
 
     /// Build a term by function application
-    fn app_fun(&mut self, Self::Fun, &[Self::Term]) -> Self::Term;
+    fn app_fun(&mut self, f: Self::Fun, args: &[Self::Term]) -> Self::Term;
 
     /// Build a `ite` term
-    fn ite(&mut self, Self::Term, Self::Term, Self::Term) -> Self::Term;
+    fn ite(&mut self, _: Self::Term, _: Self::Term, _: Self::Term) -> Self::Term;
 
     /// Build a let binding. The variables may be called from now on.
-    fn enter_let(&mut self, &[(String, Self::Term)]);
+    fn enter_let(&mut self, bs: &[(String, Self::Term)]);
 
     fn exit_let(&mut self, body: Self::Term) -> Self::Term;
 }
@@ -78,7 +78,7 @@ impl<T,S> pp::Pretty for Statement<T,S>
             },
             &Statement::DeclareFun(ref f, ref args, ref ret) => {
                 ctx.sexp(|ctx| {
-                    ctx.str("declare-fun").space().pp(&f).
+                    ctx.str("declare-fun").space().pp(&f).space().
                         sexp(|ctx| { ctx.array(pp::space(), &args); }).space().pp(&ret);
                 });
             },
@@ -99,7 +99,7 @@ impl<T:Pretty,S:Pretty> fmt::Display for Statement<T,S> {
 
 #[test]
 fn test_pp() {
-    use simple_ast as a;
+    use crate::simple_ast as a;
     let st: Statement<a::Term, a::Sort> = Statement::Exit;
     let s = format!("{}", &st);
     assert_eq!("(exit)", s);
