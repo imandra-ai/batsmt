@@ -12,7 +12,7 @@ pub mod backtrack;
 
 pub use crate::{
   symbol::{Symbol,SymbolView,str::Sym as StrSymbol},
-  backtrack::{BacktrackStack,Backtrackable,InvertibleOp},
+  backtrack::{Stack as BacktrackStack,Backtrackable},
   ast::{
       AST,
       Manager as AstManager,
