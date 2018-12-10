@@ -3,11 +3,15 @@
 //!
 //! The AST manager stores AST nodes, referred to via `ID`. These nodes can
 //! be used to represent sorts, terms, formulas, theory terms, etc.
+//!
+//! The core AST is parametrized by *symbols*, so that users can put
+//! custom information in there.
 
-use std::u32;
-use std::slice;
-use super::{Symbol,GC};
-use fxhash::FxHashMap;
+use {
+    std::{slice,u32,marker::PhantomData},
+    super::{Symbol,GC},
+    fxhash::FxHashMap,
+};
 
 /// The unique identifier of an AST node.
 #[derive(Copy,Clone,Eq,PartialEq,Hash,Ord,PartialOrd,Debug)]
@@ -20,39 +24,37 @@ impl AST {
 
 /// The definition of an AST node, as seen from outside
 #[derive(Debug,Copy,Clone)]
-pub enum View<'a> {
-    Const(Symbol<'a>),
+pub enum View<'a, S : Symbol> {
+    Const(S), // symbol
     App {
         f: AST,
         args: &'a [AST],
     }
 }
 
-// Definition of application keys
-//
-// These keys are optimized so that:
-// - they don't need any allocation for "small" applications
-// - they only need to allocate one Box for "big" applications, shared between
-//   the map and vector
+/// Definition of application keys
+///
+/// These keys are optimized so that:
+/// - they don't need any allocation for "small" applications
+/// - they only need to allocate one Box for "big" applications, shared between
+///   the map and vector
+pub(crate) struct AppStored<'a> {
+    f: AST,
+    len: u16,
+    args: app_stored::ArrOrVec<AST>,
+    phantom: PhantomData<&'a ()>,
+}
+
 mod app_stored {
     use super::*;
-    use std::marker::PhantomData;
 
     // Number of arguments for a "small" term application
     const N_SMALL_APP : usize = 3;
 
     #[derive(Copy,Clone)]
-    union ArrOrVec<T : Copy> {
+    pub(crate) union ArrOrVec<T : Copy> {
         arr: [T; N_SMALL_APP],
         ptr: * const T, // will be shared between vec and hashmap
-    }
-
-    // Main type
-    pub(crate) struct T<'a> {
-        f: AST,
-        len: u16,
-        args: ArrOrVec<AST>,
-        phantom: PhantomData<&'a ()>,
     }
 
     fn check_len(len: usize) {
@@ -62,7 +64,7 @@ mod app_stored {
         }
     }
 
-    impl T<'static> {
+    impl AppStored<'static> {
         pub fn new(f: AST, args: &[AST]) -> Self {
             let len = args.len();
             check_len(len);
@@ -84,7 +86,7 @@ mod app_stored {
                     mem::forget(box_);
                     ArrOrVec{ptr}
                 };
-            let r = T {
+            let r = AppStored {
                 f, len: len as u16, args: new_args,
                 phantom: PhantomData::default(),
             };
@@ -104,7 +106,7 @@ mod app_stored {
         }
     }
 
-    impl<'a> T<'a> {
+    impl<'a> AppStored<'a> {
         #[inline(always)]
         pub fn f(&self) -> AST { self.f }
 
@@ -130,7 +132,7 @@ mod app_stored {
                 } else {
                     ArrOrVec{ptr: args.as_ptr()}
                 };
-            let r = T {
+            let r = AppStored {
                 f, len: len as u16, args: new_args,
                 phantom: PhantomData::default(),
             };
@@ -138,26 +140,26 @@ mod app_stored {
             r
         }
 
-        pub fn to_owned(self) -> T<'static> {
-            T::new(self.f, self.args())
+        pub fn to_owned(self) -> AppStored<'static> {
+            AppStored::new(self.f, self.args())
         }
     }
 
-    impl Copy for T<'static> {}
-    impl Clone for T<'static> {
+    impl Copy for AppStored<'static> {}
+    impl Clone for AppStored<'static> {
         fn clone(&self) -> Self { *self }
     }
 
-    impl<'a> Eq for T<'a> {}
-    impl<'a> PartialEq for T<'a> {
-        fn eq(&self, other: &T<'a>) -> bool {
+    impl<'a> Eq for AppStored<'a> {}
+    impl<'a> PartialEq for AppStored<'a> {
+        fn eq(&self, other: &AppStored<'a>) -> bool {
             self.f == other.f && self.args() == other.args()
         }
     }
 
     use std::hash::{Hash,Hasher};
 
-    impl<'a> Hash for T<'a> {
+    impl<'a> Hash for AppStored<'a> {
         fn hash<H:Hasher>(&self, h: &mut H) {
             self.f.hash(h);
             self.args().hash(h)
@@ -166,7 +168,7 @@ mod app_stored {
 
     use std::fmt::{Debug,self};
 
-    impl<'a> Debug for T<'a> {
+    impl<'a> Debug for AppStored<'a> {
         fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
             write!(fmt, "({:?} {:?})", self.f, self.args())
         }
@@ -176,45 +178,33 @@ mod app_stored {
 // The kind of object stored in a given slot
 #[repr(u8)]
 #[derive(Copy,Clone,Debug,Eq,PartialEq,Hash)]
-pub(crate) enum Kind { Undef, App, Str, Custom, }
+pub(crate) enum Kind { Undef, App, Sym, }
+
+// One node in the main vector
+#[derive(Clone)]
+pub(crate) struct NodeStored<S:Symbol> {
+    pub kind: Kind,
+    data: node_stored::Data<S>,
+}
 
 mod node_stored {
     use super::*;
-    use symbol::Custom;
-
-    // One node in the main vector
-    #[derive(Clone)]
-    pub(crate) struct T {
-        pub kind: Kind,
-        data: Data,
-    }
 
     #[derive(Copy,Clone)]
-    union Data {
-        undef: (),
-        app: app_stored::T<'static>,
-        str: (*const u8, usize), // owned string
-        custom: *const Custom,
+    pub(crate) union Data<SPtr : Copy> {
+        pub undef: (),
+        pub app: AppStored<'static>,
+        pub sym: SPtr, // raw pointer to a symbol
     }
 
-    // Constant for undefined
-    pub(crate) const UNDEF : T = T { kind: Kind::Undef, data: Data {undef: ()}, };
-
-    impl T {
-        pub fn from_string(s:String) -> Self {
-            use std::mem;
-            let ptr = s.as_ptr();
-            let len = s.as_bytes().len();
-            mem::forget(s);
-            let data = Data { str: (ptr, len) };
-            T {kind: Kind::Str, data }
+    impl<S:Symbol> NodeStored<S> {
+        /// Make a constant node from a symbol
+        pub fn mk_sym(sym: S::Owned) -> Self {
+            let ptr = unsafe { S::to_ptr(sym) };
+            NodeStored {data: Data{sym: ptr}, kind: Kind::Sym }
         }
-        pub fn mk_str(s: &str) -> Self {
-            let s = s.to_string();
-            T::from_string(s)
-        }
-        pub fn mk_app(app: app_stored::T<'static>) -> Self {
-            T {kind: Kind::App, data: Data { app }}
+        pub fn mk_app(app: AppStored<'static>) -> Self {
+            NodeStored {kind: Kind::App, data: Data { app }}
         }
 
         #[inline(always)]
@@ -224,25 +214,17 @@ mod node_stored {
         #[inline(always)]
         pub fn is_app(&self) -> bool { self.kind() == Kind::App }
         #[inline(always)]
-        pub fn is_sym(&self) -> bool { let k = self.kind(); k == Kind::Str || k == Kind::Custom  }
+        pub fn is_sym(&self) -> bool { let k = self.kind(); k == Kind::Sym }
 
-        pub unsafe fn as_app(&self) -> &app_stored::T<'static> {
+        pub unsafe fn as_app(&self) -> &AppStored<'static> {
             debug_assert!(self.kind() == Kind::App);
             &self.data.app
         }
 
         // view as a string symbol
-        pub unsafe fn as_str(&self) -> &str {
-            debug_assert!(self.kind() == Kind::Str);
-            use std::str;
-            let (ptr, len) = self.data.str;
-            let slice = slice::from_raw_parts(ptr, len);
-            &mut str::from_utf8_unchecked(slice)
-        }
-
-        pub unsafe fn as_custom(&self) -> &Custom {
-            debug_assert!(self.kind() == Kind::Custom);
-            &* self.data.custom
+        pub unsafe fn as_sym(&self) -> S {
+            debug_assert!(self.kind() == Kind::Sym);
+            self.data.sym
         }
 
         /// release resources
@@ -250,37 +232,31 @@ mod node_stored {
             match self.kind {
                 Kind::Undef => (),
                 Kind::App => self.data.app.free(),
-                Kind::Str => {
-                    let (ptr, len) = self.data.str;
-                    let ptr = ptr as *mut u8;
-                    let v = Vec::from_raw_parts(ptr, len, len);
-                    drop(v)
+                Kind::Sym => {
+                    let ptr = self.data.sym;
+                    S::free(ptr)
                 },
-                Kind::Custom => {
-                    let ptr = self.data.custom as *mut Custom;
-                    let b = Box::from_raw(ptr);
-                    drop(b)
-                }
             }
         }
     }
 }
 
 // helper to make a view from a stored node
-fn view_node<'a>(ast: AST, n: &'a node_stored::T) -> View<'a> {
+fn view_node<'a, S:Symbol>(ast: AST, n: &'a NodeStored<S>) -> View<'a,S> {
     match n.kind() {
         Kind::App => {
             let k = unsafe {n.as_app()};
             View::App {f: k.f(), args: k.args()}
         },
-        Kind::Str => View::Const(Symbol::Str{name: unsafe {n.as_str()}}),
-        Kind::Custom => View::Const(Symbol::Custom{content: unsafe {n.as_custom()}}),
+        Kind::Sym => View::Const(unsafe {n.as_sym()}), 
         Kind::Undef => panic!("cannot access undefined AST {:?}", ast),
     }
 }
 
 // free memory for this node, including its hashmap entry if any
-unsafe fn free_node(tbl: &mut FxHashMap<app_stored::T<'static>, AST>, mut n: node_stored::T) {
+unsafe fn free_node<S:Symbol>(
+    tbl: &mut FxHashMap<AppStored<'static>, AST>, mut n: NodeStored<S>)
+{
     if n.kind() == Kind::App {
         let app = n.as_app();
         // remove from table
@@ -290,16 +266,22 @@ unsafe fn free_node(tbl: &mut FxHashMap<app_stored::T<'static>, AST>, mut n: nod
 }
 
 /// The AST manager, responsible for storing and creating AST nodes
-pub struct Manager {
-    nodes: Vec<node_stored::T>,
-    tbl_app: FxHashMap<app_stored::T<'static>, AST>, // for hashconsing
+///
+/// The manager is parametrized by the type of symbols used.
+pub struct Manager<S:Symbol> {
+    nodes: Vec<NodeStored<S>>,
+    tbl_app: FxHashMap<AppStored<'static>, AST>, // for hashconsing
     // TODO: use some bits of nodes[i].kind (a u8) for this?
     gc_alive: BitSet, // for GC
     gc_stack: Vec<AST>, // temporary vector for GC marking
     recycle: Vec<u32>, // indices that contain a `undefined`
 }
 
-impl Manager {
+impl<S:Symbol> Manager<S> {
+    // node for undefined slots, should never be exposed
+    const UNDEF : NodeStored<S> = 
+        NodeStored { kind: Kind::Undef, data: node_stored::Data {undef: ()}, };
+
     /// Create a new AST manager
     pub fn new() -> Self {
         let mut tbl_app = FxHashMap::default();
@@ -315,7 +297,7 @@ impl Manager {
 
     /// View the definition of an AST node
     #[inline]
-    pub fn view(&self, ast: AST) -> View {
+    pub fn view(&self, ast: AST) -> View<S> {
         let n = &self.nodes[ast.0 as usize];
         view_node(ast, n)
     }
@@ -329,7 +311,7 @@ impl Manager {
     }
 
     // allocate a new AST ID, and return the slot it should live in
-    fn allocate_id(&mut self) -> (AST, &mut node_stored::T) {
+    fn allocate_id(&mut self) -> (AST, &mut NodeStored<S>) {
         match self.recycle.pop() {
             Some(n) => {
                 let ast = AST(n);
@@ -343,7 +325,7 @@ impl Manager {
                 if n > u32::MAX as usize {
                     panic!("cannot allocate more AST nodes")
                 }
-                self.nodes.push(node_stored::UNDEF);
+                self.nodes.push(Self::UNDEF);
                 let slot = &mut self.nodes[n];
                 (AST(n as u32), slot)
             }
@@ -351,24 +333,12 @@ impl Manager {
 
     }
 
-    /// Make a named symbol.
-    ///
-    /// Note that calling this function twice with the same string
-    /// will result in two distinct symbols (as if the second one
-    /// was shadowing the first). Use an auxiliary hashtable if
-    /// you want sharing.
-    pub fn mk_const(&mut self, s: &str) -> AST {
-        let (ast, slot) = self.allocate_id();
-        *slot = node_stored::T::mk_str(s);
-        ast
-    }
-
     /// `m.mk_app(f, args)` creates the application of `f` to `args`.
     ///
     /// If the term is structurally equal to an existing term, then this
     /// ensures the exact same AST is returned ("hashconsing")
     pub fn mk_app(&mut self, f: AST, args: &[AST]) -> AST {
-        let k = app_stored::T::mk_ref(f, args);
+        let k = AppStored::mk_ref(f, args);
 
         // borrow multiple fields
         let nodes = &mut self.nodes;
@@ -384,7 +354,7 @@ impl Manager {
                 // make 2 owned copies of the key
                 let k1 = k.to_owned();
                 let k2 = k1.clone();
-                nodes.push(node_stored::T::mk_app(k1));
+                nodes.push(NodeStored::mk_app(k1));
                 tbl_app.insert(k2, ast);
                 // return AST
                 ast
@@ -392,8 +362,20 @@ impl Manager {
         }
     }
 
+    /// Make a term from a symbol.
+    ///
+    /// Note that calling this function twice with the same symbol
+    /// will result in two distinct ASTs (as if the second one
+    /// was shadowing the first). Use an auxiliary hashtable if
+    /// you want sharing.
+    pub fn mk_sym(&mut self, s: S::Owned) -> AST {
+        let (ast, slot) = self.allocate_id();
+        *slot = NodeStored::mk_sym(s);
+        ast
+    }
+
     /// Iterate over all ASTs in the manager, along with their view
-    pub fn iter<'a>(&'a self) -> impl Iterator<Item=(AST, View<'a>)> + 'a {
+    pub fn iter<'a>(&'a self) -> impl Iterator<Item=(AST, View<'a,S>)> + 'a {
         self.nodes.iter().enumerate()
             .filter_map(move |(i,n)| {
                 let a = AST(i as u32);
@@ -451,11 +433,11 @@ impl Manager {
                     // collect
                     count += 1;
                     // remove node from `self.nodes[i]` and move it locally
-                    let mut n = node_stored::UNDEF;
+                    let mut n = Self::UNDEF;
                     mem::swap(&mut self.nodes[i], &mut n);
                     // free memory of `n`, remove it from hashtable
                     unsafe { free_node(&mut self.tbl_app, n); }
-                    self.nodes[i] = node_stored::UNDEF;
+                    self.nodes[i] = Self::UNDEF;
                     self.recycle.push(i as u32)
                 }
             }
@@ -464,8 +446,28 @@ impl Manager {
     }
 }
 
+impl<S:Symbol> Manager<S>
+    where S::Owned : for<'a> From<&'a str>
+{
+    /// Make a symbol node from a string
+    pub fn mk_str(&mut self, s: &str) -> AST {
+        let sym: S::Owned = s.into();
+        self.mk_sym(sym)
+    }
+}
+
+impl<S:Symbol> Manager<S>
+    where S::Owned : From<String>
+{
+    /// Make a symbol node from a owned string
+    pub fn mk_string(&mut self, s: String) -> AST {
+        let sym: S::Owned = s.into();
+        self.mk_sym(sym)
+    }
+}
+
 /// Iterator over ASTs
-impl GC for Manager {
+impl<S:Symbol> GC for Manager<S> {
     type Element = AST;
 
     fn mark_root(&mut self, &ast: &AST) {

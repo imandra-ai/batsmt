@@ -4,14 +4,14 @@ extern crate bit_set;
 extern crate fxhash;
 #[macro_use] extern crate log;
 
-pub mod symbol;
 pub mod ast;
 pub mod gc;
+pub mod symbol;
 pub mod shared;
 pub mod backtrack;
 
 pub use {
-  symbol::Symbol,
+  symbol::{Symbol,str::Sym as StrSymbol},
   backtrack::{BacktrackStack,Backtrackable,InvertibleOp},
   ast::{
       AST,

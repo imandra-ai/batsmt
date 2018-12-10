@@ -10,7 +10,7 @@ extern crate fxhash;
 
 use {
     std::{env,fs,error::Error},
-    batsmt_core::{ast,AST},
+    batsmt_core::{ast,AST,StrSymbol},
     batsmt_cc::CC,
     batsmt_parser::{self as parser, simple_ast},
 };
@@ -18,7 +18,7 @@ use {
 fn main() -> Result<(), Box<Error>> {
     env_logger::init();
 
-    let mut _m = ast::Manager::new();
+    let mut _m : ast::Manager<StrSymbol> = ast::Manager::new();
     // TODO: use real AST here?
     let mut b = simple_ast::Builder::new();
 

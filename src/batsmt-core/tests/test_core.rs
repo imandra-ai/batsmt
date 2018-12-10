@@ -5,32 +5,34 @@ mod ast {
     use batsmt_core::*;
     use batsmt_core::AstView as View;
 
+    type M = AstManager<StrSymbol>;
+
     #[test]
-    fn test_mk_const() {
-        let mut m = AstManager::new();
-        let a = m.mk_const("a");
-        let b = m.mk_const("b");
+    fn test_mk_str() {
+        let mut m : M = AstManager::new();
+        let a = m.mk_str("a");
+        let b = m.mk_str("b");
         assert_ne!(a,b);
-        let a2 = m.mk_const("a");
+        let a2 = m.mk_str("a");
         assert_ne!(a,a2);
     }
 
     #[test]
     fn test_view_const() {
-        let mut m = AstManager::new();
-        let a = m.mk_const("a");
-        let b = m.mk_const("b");
+        let mut m : M = AstManager::new();
+        let a = m.mk_str("a");
+        let b = m.mk_str("b");
         assert!(match m.view(a) { View::Const(s) => s.eq_str("a"), _ => false });
         assert!(match m.view(b) { View::Const(s) => s.eq_str("b"), _ => false });
     }
 
     #[test]
     fn test_mk_fun() {
-        let mut m = AstManager::new();
-        let f = m.mk_const("f");
-        let g = m.mk_const("g");
-        let a = m.mk_const("a");
-        let b = m.mk_const("b");
+        let mut m : M = AstManager::new();
+        let f = m.mk_str("f");
+        let g = m.mk_str("g");
+        let a = m.mk_str("a");
+        let b = m.mk_str("b");
         let t1 = m.mk_app(f, &[a,b]);
         let t2 = m.mk_app(f, &[a,b]);
         let t3 = m.mk_app(f, &[b,a]);
@@ -50,11 +52,11 @@ mod ast {
 
     #[test]
     fn test_view() {
-        let mut m = AstManager::new();
-        let f = m.mk_const("f");
-        let g = m.mk_const("g");
-        let a = m.mk_const("a");
-        let b = m.mk_const("b");
+        let mut m : M = AstManager::new();
+        let f = m.mk_str("f");
+        let g = m.mk_str("g");
+        let a = m.mk_str("a");
+        let b = m.mk_str("b");
         let t1 = m.mk_app(f, &[a,b]);
         let t2 = m.mk_app(f, &[b,a]);
         let t4 = m.mk_app(g, &[t1]);
@@ -71,7 +73,7 @@ mod ast {
         n: usize,
         long_apps: bool,
         verbose: bool,
-        m: AstManager,
+        m: M,
         f: AST,
         g: AST,
         a: AST,
@@ -131,10 +133,10 @@ mod ast {
     impl StressApp {
         fn new(n: usize) -> Self {
             let mut m = AstManager::new();
-            let f = m.mk_const("f");
-            let g = m.mk_const("g");
-            let a = m.mk_const("a");
-            let b = m.mk_const("b");
+            let f = m.mk_str("f");
+            let g = m.mk_str("g");
+            let a = m.mk_str("a");
+            let b = m.mk_str("b");
             let terms = vec![a,b];
             StressApp{n, long_apps: false, verbose: false, f, g, a, b, m, terms, }
         }
