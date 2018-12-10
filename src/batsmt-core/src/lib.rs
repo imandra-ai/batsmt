@@ -11,7 +11,7 @@ pub mod shared;
 pub mod backtrack;
 
 pub use {
-  symbol::{Symbol,str::Sym as StrSymbol},
+  symbol::{Symbol,SymbolView,str::Sym as StrSymbol},
   backtrack::{BacktrackStack,Backtrackable,InvertibleOp},
   ast::{
       AST,
