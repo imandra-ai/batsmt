@@ -29,8 +29,8 @@ dependencies = [
 name = "batsmt-cc"
 version = "0.1.0"
 dependencies = [
+ "batsat 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "batsmt-core 0.1.0",
- "bit-vec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "smallvec 0.6.7 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
