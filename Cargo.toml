@@ -2,11 +2,11 @@
 [workspace]
 
 members = [
-  "src/batsmt-core",
-  "src/batsmt-cc",
-  "src/batsmt-run",
-  "src/batsmt-parser",
-  "src/batsmt-pretty",
+  "src/core",
+  "src/cc",
+  "src/run",
+  "src/parser",
+  "src/pretty",
 ]
 
 # default-members = [ …

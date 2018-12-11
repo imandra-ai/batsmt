@@ -8,7 +8,7 @@ edition = "2018"
 
 log = "^0.4"
 fxhash = "0.2"
-batsmt-pretty = {path = "../batsmt-pretty"}
+batsmt-pretty = {path = "../pretty"}
 
 [[example]]
 

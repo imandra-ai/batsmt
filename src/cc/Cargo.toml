@@ -6,6 +6,6 @@ authors = ["Simon Cruanes <simon.cruanes.2007@m4x.org>"]
 [dependencies]
 
 batsat = "0.2"
-batsmt-core = { path="../batsmt-core" }
+batsmt-core = { path="../core" }
 smallvec = "0.6"
 log = "0.4"

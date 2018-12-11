@@ -5,9 +5,9 @@ authors = ["Simon Cruanes <simon.cruanes.2007@m4x.org>"]
 
 [dependencies]
 
-batsmt-core = {path = "../batsmt-core"}
-batsmt-cc = {path = "../batsmt-cc"}
-batsmt-parser = {path = "../batsmt-parser"}
+batsmt-core = {path = "../core"}
+batsmt-cc = {path = "../cc"}
+batsmt-parser = {path = "../parser"}
 log = "^0.4"
 env_logger = "0.5"
 fxhash = "0.2"
