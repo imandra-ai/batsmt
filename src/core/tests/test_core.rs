@@ -9,7 +9,7 @@ mod ast {
 
     #[test]
     fn test_mk_str() {
-        let mut m : M = AstManager::new();
+        let m = M::new();
         let a = m.mk_str("a");
         let b = m.mk_str("b");
         assert_ne!(a,b);
@@ -19,16 +19,16 @@ mod ast {
 
     #[test]
     fn test_view_const() {
-        let mut m : M = AstManager::new();
+        let m = M::new();
         let a = m.mk_str("a");
         let b = m.mk_str("b");
-        assert!(match m.view(a) { View::Const(s) => s.eq_str("a"), _ => false });
-        assert!(match m.view(b) { View::Const(s) => s.eq_str("b"), _ => false });
+        assert!(match m.get().view(a) { View::Const(s) => s == "a", _ => false });
+        assert!(match m.get().view(b) { View::Const(s) => s == "b", _ => false });
     }
 
     #[test]
     fn test_mk_fun() {
-        let mut m : M = AstManager::new();
+        let m = M::new();
         let f = m.mk_str("f");
         let g = m.mk_str("g");
         let a = m.mk_str("a");
@@ -52,7 +52,8 @@ mod ast {
 
     #[test]
     fn test_view() {
-        let mut m : M = AstManager::new();
+        let m = M::new();
+        let mut m = m.get_mut();
         let f = m.mk_str("f");
         let g = m.mk_str("g");
         let a = m.mk_str("a");
@@ -84,7 +85,7 @@ mod ast {
     fn mk_stress_app(s: &mut StressApp) {
         use std::time::Instant;
 
-        let m = &mut s.m;
+        let mut m = s.m.get_mut();
         let f = s.f;
         let g = s.g;
         let mut n_app_created = 0;
@@ -132,7 +133,7 @@ mod ast {
 
     impl StressApp {
         fn new(n: usize) -> Self {
-            let mut m = AstManager::new();
+            let mut m = M::new();
             let f = m.mk_str("f");
             let g = m.mk_str("g");
             let a = m.mk_str("a");

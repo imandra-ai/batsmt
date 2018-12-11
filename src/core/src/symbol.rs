@@ -20,7 +20,7 @@ pub trait SymbolView<'a> {
 /// The actual representation of a symbol is `Symbol::Owned`. It is hidden
 /// behind a raw pointer (stored in unions, etc.) and accessed via the
 /// custom reference that is a symbol.
-pub trait Symbol : Copy + Sized {
+pub trait Symbol : Copy + Sized + for<'b> SymbolView<'b> {
     type Owned; // owned version
 
     /// Cast the symbol into a (stable) pointer.

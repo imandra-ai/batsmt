@@ -9,8 +9,8 @@ mod cc {
 
     #[test]
     fn test_new() {
-        let m = RefCell::new(ast::Manager::new() as ast::Manager<StrSymbol>);
-        let cc = CC::new(m);
+        let m : ast::Manager<StrSymbol> = ast::Manager::new();
+        let mut cc = CC::new(m);
 
         // access m
         let mut m = cc.m_mut();

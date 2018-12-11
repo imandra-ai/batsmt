@@ -8,8 +8,12 @@
 //! custom information in there.
 
 use {
-    std::{slice,u32,marker::PhantomData},
-    crate::{Symbol,GC},
+    std::{
+        ops::{Deref,DerefMut},
+        slice, u32, marker::PhantomData,
+        cell::{self,RefCell},
+    },
+    crate::{Symbol,SymbolView,GC},
     fxhash::FxHashMap,
 };
 
@@ -24,8 +28,8 @@ impl AST {
 
 /// The definition of an AST node, as seen from outside
 #[derive(Debug,Copy,Clone)]
-pub enum View<'a, S : Symbol> {
-    Const(S), // symbol
+pub enum View<'a, S : SymbolView<'a>> {
+    Const(S::View), // symbol
     App {
         f: AST,
         args: &'a [AST],
@@ -114,7 +118,7 @@ mod app_stored {
         pub fn args<'b: 'a>(&'b self) -> &'b [AST] {
             let len = self.len as usize;
             if len <= N_SMALL_APP {
-                unsafe {& self.args.arr[..len]}
+                unsafe { &self.args.arr[..len] }
             } else {
                 unsafe {slice::from_raw_parts(self.args.ptr, len)}
             }
@@ -180,11 +184,27 @@ mod app_stored {
 #[derive(Copy,Clone,Debug,Eq,PartialEq,Hash)]
 pub(crate) enum Kind { Undef, App, Sym, }
 
-// One node in the main vector
+/// The definition of a node
 #[derive(Clone)]
-pub(crate) struct NodeStored<S:Symbol> {
-    pub kind: Kind,
+struct NodeStored<S:Symbol> {
+    pub(crate) kind: Kind,
     data: node_stored::Data<S>,
+}
+
+// helper to make a view from a stored node
+fn view_node<'a, S>(n: &'a NodeStored<S>) -> View<'a,S>
+    where S : Symbol
+{
+    match n.kind() {
+        Kind::App => {
+            let k = unsafe {n.as_app()};
+            View::App {f: k.f(), args: k.args()}
+        },
+        Kind::Sym => {
+            View::Const(unsafe {n.as_sym()}.view())
+        },
+        Kind::Undef => panic!("cannot access undefined AST"),
+    }
 }
 
 mod node_stored {
@@ -209,12 +229,6 @@ mod node_stored {
 
         #[inline(always)]
         pub fn kind(&self) -> Kind { self.kind }
-        #[inline(always)]
-        pub fn is_undef(&self) -> bool { self.kind() == Kind::Undef }
-        #[inline(always)]
-        pub fn is_app(&self) -> bool { self.kind() == Kind::App }
-        #[inline(always)]
-        pub fn is_sym(&self) -> bool { let k = self.kind(); k == Kind::Sym }
 
         pub unsafe fn as_app(&self) -> &AppStored<'static> {
             debug_assert!(self.kind() == Kind::App);
@@ -241,18 +255,6 @@ mod node_stored {
     }
 }
 
-// helper to make a view from a stored node
-fn view_node<'a, S:Symbol>(ast: AST, n: &'a NodeStored<S>) -> View<'a,S> {
-    match n.kind() {
-        Kind::App => {
-            let k = unsafe {n.as_app()};
-            View::App {f: k.f(), args: k.args()}
-        },
-        Kind::Sym => View::Const(unsafe {n.as_sym()}), 
-        Kind::Undef => panic!("cannot access undefined AST {:?}", ast),
-    }
-}
-
 // free memory for this node, including its hashmap entry if any
 unsafe fn free_node<S:Symbol>(
     tbl: &mut FxHashMap<AppStored<'static>, AST>, mut n: NodeStored<S>)
@@ -265,10 +267,12 @@ unsafe fn free_node<S:Symbol>(
     n.free();
 }
 
-/// The AST manager, responsible for storing and creating AST nodes
+/// The internal state of the manager.
 ///
-/// The manager is parametrized by the type of symbols used.
-pub struct Manager<S:Symbol> {
+/// This state can be obtained via `Manager::get` or `Manager::get_mut`,
+/// and provides most of the useful functions to manipulate ASTs
+pub struct ManagerCell<S:Symbol> {
+    refcount: u16,
     nodes: Vec<NodeStored<S>>,
     tbl_app: FxHashMap<AppStored<'static>, AST>, // for hashconsing
     // TODO: use some bits of nodes[i].kind (a u8) for this?
@@ -277,212 +281,334 @@ pub struct Manager<S:Symbol> {
     recycle: Vec<u32>, // indices that contain a `undefined`
 }
 
-impl<S:Symbol> Manager<S> {
-    // node for undefined slots, should never be exposed
-    const UNDEF : NodeStored<S> = 
-        NodeStored { kind: Kind::Undef, data: node_stored::Data {undef: ()}, };
+// NOTE: similar to the PIMPL pattern in C++.
+/// The AST manager, responsible for storing and creating AST nodes
+///
+/// The manager is parametrized by the type of symbols used.
+/// It is not shareable among threads.
+/// ```compile_fail
+/// use batsmt_core::{ast,Symbol};
+/// struct Foo<S:Symbol>(ast::Manager<S>);
+/// fn foo<A:Sync>(a: &A) {};
+/// fn bar<S:Symbol>(x: &Foo<S>) { foo(x) }
+/// ```
+pub struct Manager<S:Symbol>(*mut RefCell<ManagerCell<S>>);
 
-    /// Create a new AST manager
-    pub fn new() -> Self {
-        let mut tbl_app = FxHashMap::default();
-        tbl_app.reserve(1_024);
-        Manager {
-            nodes: Vec::with_capacity(512),
-            tbl_app,
-            gc_alive: BitSet::new(),
-            gc_stack: Vec::new(),
-            recycle: Vec::new(),
-        }
-    }
+/// A borrowed reference to the AST manager.
+///
+/// It has a limited lifetime (`'a`) but provides access to views of AST symbols
+pub struct ManagerRef<'a, S:Symbol>(cell::Ref<'a, ManagerCell<S>>);
 
-    /// View the definition of an AST node
-    #[inline]
-    pub fn view(&self, ast: AST) -> View<S> {
-        let n = &self.nodes[ast.0 as usize];
-        view_node(ast, n)
-    }
+/// A borrowed mutable reference to the AST manager.
+///
+/// It has a limited lifetime (`'a`) and cannot be aliased.
+pub struct ManagerRefMut<'a, S:Symbol>(cell::RefMut<'a, ManagerCell<S>>);
 
-    /// Number of terms
-    pub fn n_terms(&self) -> usize {
-        let nlen = self.nodes.len();
-        let rlen = self.recycle.len();
-        debug_assert!(nlen >= rlen);
-        nlen - rlen
-    }
+mod manager {
+    use super::*;
 
-    // allocate a new AST ID, and return the slot it should live in
-    fn allocate_id(&mut self) -> (AST, &mut NodeStored<S>) {
-        match self.recycle.pop() {
-            Some(n) => {
-                let ast = AST(n);
-                let slot = &mut self.nodes[n as usize];
-                debug_assert!(slot.kind() == Kind::Undef);
-                (ast,slot)
-            },
-            None => {
-                let n = self.nodes.len();
-                // does `n` fit in an AST?
-                if n > u32::MAX as usize {
-                    panic!("cannot allocate more AST nodes")
-                }
-                self.nodes.push(Self::UNDEF);
-                let slot = &mut self.nodes[n];
-                (AST(n as u32), slot)
+    impl<S:Symbol> ManagerCell<S> {
+        // node for undefined slots, should never be exposed
+        const UNDEF : NodeStored<S> =
+            NodeStored { kind: Kind::Undef, data: node_stored::Data {undef: ()}, };
+
+        /// Create a new AST manager
+        pub(crate) fn new() -> Self {
+            let mut tbl_app = FxHashMap::default();
+            tbl_app.reserve(1_024);
+            ManagerCell {
+                refcount: 1,
+                nodes: Vec::with_capacity(512),
+                tbl_app,
+                gc_alive: BitSet::new(),
+                gc_stack: Vec::new(),
+                recycle: Vec::new(),
             }
         }
 
+        /// View the given symbol
+        #[inline(always)]
+        pub fn view(&self, ast: AST) -> View<S> {
+            view_node(&self.nodes[ast.0 as usize])
+        }
+
+        /// Number of terms
+        pub fn n_terms(&self) -> usize {
+            let nlen = self.nodes.len();
+            let rlen = self.recycle.len();
+            debug_assert!(nlen >= rlen);
+            nlen - rlen
+        }
+
+        // allocate a new AST ID, and return the slot it should live in
+        fn allocate_id(&mut self) -> (AST, &mut NodeStored<S>) {
+            match self.recycle.pop() {
+                Some(n) => {
+                    let ast = AST(n);
+                    let slot = &mut self.nodes[n as usize];
+                    debug_assert!(slot.kind() == Kind::Undef);
+                    (ast,slot)
+                },
+                None => {
+                    let n = self.nodes.len();
+                    // does `n` fit in an AST?
+                    if n > u32::MAX as usize {
+                        panic!("cannot allocate more AST nodes")
+                    }
+                    self.nodes.push(Self::UNDEF);
+                    let slot = &mut self.nodes[n];
+                    (AST(n as u32), slot)
+                }
+            }
+        }
+
+        /// `m.mk_app(f, args)` creates the application of `f` to `args`.
+        ///
+        /// If the term is structurally equal to an existing term, then this
+        /// ensures the exact same AST is returned ("hashconsing")
+        pub fn mk_app(&mut self, f: AST, args: &[AST]) -> AST {
+            let k = AppStored::mk_ref(f, args);
+
+            // borrow multiple fields
+            let nodes = &mut self.nodes;
+            let tbl_app = &mut self.tbl_app;
+            //let ManagerInterface {ref mut apps, ref mut tbl_app,..} = self;
+
+            match tbl_app.get(&k) {
+                Some(&a) => a, // fast path
+                None => {
+                    // insert
+                    let n = nodes.len();
+                    let ast = AST(n as u32);
+                    // make 2 owned copies of the key
+                    let k1 = k.to_owned();
+                    let k2 = k1.clone();
+                    nodes.push(NodeStored::mk_app(k1));
+                    tbl_app.insert(k2, ast);
+                    // return AST
+                    ast
+                }
+            }
+        }
+
+        /// Make a term from a symbol.
+        ///
+        /// Note that calling this function twice with the same symbol
+        /// will result in two distinct ASTs (as if the second one
+        /// was shadowing the first). Use an auxiliary hashtable if
+        /// you want sharing.
+        pub fn mk_sym(&mut self, s: S::Owned) -> AST {
+            let (ast, slot) = self.allocate_id();
+            *slot = NodeStored::mk_sym(s);
+            ast
+        }
+
+        /// Iterate over all the ASTs and their definition
+        pub fn iter<'a>(&'a self) -> impl Iterator<Item=(AST, View<'a,S>)> + 'a
+        {
+            self.nodes.iter().enumerate()
+                .filter_map(move |(i,n)| {
+                    let a = AST(i as u32);
+                    match n.kind {
+                        Kind::Undef => None, // skip empty slot
+                        _ => Some((a, view_node(n))),
+                    }
+                })
+        }
+
+        /// Iterate over all the ASTs
+        pub fn iter_ast<'a>(&'a self) -> impl Iterator<Item=AST> + 'a {
+            self.nodes.iter().enumerate()
+                .filter_map(|(i,n)| {
+                    let a = AST(i as u32);
+                    match n.kind {
+                        Kind::Undef => None, // skip empty slot
+                        _ => Some(a),
+                    }
+                })
+        }
+
+        // traverse and mark all elements on `stack` and their subterms
+        fn gc_traverse_and_mark(&mut self) {
+            while let Some(ast) = self.gc_stack.pop() {
+                if self.gc_alive.get(ast) {
+                    continue; // subgraph already marked and traversed
+                }
+                self.gc_alive.add(ast);
+
+                match view_node(&self.nodes[ast.0 as usize]) {
+                    View::Const(_) => (),
+                    View::App{f, args} => {
+                        // explore subterms, too
+                        self.gc_stack.push(f);
+                        for &a in args { self.gc_stack.push(a) };
+                    }
+                }
+            }
+        }
+
+        // collect dead values, return number of collected values
+        fn gc_retain_roots(&mut self) -> usize {
+            use std::mem;
+            let mut count = 0;
+
+            let len = self.nodes.len();
+            for i in 0 .. len {
+                match self.nodes[i].kind() {
+                    Kind::Undef => (),
+                    _ if self.gc_alive.get(AST(i as u32)) => (), // keep
+                    _ => {
+                        // collect
+                        count += 1;
+                        // remove node from `self.nodes[i]` and move it locally
+                        let mut n = Self::UNDEF;
+                        mem::swap(&mut self.nodes[i], &mut n);
+                        // free memory of `n`, remove it from hashtable
+                        unsafe { free_node(&mut self.tbl_app, n); }
+                        self.nodes[i] = Self::UNDEF;
+                        self.recycle.push(i as u32)
+                    }
+                }
+            }
+            count
+        }
+
+        fn gc_mark_root(&mut self, &ast: &AST) {
+            // mark subterms transitively, using recursion stack
+            let marked = self.gc_alive.get(ast);
+            if !marked {
+                self.gc_stack.push(ast);
+                self.gc_traverse_and_mark();
+            }
+        }
+
+        fn gc_collect(&mut self) -> usize {
+            let n = self.gc_retain_roots();
+            self.gc_alive.clear();
+            n
+        }
     }
 
-    /// `m.mk_app(f, args)` creates the application of `f` to `args`.
+    impl<S> ManagerCell<S> where S:Symbol, S::Owned : for<'a> From<&'a str> {
+        /// Make a symbol node from a string
+        pub fn mk_str(&mut self, s: &str) -> AST {
+            let sym: S::Owned = s.into();
+            self.mk_sym(sym)
+        }
+    }
+
+    impl<S> ManagerCell<S> where S:Symbol, S::Owned : From<String> {
+        /// Make a symbol node from a owned string
+        pub fn mk_string(&mut self, s: String) -> AST {
+            let sym: S::Owned = s.into();
+            self.mk_sym(sym)
+        }
+    }
+
+    impl<'a, S:Symbol> Deref for ManagerRef<'a, S> {
+        type Target = ManagerCell<S>;
+        fn deref(&self) -> &Self::Target { self.0.deref() }
+    }
+
+    impl<'a, S:Symbol> Deref for ManagerRefMut<'a, S> {
+        type Target = ManagerCell<S>;
+        fn deref(&self) -> &Self::Target { self.0.deref() }
+    }
+
+    impl<'a, S:Symbol> DerefMut for ManagerRefMut<'a, S> {
+        fn deref_mut(&mut self) -> &mut Self::Target { self.0.deref_mut() }
+    }
+
+    /// The public interface of the manager.
     ///
-    /// If the term is structurally equal to an existing term, then this
-    /// ensures the exact same AST is returned ("hashconsing")
-    pub fn mk_app(&mut self, f: AST, args: &[AST]) -> AST {
-        let k = AppStored::mk_ref(f, args);
+    /// A `Manager<S>` is a shared pointer to the actual data.
+    /// Use `get` or `get_mut` to gain access to the internals.
+    impl<S:Symbol> Manager<S> {
+        /// Temporary reference
+        #[inline(always)]
+        pub fn get<'a>(&'a self) -> ManagerRef<'a, S> {
+            let rc : &RefCell<_> = unsafe{ &*self.0 };
+            let r = rc.borrow();
+            ManagerRef(r)
+        }
 
-        // borrow multiple fields
-        let nodes = &mut self.nodes;
-        let tbl_app = &mut self.tbl_app;
-        //let Manager {ref mut apps, ref mut tbl_app,..} = self;
+        /// Temporary mutable reference
+        #[inline(always)]
+        pub fn get_mut<'a>(&'a self) -> ManagerRefMut<'a, S> {
+            // interior mutability, here we come!
+            let rc : &RefCell<_> = unsafe { &*self.0 };
+            let r = rc.borrow_mut();
+            ManagerRefMut(r)
+        }
 
-        match tbl_app.get(&k) {
-            Some(&a) => a, // fast path
-            None => {
-                // insert
-                let n = nodes.len();
-                let ast = AST(n as u32);
-                // make 2 owned copies of the key
-                let k1 = k.to_owned();
-                let k2 = k1.clone();
-                nodes.push(NodeStored::mk_app(k1));
-                tbl_app.insert(k2, ast);
-                // return AST
-                ast
+        /// Number of terms
+        pub fn n_terms(&self) -> usize { self.get().n_terms() }
+
+        #[inline(always)]
+        pub fn mk_app(&self, f: AST, args: &[AST]) -> AST {
+            self.get_mut().mk_app(f, args)
+        }
+
+        #[inline(always)]
+        pub fn mk_sym(&self, s: S::Owned) -> AST { self.get_mut().mk_sym(s) }
+
+        /// Create a new (single-thread) manager
+        pub fn new() -> Self {
+            let m = ManagerCell::new();
+            debug_assert!(m.refcount == 1);
+            // allocate on heap
+            let b = Box::new(RefCell::new(m));
+            Manager(Box::into_raw(b))
+        }
+    }
+
+    impl<S:Symbol> Clone for Manager<S> {
+        // clone and increment refcount
+        fn clone(&self) -> Self {
+            let rc = &mut self.get_mut().refcount;
+            *rc += 1;
+            Manager(self.0)
+        }
+    }
+
+    impl<S:Symbol> Drop for Manager<S> {
+        // clone and increment refcount
+        fn drop(&mut self) {
+            let dead = {
+                let mut m = self.get_mut();
+                let rc = m.refcount;
+                debug_assert!(rc > 0);
+                m.refcount = rc-1;
+                rc == 0
+            };
+            if dead {
+                let b = unsafe { Box::from_raw(self.0) };
+                drop(b)
             }
         }
     }
 
-    /// Make a term from a symbol.
-    ///
-    /// Note that calling this function twice with the same symbol
-    /// will result in two distinct ASTs (as if the second one
-    /// was shadowing the first). Use an auxiliary hashtable if
-    /// you want sharing.
-    pub fn mk_sym(&mut self, s: S::Owned) -> AST {
-        let (ast, slot) = self.allocate_id();
-        *slot = NodeStored::mk_sym(s);
-        ast
-    }
+    /// GC for a manager's internal nodes
+    impl<S> GC for Manager<S> where S: Symbol {
+        type Element = AST;
 
-    /// Iterate over all ASTs in the manager, along with their view
-    pub fn iter<'a>(&'a self) -> impl Iterator<Item=(AST, View<'a,S>)> + 'a {
-        self.nodes.iter().enumerate()
-            .filter_map(move |(i,n)| {
-                let a = AST(i as u32);
-                match n.kind {
-                    Kind::Undef => None, // skip empty slot
-                    _ => Some((a, view_node(a, n))),
-                }
-            })
-    }
+        fn mark_root(&mut self, ast: &AST) {
+            self.get_mut().gc_mark_root(ast)
+        }
 
-    /// Iterate on the ASTs contained in this manager, without their view
-    pub fn iter_ast<'a>(&'a self) -> impl Iterator<Item=AST> + 'a {
-        self.nodes.iter().enumerate()
-            .filter_map(|(i,n)| {
-                let a = AST(i as u32);
-                match n.kind {
-                    Kind::Undef => None, // skip empty slot
-                    _ => Some(a),
-                }
-            })
-    }
-
-    // traverse and mark all elements on `stack` and their subterms
-    fn gc_traverse_and_mark(&mut self) {
-        //let gc_stack = &mut self.gc_stack;
-        //let gc_alive = &mut self.gc_alive;
-        while let Some(ast) = self.gc_stack.pop() {
-            if self.gc_alive.get(ast) {
-                continue; // subgraph already marked and traversed
-            }
-            self.gc_alive.add(ast);
-
-            match view_node(ast, &self.nodes[ast.0 as usize]) {
-                View::Const(_) => (),
-                View::App{f, args} => {
-                    // explore subterms, too
-                    self.gc_stack.push(f);
-                    for &a in args { self.gc_stack.push(a) };
-                }
-            }
+        fn collect(&mut self) -> usize {
+            self.get_mut().gc_collect()
         }
     }
 
-    // collect dead values, return number of collected values
-    fn gc_retain_roots(&mut self) -> usize {
-        use std::mem;
-        let mut count = 0;
-
-        let len = self.nodes.len();
-        for i in 0 .. len {
-            match self.nodes[i].kind() {
-                Kind::Undef => (),
-                _ if self.gc_alive.get(AST(i as u32)) => (), // keep
-                _ => {
-                    // collect
-                    count += 1;
-                    // remove node from `self.nodes[i]` and move it locally
-                    let mut n = Self::UNDEF;
-                    mem::swap(&mut self.nodes[i], &mut n);
-                    // free memory of `n`, remove it from hashtable
-                    unsafe { free_node(&mut self.tbl_app, n); }
-                    self.nodes[i] = Self::UNDEF;
-                    self.recycle.push(i as u32)
-                }
-            }
-        }
-        count
-    }
-}
-
-impl<S:Symbol> Manager<S>
-    where S::Owned : for<'a> From<&'a str>
-{
-    /// Make a symbol node from a string
-    pub fn mk_str(&mut self, s: &str) -> AST {
-        let sym: S::Owned = s.into();
-        self.mk_sym(sym)
-    }
-}
-
-impl<S:Symbol> Manager<S>
-    where S::Owned : From<String>
-{
-    /// Make a symbol node from a owned string
-    pub fn mk_string(&mut self, s: String) -> AST {
-        let sym: S::Owned = s.into();
-        self.mk_sym(sym)
-    }
-}
-
-/// Iterator over ASTs
-impl<S:Symbol> GC for Manager<S> {
-    type Element = AST;
-
-    fn mark_root(&mut self, &ast: &AST) {
-        // mark subterms transitively, using recursion stack
-        let marked = self.gc_alive.get(ast);
-        if !marked {
-            self.gc_stack.push(ast);
-            self.gc_traverse_and_mark();
-        }
+    impl<S> Manager<S> where S:Symbol, S::Owned : for<'a> From<&'a str> {
+        /// Make a symbol node from a string
+        pub fn mk_str(&self, s: &str) -> AST { self.get_mut().mk_str(s) }
     }
 
-    fn collect(&mut self) -> usize {
-        let n = self.gc_retain_roots();
-        self.gc_alive.clear();
-        n
+    impl<S> Manager<S> where S:Symbol, S::Owned : From<String> {
+        /// Make a symbol node from a owned string
+        pub fn mk_string(&self, s: String) -> AST { self.get_mut().mk_string(s) }
     }
 }
 

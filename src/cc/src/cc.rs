@@ -3,26 +3,28 @@
 
 use {
     std::{
-        ops::{Deref,DerefMut}, marker::PhantomData,
+        //ops::{Deref,DerefMut},
+        marker::PhantomData,
         fmt::{self,Debug},
         collections::VecDeque,
     },
-    batsmt_core::{SharedRef,ast::{self,AST},Symbol,backtrack},
+    batsmt_core::{ast::{self,AST},Symbol,backtrack},
     batsat::{Lit as BLit},
     smallvec::SmallVec,
 };
 
 /// The congruence closure
-pub struct CC<S, M> {
-    m: M, // the AST manager
+pub struct CC<S> where S: Symbol {
+    m: ast::Manager<S>, // the AST manager
     stack: backtrack::Stack<Op>,
     m_s: PhantomData<S>,
     cc0: CC0,
 }
 
-// internals of the congruence closure
+/// internal state of the congruence closure
 struct CC0 {
     nodes: ast::DenseMap<Node>,
+    expl: ast::DenseMap<(AST, Expl)>, // proof forest
     tasks: VecDeque<Op>, // operations to perform
 }
 
@@ -33,7 +35,6 @@ pub(crate) struct Node {
     cls_next: AST,
     cls_prev: AST,
     root: Repr, // current representative
-    expl: Option<(AST, Expl)>, // proof forest
 }
 
 /// A representative
@@ -65,17 +66,15 @@ mod cc {
         fn new() -> Self {
             CC0{
                 nodes: ast::DenseMap::new(node::SENTINEL),
+                expl: ast::DenseMap::new((AST::SENTINEL, expl::SENTINEL)),
                 tasks: VecDeque::new(),
             }
         }
     }
 
-    impl<S, M> CC<S, M>
-        where S: Symbol,
-              M: for<'a> SharedRef<'a, ast::Manager<S>>
-    {
+    impl<S> CC<S> where S: Symbol {
         /// Create a new congruence closure
-        pub fn new(m: M) -> Self {
+        pub fn new(m: ast::Manager<S>) -> Self {
             CC {
                 m,
                 m_s: PhantomData::default(),
@@ -84,11 +83,11 @@ mod cc {
             }
         }
 
-        pub fn m<'a>(&'a self) -> impl Deref<Target=ast::Manager<S>> + 'a { self.m.get() }
-        pub fn m_mut<'a>(&'a self) -> impl DerefMut<Target=ast::Manager<S>> + 'a { self.m.get_mut() }
+        pub fn m(&self) -> &ast::Manager<S> { &self.m }
+        pub fn m_mut(&mut self) -> &mut ast::Manager<S> { &mut self.m }
     }
 
-    impl<S, M> backtrack::Backtrackable for CC<S, M> {
+    impl<S: Symbol> backtrack::Backtrackable for CC<S> {
         fn push_level(&mut self) {
             self.stack.promote(&mut self.cc0).push_level();
         }
@@ -101,7 +100,6 @@ mod cc {
     }
 
     impl backtrack::PerformOp<Op> for CC0 {
-
         fn do_op(&mut self, op: &mut Op) {
             unimplemented!(); // TODO
         }
@@ -116,7 +114,7 @@ mod node {
     use super::*;
 
     /// The default `node` object
-    pub(crate) const SENTINEL : Node = Node::new(AST::SENTINEL);
+    pub(super) const SENTINEL : Node = Node::new(AST::SENTINEL);
 
     impl Node {
         /// Create a new node
@@ -124,7 +122,6 @@ mod node {
             Node {
                 ast, cls_prev: ast, cls_next: ast,
                 root: Repr(ast),
-                expl: None,
             }
         }
 
@@ -134,6 +131,13 @@ mod node {
         /// Representative of the class
         pub fn repr(&self) -> Repr { self.root }
     }
+}
+
+pub(crate) mod expl {
+    use super::*;
+
+    /// Sentinel explanation, do not use
+    pub(super) const SENTINEL : Expl = Expl::Lit(BLit::UNDEF);
 }
 
 mod merges {
