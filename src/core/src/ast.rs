@@ -763,3 +763,11 @@ mod dense_map {
 /// We assume the existence of a `sentinel` value that is used to fill the
 /// vector.
 pub type DenseMap<V> = dense_map::T<V>;
+
+// check that `Manager` is just pointer-sized
+#[test]
+fn test_size_manager() {
+    use crate::StrSymbol as S;
+    use std::mem;
+    assert_eq!(mem::size_of::<Manager<S>>(), mem::size_of::<*const u32>());
+}
