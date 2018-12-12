@@ -57,6 +57,27 @@ pub enum Statement<Term, Sort> {
     Exit,
 }
 
+impl<T,S> Statement<T,S> {
+    /// Tranform terms and sorts
+    pub fn map<T2,S2,FT,FS>(self, mut ft: FT, mut fs: FS) -> Statement<T2,S2>
+        where FT: FnMut(T)->T2, FS: FnMut(S) -> S2
+    {
+        use super::Statement::*;
+        match self {
+            SetInfo(a,b) => SetInfo(a,b),
+            SetLogic(a) => SetLogic(a),
+            DeclareSort(s,n) => DeclareSort(s,n),
+            DeclareFun(s,args,ret) => {
+                let args = args.into_iter().map(|s| fs(s)).collect();
+                let ret = fs(ret);
+                DeclareFun(s,args,ret)
+            },
+            Assert(t) => Assert(ft(t)),
+            CheckSat => CheckSat,
+            Exit => Exit,
+        }
+    }
+}
 
 impl<T,S> pp::Pretty for Statement<T,S>
     where T: pp::Pretty, S: pp::Pretty

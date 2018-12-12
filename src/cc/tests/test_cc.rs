@@ -10,7 +10,7 @@ mod cc {
     #[test]
     fn test_new() {
         let m : ast::Manager<StrSymbol> = ast::Manager::new();
-        let mut cc = CC::new(m);
+        let mut cc = CC::new(&m);
 
         // access m
         let mut m = cc.m_mut();
