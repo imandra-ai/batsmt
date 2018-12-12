@@ -12,11 +12,14 @@ members = [
 # default-members = [ …
 
 [profile.release]
+
 opt-level = 3
+
 lto = true # helps a lot with inlining
 
 # for `perf`:
-# debug = true 
+#debug = true 
+#lto = false
 
 [profile.dev]
 opt-level = 1

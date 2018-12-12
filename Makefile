@@ -7,6 +7,9 @@ release:
 debug:
 	cargo build --all
 
+#release-debug:
+#	RUSTFLAGS="-g" cargo build --release --all
+
 check:
 	cargo check --all
 
