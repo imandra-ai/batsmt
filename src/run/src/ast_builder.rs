@@ -3,6 +3,7 @@ use {
     batsmt_parser as parser,
     batsmt_core::{ast,AST,StrSymbol,solver},
     batsmt_cc as cc,
+    batsmt_tseitin as tseitin,
     fxhash::FxHashMap,
 };
 
@@ -82,6 +83,12 @@ mod ast_builder {
         }
     }
 
+    impl Into<tseitin::Builtins> for Builtins {
+        fn into(self) -> tseitin::Builtins {
+            let Builtins {true_,false_,and_,or_,not_,imply_, ..} = self;
+            tseitin::Builtins {true_,false_,and_,or_,not_,imply_}
+        }
+    }
 
     impl Into<lit_map::Builtins> for Builtins {
         fn into(self) -> lit_map::Builtins {

@@ -9,6 +9,7 @@ batsmt-core = {path = "../core"}
 batsmt-cc = {path = "../cc"}
 batsmt-parser = {path = "../parser"}
 batsmt-pretty = {path = "../pretty"}
+batsmt-tseitin = {path = "../tseitin"}
 log = "^0.4"
 env_logger = "0.5"
 fxhash = "0.2"

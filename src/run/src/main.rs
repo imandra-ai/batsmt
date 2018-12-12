@@ -6,6 +6,7 @@ extern crate batsmt_core;
 extern crate batsmt_cc;
 extern crate batsmt_parser;
 extern crate batsmt_pretty;
+extern crate batsmt_tseitin;
 extern crate fxhash;
 #[macro_use] extern crate log;
 
@@ -16,7 +17,8 @@ use {
     std::{env,fs,error::Error},
     batsmt_core::{ast,StrSymbol,solver},
     batsmt_cc as cc,
-    batsmt_parser as parser,
+    batsmt_parser::{self as parser, Statement},
+    batsmt_tseitin::Tseitin,
     crate::ast_printer::PP,
 };
 
@@ -26,11 +28,6 @@ fn main() -> Result<(), Box<Error>> {
     let m : ast::Manager<StrSymbol> = ast::Manager::new();
 
     let mut builder = ast_builder::AstBuilder::new(&m);
-    let s =
-        solver::Solver::new(&m, builder.builtins(),
-            cc::CCTheory::new(&m, builder.builtins()));
-
-    // TODO: create a Solver parametrized by the CC
 
     // parse
     let stmts = {
@@ -49,8 +46,35 @@ fn main() -> Result<(), Box<Error>> {
     };
 
     info!("parsed {} statements", stmts.len());
+
+    let mut solver =
+        solver::Solver::new(&m, builder.builtins(),
+            cc::CCTheory::new(&m, builder.builtins()));
+
+    // Tseitin transformation, to handle formulas
+    let tseitin = Tseitin::new(&m, builder.builtins());
+
     for s in &stmts {
-        println!("parsed statement {}", PP::new(&m, s.clone()));
+        info!("parsed statement {}", PP::new(&m, s.clone()));
+
+        // process statement
+        match s {
+            Statement::Assert(t) => {
+                let cs = tseitin.clauses(t);
+                for c in cs.into_iter() {
+                    solver.add_clause(c);
+                }
+            },
+            Statement::CheckSat => {
+                let r = solver.solve();
+                println!("{:?}", r)
+            },
+            Statement::Exit => {
+                info!("exit");
+                break;
+            }
+            _ => (),
+        }
     }
 
     Ok(())

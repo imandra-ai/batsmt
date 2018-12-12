@@ -1,0 +1,9 @@
+[package]
+name = "batsmt-tseitin"
+version = "0.1.0"
+authors = ["Simon Cruanes <simon.cruanes.2007@m4x.org>"]
+edition = "2018"
+
+[dependencies]
+
+batsmt-core = {path = "../core"}
