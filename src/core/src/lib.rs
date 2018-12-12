@@ -7,8 +7,10 @@ extern crate fxhash;
 pub mod ast;
 pub mod gc;
 pub mod symbol;
-pub mod shared;
 pub mod backtrack;
+pub mod theory;
+pub mod lit_map;
+pub mod solver;
 
 pub use crate::{
   symbol::{Symbol,SymbolView,str::Sym as StrSymbol},
@@ -22,6 +24,8 @@ pub use crate::{
       View as AstView
   },
   gc::GC,
-  shared::SharedRef,
+  theory::Theory,
+  lit_map::LitMap,
+  solver::Solver,
 };
 
