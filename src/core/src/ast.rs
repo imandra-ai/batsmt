@@ -11,7 +11,7 @@ use {
     std::{
         ops::{Deref,DerefMut},
         slice, u32, marker::PhantomData,
-        cell::{self,RefCell},
+        cell::{self,RefCell,Cell},
     },
     crate::{Symbol,SymbolView,GC},
     fxhash::FxHashMap,
@@ -272,7 +272,6 @@ unsafe fn free_node<S:Symbol>(
 /// This state can be obtained via `Manager::get` or `Manager::get_mut`,
 /// and provides most of the useful functions to manipulate ASTs
 pub struct ManagerCell<S:Symbol> {
-    refcount: u16,
     nodes: Vec<NodeStored<S>>,
     tbl_app: FxHashMap<AppStored<'static>, AST>, // for hashconsing
     // TODO: use some bits of nodes[i].kind (a u8) for this?
@@ -292,7 +291,13 @@ pub struct ManagerCell<S:Symbol> {
 /// fn foo<A:Sync>(a: &A) {};
 /// fn bar<S:Symbol>(x: &Foo<S>) { foo(x) }
 /// ```
-pub struct Manager<S:Symbol>(*mut RefCell<ManagerCell<S>>);
+pub struct Manager<S:Symbol>(*mut ManagerCellRC<S>);
+
+// a wrapped managerCell, with a refcount
+struct ManagerCellRC<S:Symbol> {
+    rc: Cell<u16>,
+    cell: RefCell<ManagerCell<S>>,
+}
 
 /// A borrowed reference to the AST manager.
 ///
@@ -317,7 +322,6 @@ mod manager {
             let mut tbl_app = FxHashMap::default();
             tbl_app.reserve(1_024);
             ManagerCell {
-                refcount: 1,
                 nodes: Vec::with_capacity(512),
                 tbl_app,
                 gc_alive: BitSet::new(),
@@ -527,7 +531,7 @@ mod manager {
         /// Temporary reference
         #[inline(always)]
         pub fn get<'a>(&'a self) -> ManagerRef<'a, S> {
-            let rc : &RefCell<_> = unsafe{ &*self.0 };
+            let rc : &RefCell<_> = unsafe{ &(*self.0).cell };
             let r = rc.borrow();
             ManagerRef(r)
         }
@@ -536,7 +540,7 @@ mod manager {
         #[inline(always)]
         pub fn get_mut<'a>(&'a self) -> ManagerRefMut<'a, S> {
             // interior mutability, here we come!
-            let rc : &RefCell<_> = unsafe { &*self.0 };
+            let rc : &RefCell<_> = unsafe { &(*self.0).cell };
             let r = rc.borrow_mut();
             ManagerRefMut(r)
         }
@@ -555,9 +559,11 @@ mod manager {
         /// Create a new (single-thread) manager
         pub fn new() -> Self {
             let m = ManagerCell::new();
-            debug_assert!(m.refcount == 1);
             // allocate on heap
-            let b = Box::new(RefCell::new(m));
+            let b = Box::new(ManagerCellRC {
+                rc: Cell::new(1),
+                cell: RefCell::new(m),
+            });
             Manager(Box::into_raw(b))
         }
     }
@@ -565,8 +571,8 @@ mod manager {
     impl<S:Symbol> Clone for Manager<S> {
         // clone and increment refcount
         fn clone(&self) -> Self {
-            let rc = &mut self.get_mut().refcount;
-            *rc += 1;
+            let rc = unsafe { &mut (*self.0).rc };
+            rc.set(rc.get() + 1);
             Manager(self.0)
         }
     }
@@ -575,14 +581,14 @@ mod manager {
         // clone and increment refcount
         fn drop(&mut self) {
             let dead = {
-                let mut m = self.get_mut();
-                let rc = m.refcount;
-                debug_assert!(rc > 0);
-                m.refcount = rc-1;
-                rc == 0
+                let rc = unsafe { &mut (*self.0).rc };
+                let n = rc.get();
+                debug_assert!(n > 0);
+                rc.set(n - 1);
+                n-1 == 0
             };
             if dead {
-                let b = unsafe { Box::from_raw(self.0) };
+                let b: Box<ManagerCellRC<_>> = unsafe { Box::from_raw(self.0) };
                 drop(b)
             }
         }
