@@ -176,6 +176,17 @@ impl Ctx {
         }
         self
     }
+
+    /// `ctx.array(sep, arr)` prints elements of `arr` with `str` in between
+    pub fn iter<Sep, I, U>(&mut self, sep: Sep, iter: I) -> &mut Self 
+        where Sep: Pretty, U: Pretty, I: Iterator<Item=U>
+    {
+        for (i,x) in iter.enumerate() {
+            if i > 0 { sep.pp(self); }
+            x.pp(self)
+        }
+        self
+    }
 }
 
 /// Default printing width, in case one wants to overload `Pretty.width`
