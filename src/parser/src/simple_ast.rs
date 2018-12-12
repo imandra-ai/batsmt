@@ -2,7 +2,6 @@
 //! Simple representation of terms, sorts, etc.
 
 use {
-    fxhash::FxHashMap,
     std::{ops::Deref,rc::Rc, fmt, ptr},
     crate::types::{self,Op},
     batsmt_pretty as pp,
@@ -120,9 +119,6 @@ pub struct Builder {
     imply_ : Fun,
     eq : Fun,
     not_ : Fun,
-    // scoping for `let`
-    vars: FxHashMap<String, Term>,
-    scopes: Vec<Vec<(String, Option<Term>)>>, // open scopes (with previous binding)
 }
 
 impl Builder {
@@ -137,8 +133,6 @@ impl Builder {
             eq: Fun::new("=".to_string(), None, b.clone()),
             distinct: Fun::new("distinct".to_string(), None, b.clone()),
             not_: Fun::new("not".to_string(), Some(vec![b.clone()]), b.clone()),
-            vars: FxHashMap::default(),
-            scopes: Vec::new(),
         }
     }
 }
@@ -154,6 +148,7 @@ impl types::SortBuilder for Builder {
 impl types::TermBuilder for Builder {
     type Fun = Fun;
     type Term = Term;
+    type Var = Term; // bind variable directly
 
     fn get_builtin(&self, op: Op) -> Fun {
         match op {
@@ -171,9 +166,7 @@ impl types::TermBuilder for Builder {
         Fun::new(name, args, ret)
     }
 
-    fn var(&mut self, s: &str) -> Option<Term> {
-        self.vars.get(s).map(|t| t.clone())
-    }
+    fn var(&mut self, v: Self::Var) -> Term { v }
 
     fn ite(&mut self, a: Term, b: Term, c: Term) -> Term {
         Term::ite(a,b,c)
@@ -183,37 +176,10 @@ impl types::TermBuilder for Builder {
         Term::app_ref(f, args)
     }
 
-    fn enter_let(&mut self, bs: &[(String,Term)]) {
-        // save current bindings in `scopes`
-        let scope =
-            bs.iter()
-            .map(|(s,_)| {
-                let old_t = self.vars.get(s).map(|t| t.clone());
-                let s = s.clone();
-                (s, old_t)
-            })
-            .collect();
-        self.scopes.push(scope);
-        for (s,t) in bs.iter() {
-            self.vars.insert(s.clone(), t.clone());
-        }
-    }
+    fn bind(&mut self, _s: String, t: Term) -> Self::Var { t }
 
-    fn exit_let(&mut self, body: Term) -> Term {
-        let scope = self.scopes.pop().expect("exit_let called too many times");
-        for (s, old_t) in scope {
-            // restore old binding for `s`, or remove it
-            match old_t {
-                None => {
-                    self.vars.remove(&s);
-                },
-                Some(t) => {
-                    self.vars.insert(s,t);
-                },
-            };
-        }
-        body
-    }
+    // ignore bindings, they've been expanded already
+    fn let_(&mut self, _bs: &[(Self::Var,Term)], body: Self::Term) -> Self::Term { body }
 }
 
 impl pp::Pretty for Sort {

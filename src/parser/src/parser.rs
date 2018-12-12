@@ -1,7 +1,7 @@
 
 use {
     std::{error, result, fmt::{self,Display}, io, ops::Deref},
-    fxhash::{FxHashMap,FxHashSet},
+    fxhash::FxHashMap,
     crate::types::*,
 };
 
@@ -29,6 +29,14 @@ fn mk_err(s: String) -> Box<error::Error> {
 // parser's buffer size
 const BUF_SIZE : usize = 1_024 * 16;
 
+#[derive(Debug)]
+struct LetBinding<Var, Term>{
+    name: String,
+    var: Var,
+    t: Term,
+    old_v: Option<Var>, // if shadowed
+}
+
 // A basic SMT-LIB parser
 struct ParserState<'a, R : io::Read, B : TermBuilder + 'a> {
     r: R, // underlying reader
@@ -41,7 +49,7 @@ struct ParserState<'a, R : io::Read, B : TermBuilder + 'a> {
     build: &'a mut B,
     sorts: FxHashMap<String, B::Sort>,
     funs: FxHashMap<String, B::Fun>,
-    vars: FxHashSet<String>, // set of bound variables
+    vars: FxHashMap<String, B::Var>, // let-bindings
 }
 
 impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
@@ -50,9 +58,9 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
         ParserState {
             r, build, eof: false, buf: [0; BUF_SIZE], len: 0,
             i: 0, line: 1, col: 1,
-            vars: FxHashSet::default(),
             funs: FxHashMap::default(),
             sorts: FxHashMap::default(),
+            vars: FxHashMap::default(),
         }
     }
 
@@ -255,6 +263,48 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
         Ok((v,t))
     }
 
+    fn parse_let(&mut self) -> Result<B::Term> {
+        // parse series of bindings and enter scope
+        let bs = self.within_parens(|m| m.parse_binding())?;
+
+        // enter local scope
+        let scope: Vec<LetBinding<_,_>> =
+            bs.iter()
+            .map(|(s,t)| {
+                let var: B::Var = self.build.bind(s.clone(), t.clone());
+                // save shadowed binding, if any
+                let old_v = self.vars.get(s).map(|v| v.clone());
+                LetBinding {name: s.clone(), var, t: t.clone(), old_v}
+            }).collect();
+
+        debug!("enter scope {:#?}", &scope);
+
+        for sc in scope.iter() {
+            self.vars.insert(sc.name.clone(), sc.var.clone());
+        }
+
+        // now parse the body
+        let body = self.term()?;
+        self.expect_char(b')')?;
+
+        // exit scope
+        for sc in scope.iter() {
+            if let Some(old_v) = & sc.old_v {
+                // restore old shadowed binding
+                self.vars.insert(sc.name.clone(), old_v.clone());
+            } else {
+                // remove binding
+                self.vars.remove(&sc.name);
+            }
+        }
+
+        // simplified scope, to be given to the builder
+        let bs: Vec<_> = scope.into_iter().map(|b| (b.var, b.t)).collect();
+
+        let t = self.build.let_(&bs, body);
+        Ok(t)
+    }
+
     // parse a term
     fn term(&mut self) -> Result<B::Term> {
         self.skip_spaces()?;
@@ -271,25 +321,7 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
                         Ok(self.build.ite(t1,t2,t3))
                     },
                     "let" => {
-                        // parse series of bindings and enter scope
-                        let bs = self.within_parens(|m| m.parse_binding())?;
-                        // variables that are added into scope (for shadowing)
-                        let not_yet_in_scope =
-                            bs.iter().filter(|(s,_)| ! self.vars.contains(s))
-                            .map(|(s,_)| s.clone()).collect::<Vec<_>>();
-                        debug!("enter scope {:#?} (newly bound: {:#?})",
-                            &bs, &not_yet_in_scope);
-                        self.vars.extend(not_yet_in_scope.iter().map(|s| s.clone()));
-                        // tell builder we enter the scope of this "let"
-                        self.build.enter_let(&bs);
-                        let body = self.term()?;
-                        self.expect_char(b')')?;
-                        // exit scope
-                        let t = self.build.exit_let(body);
-                        for s in not_yet_in_scope {
-                            self.vars.remove(&s);
-                        }
-                        Ok(t)
+                        self.parse_let()
                     },
                     _ => {
                         // function application
@@ -301,13 +333,14 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
             },
             _ => {
                 let a = self.atom()?;
-                if self.vars.contains(&a) {
-                    self.build.var(&a).ok_or_else(|| {
-                        mk_err(format!("{} is not a valid variable", &a))
-                    })
-                } else {
-                    let f = self.find_fun(&a)?;
-                    Ok(self.build.app_fun(f.clone(), &[]))
+                match self.vars.get(&a) {
+                    Some(v) => {
+                        Ok(self.build.var(v.clone())) // term from bound var
+                    },
+                    None => {
+                        let f = self.find_fun(&a)?;
+                        Ok(self.build.app_fun(f.clone(), &[]))
+                    }
                 }
             }
         }

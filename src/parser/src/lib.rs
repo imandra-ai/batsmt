@@ -7,6 +7,6 @@ pub mod types;
 pub mod parser;
 pub mod simple_ast;
 
-pub use crate::types::{Statement,TermBuilder,SortBuilder};
+pub use crate::types::{Statement,TermBuilder,SortBuilder,Op as BuiltinOp};
 pub use crate::parser::{parse,parse_stdin,parse_str,Error,Result};
 

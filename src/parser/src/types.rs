@@ -19,13 +19,14 @@ pub enum Op { Or, And, Imply, Eq, Not, Distinct }
 pub trait TermBuilder : SortBuilder {
     type Fun : Clone + Debug;
     type Term : Clone + Debug;
+    type Var : Clone + Debug; // bound variable
 
     /// Builtins
 
     fn get_builtin(&self, op: Op) -> Self::Fun;
 
     /// Term from a bound variable
-    fn var(&mut self, name: &str) -> Option<Self::Term>;
+    fn var(&mut self, v: Self::Var) -> Self::Term;
 
     /// Declare a function
     fn declare_fun(&mut self, name: String, args: &[Self::Sort], ret: Self::Sort) -> Self::Fun;
@@ -36,10 +37,11 @@ pub trait TermBuilder : SortBuilder {
     /// Build a `ite` term
     fn ite(&mut self, _: Self::Term, _: Self::Term, _: Self::Term) -> Self::Term;
 
-    /// Build a let binding. The variables may be called from now on.
-    fn enter_let(&mut self, bs: &[(String, Self::Term)]);
+    /// Make a variable bound to this term
+    fn bind(&mut self, name: String, t: Self::Term) -> Self::Var;
 
-    fn exit_let(&mut self, body: Self::Term) -> Self::Term;
+    /// Build a let binding. The variables may be called from now on.
+    fn let_(&mut self, bs: &[(Self::Var, Self::Term)], body: Self::Term) -> Self::Term;
 }
 
 
