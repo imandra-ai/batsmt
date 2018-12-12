@@ -11,6 +11,7 @@ pub mod backtrack;
 pub mod theory;
 pub mod lit_map;
 pub mod solver;
+pub mod util;
 
 pub use crate::{
   symbol::{Symbol,SymbolView,str::Sym as StrSymbol},
@@ -27,5 +28,6 @@ pub use crate::{
   theory::Theory,
   lit_map::LitMap,
   solver::Solver,
+  util::{Shared,SharedRef,SharedRefMut},
 };
 

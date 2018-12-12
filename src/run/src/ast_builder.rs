@@ -70,8 +70,8 @@ mod ast_builder {
 
     impl Into<solver::Builtins> for Builtins {
         fn into(self) -> solver::Builtins {
-            let Builtins {true_, false_, bool_, ..} = self;
-            solver::Builtins {bool_,true_,false_}
+            let Builtins {true_, false_, bool_, not_,..} = self;
+            solver::Builtins {bool_,true_,false_,not_}
         }
     }
 
@@ -79,6 +79,14 @@ mod ast_builder {
         fn into(self) -> cc::Builtins {
             let Builtins {true_, false_, eq, distinct, ..} = self;
             cc::Builtins {true_,false_,eq,distinct}
+        }
+    }
+
+
+    impl Into<lit_map::Builtins> for Builtins {
+        fn into(self) -> lit_map::Builtins {
+            let Builtins {true_, false_, not_, bool_, ..} = self;
+            lit_map::Builtins {true_,false_,not_,bool_}
         }
     }
 

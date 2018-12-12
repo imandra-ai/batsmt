@@ -11,10 +11,12 @@ use {
     std::{
         ops::{Deref,DerefMut},
         slice, u32, marker::PhantomData,
-        cell::{self,RefCell,Cell},
     },
-    crate::{Symbol,SymbolView,GC},
-    fxhash::FxHashMap,
+    crate::{
+        Symbol,SymbolView,GC,
+        util::{Shared,SharedRef,SharedRefMut},
+    },
+    fxhash::{FxHashMap,FxHashSet},
 };
 
 /// The unique identifier of an AST node.
@@ -296,23 +298,18 @@ pub struct ManagerCell<S:Symbol> {
 /// fn foo<A:Sync>(a: &A) {};
 /// fn bar<S:Symbol>(x: &Foo<S>) { foo(x) }
 /// ```
-pub struct Manager<S:Symbol>(*mut ManagerCellRC<S>);
-
-// a wrapped managerCell, with a refcount
-struct ManagerCellRC<S:Symbol> {
-    rc: Cell<u16>,
-    cell: RefCell<ManagerCell<S>>,
-}
+#[derive(Clone)]
+pub struct Manager<S:Symbol>(Shared<ManagerCell<S>>);
 
 /// A borrowed reference to the AST manager.
 ///
 /// It has a limited lifetime (`'a`) but provides access to views of AST symbols
-pub struct ManagerRef<'a, S:Symbol>(cell::Ref<'a, ManagerCell<S>>);
+pub struct ManagerRef<'a, S:Symbol>(SharedRef<'a, ManagerCell<S>>);
 
 /// A borrowed mutable reference to the AST manager.
 ///
 /// It has a limited lifetime (`'a`) and cannot be aliased.
-pub struct ManagerRefMut<'a, S:Symbol>(cell::RefMut<'a, ManagerCell<S>>);
+pub struct ManagerRefMut<'a, S:Symbol>(SharedRefMut<'a, ManagerCell<S>>);
 
 mod manager {
     use super::*;
@@ -546,18 +543,13 @@ mod manager {
         /// Temporary reference
         #[inline(always)]
         pub fn get<'a>(&'a self) -> ManagerRef<'a, S> {
-            let rc : &RefCell<_> = unsafe{ &(*self.0).cell };
-            let r = rc.borrow();
-            ManagerRef(r)
+            ManagerRef(self.0.borrow())
         }
 
         /// Temporary mutable reference
         #[inline(always)]
         pub fn get_mut<'a>(&'a self) -> ManagerRefMut<'a, S> {
-            // interior mutability, here we come!
-            let rc : &RefCell<_> = unsafe { &(*self.0).cell };
-            let r = rc.borrow_mut();
-            ManagerRefMut(r)
+            ManagerRefMut(self.0.borrow_mut())
         }
 
         /// Number of terms
@@ -574,39 +566,32 @@ mod manager {
         /// Create a new (single-thread) manager
         pub fn new() -> Self {
             let m = ManagerCell::new();
-            // allocate on heap
-            let b = Box::new(ManagerCellRC {
-                rc: Cell::new(1),
-                cell: RefCell::new(m),
-            });
-            Manager(Box::into_raw(b))
+            Manager(Shared::new(m))
         }
-    }
 
-    impl<S:Symbol> Clone for Manager<S> {
-        // clone and increment refcount
-        fn clone(&self) -> Self {
-            let rc = unsafe { &mut (*self.0).rc };
-            rc.set(rc.get() + 1);
-            Manager(self.0)
+        /// Iterate over the given AST `t`, calling `f` on every subterm once.
+        ///
+        /// Allocates a `iter_dag::State` and uses it to iterate only once.
+        /// For more sophisticated use (iterating on several terms, etc.)
+        /// use `iter_dag::State` directly.
+        pub fn iter_dag<F>(&self, t: AST, f: F) where F: FnMut(AST) {
+            let mut st = iter_dag::State::new(self);
+            st.iter(t, f)
         }
-    }
 
-    impl<S:Symbol> Drop for Manager<S> {
-        // clone and increment refcount
-        fn drop(&mut self) {
-            let dead = {
-                let rc = unsafe { &mut (*self.0).rc };
-                let n = rc.get();
-                debug_assert!(n > 0);
-                rc.set(n - 1);
-                n-1 == 0
-            };
-            if dead {
-                let b: Box<ManagerCellRC<_>> = unsafe { Box::from_raw(self.0) };
-                drop(b)
-            }
+        /* TODO
+        /// Iterate over the given AST `t`, mapping every subterm using `f`.
+        ///
+        /// Allocates a `map_dag::State` and uses it to iterate.
+        /// For more sophisticated use (mapping several terms, etc.)
+        /// use `map_dag::State` directly.
+        pub fn map_dag<F>(&self, t: AST, f: F) -> AST
+            where F: FnMut(&mut Self, AST) -> AST
+        {
+            let mut st = map_dag::State::new(self);
+            st.map(t, f)
         }
+        */
     }
 
     /// GC for a manager's internal nodes
@@ -680,6 +665,9 @@ mod bit_set {
 
 /// A hashmap whose keys are AST nodes
 pub type HashMap<V> = FxHashMap<AST,V>;
+
+/// A hashset whose keys are AST nodes
+pub type HashSet = FxHashSet<AST>;
 
 mod dense_map {
     use super::*;
@@ -778,6 +766,173 @@ mod dense_map {
         }
     }
 }
+
+/// Iterate over sub-terms.
+///
+/// Iteration over sub-terms, without repetition (sharing means a common
+/// subterm will be traversed only once).
+pub mod iter_dag {
+    use super::*;
+
+    #[derive(Clone)]
+    pub struct State<S:Symbol> {
+        m: Manager<S>,
+        st: State0,
+    }
+
+    // internal structure, separate from `m`
+    #[derive(Clone)]
+    struct State0 {
+        st: Vec<AST>,
+        seen: HashSet,
+    }
+
+    impl<S> State<S> where S: Symbol {
+        /// New state
+        pub fn new(m: &Manager<S>) -> Self {
+            let m = m.clone();
+            State { m, st: State0::new(), }
+        }
+
+        /// Iterate over the given AST `t`, calling `f` on every subterm once.
+        ///
+        /// ## Params
+        /// - `self` is the set of already seen terms, and will be mutated.
+        /// - `t` is the term to recursively explore
+        /// - `f` is the function to call once on every subterm
+        pub fn iter<F>(&mut self, t: AST, mut f: F) where F: FnMut(AST) {
+            if self.st.seen.len() > 0 && self.st.seen.contains(&t) { return }
+
+            self.st.push(t);
+            while let Some(t) = self.st.st.pop() {
+                if self.st.seen.contains(&t) {
+                    continue
+                } else {
+                    self.st.seen.insert(t);
+                    f(t); // process `t`
+
+                    match self.m.get().view(t) {
+                        View::Const(_) => (),
+                        View::App{f,args} => {
+                            self.st.push(f);
+                            for a in args.iter() { self.st.push(*a) }
+                        },
+                    }
+                }
+            }
+        }
+
+        /// Clear state, forgetting all the subterms seen so far.
+        pub fn clear(&mut self) {
+            self.st.st.clear();
+            self.st.seen.clear();
+        }
+    }
+
+    impl State0 {
+        fn new() -> Self {
+            Self {seen: HashSet::default(), st: Vec::new(), }
+        }
+
+        /// local conditional push
+        fn push(&mut self, t:AST) {
+            if ! self.seen.contains(&t) {
+                self.st.push(t)
+            }
+        }
+    }
+}
+
+/* TODO: maybe have a visitor-like pattern, with the case for `app` taking the
+ * slice of already mapped subterms?
+ *
+/// Map sub-terms.
+///
+/// Iteration over sub-terms, without repetition (sharing means a common
+/// subterm will be traversed only once).
+pub mod map_dag {
+    use super::*;
+    use smallvec::SmallVec;
+
+    #[derive(Clone)]
+    pub struct State<S:Symbol> {
+        m: Manager<S>,
+        st: State0,
+    }
+
+    // local small vector type
+    type SVec<T> = SmallVec<[T; 3]>;
+
+    // internal structure, separate from `m`
+    #[derive(Clone)]
+    struct State0 {
+        tasks: Vec<Task>,
+        res: Vec<Result>, // intermediate results
+        cache: HashMap<Result>, // cached values
+    }
+
+    type Result = AST; // an AST that is the *result* of a mapping
+
+    #[derive(Clone)]
+    enum Task {
+        // must be an application of `n` arguments.
+        // Pops `n+1` from res, pushes one.
+        Exit(AST, usize),
+        Enter(AST), // will eventually push one onto `res`
+        Push(Result), // push onto `res`
+    }
+
+    impl<S> State<S> where S: Symbol {
+        /// New state
+        pub fn new(m: &Manager<S>) -> Self {
+            let m = m.clone();
+            State {m, st: State0::new(), }
+        }
+
+        /// Iterate over the given AST `t`, calling `f` on every subterm once.
+        pub fn map<F>(&mut self, t: AST, mut f: F) -> AST
+            where F: FnMut(&mut Manager<S>, AST) -> AST
+        {
+            self.st.push(Task::Enter(t));
+            while let Some(task) = self.st.tasks.pop() {
+                match task {
+                    Task::Push(u) => self.st.res.push(u),
+                    Task::Enter(t) => {
+                        match self.st.cache.get(t) {
+                            Some(u) => self.st.res.push(*u), // cached
+                            None => {
+                                // explore subterms first, then schedule a call for `f`
+                            }
+
+                }
+                if self.st.seen.contains(&t) {
+                    continue
+                } else {
+                    self.st.seen.insert(t);
+                    (self.f)(t); // process `t`
+
+                    match self.m.get().view(t) {
+                        View::Const(_) => (),
+                        View::App{f,args} => {
+                            self.st.push(f);
+                            for a in args.iter() { self.st.push(*a) }
+                        },
+                    }
+                }
+            }
+
+            debug_assert_eq!(st.res.len(), 1);
+            st.res.pop().unwrap()
+        }
+    }
+
+    impl State0 {
+        fn new() -> Self {
+            Self {cache: HashMap::default(), tasks: Vec::new(), res: Vec::new(), }
+        }
+    }
+}
+*/
 
 /// A map backed by a vector
 ///

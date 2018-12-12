@@ -281,5 +281,88 @@ mod ast {
 
         assert_eq!(m.len(), m.iter().count());
     }
+
+    // trivial implementation of `iter_dag`, as a reference
+    fn iter_dag_ref<F>(m: &M, t: AST, f: F) where F: FnMut(AST) {
+        let mut seen = HashSet::default();
+
+        fn iter_dag_ref_rec(seen: &HashSet, m: &M, t: AST, f: F) {
+            if ! seen.contains(&t) {
+                seen.insert(t);
+                f(t);
+
+                let mr = m.get();
+                match mr.view(t) {
+                    View::Const(_) => (),
+                    View::App{f: f0,args} => {
+                        iter_dag_ref_rec(seen, m, f0, f);
+                        for a in args.iter() {
+                            iter_dag_ref_rec(seen, m, *a, f);
+                        }
+                    }
+                }
+        }
+
+        iter_dag_ref_rec(&mut seen, m, t, f);
+    }
+
+    #[test]
+    fn test_iter_dag() {
+        // create a bunch of terms
+        let mut s = StressApp::new(100).verbose(false).long_apps(true);
+        s.run();
+        let m = s.m.clone();
+
+        for t in s.terms.iter() {
+            // count subterms using `iter_dag`
+            let mut n1 = 0;
+            m.iter(t, |_| n1 += 1);
+
+            let mut n2 = 0;
+            iter_dag_ref(m, t, |_| n2 += 1);
+
+            assert_eq!(n1, n2);
+        }
+    }
+
+    // test that `t.map(id) == t`
+    #[test]
+    fn test_map_dag_id() {
+        // create a bunch of terms
+        let mut s = StressApp::new(100).verbose(false).long_apps(true);
+        s.run();
+        let m = s.m.clone();
+
+        for t in s.terms.iter() {
+            let u = m.map(t, |x| x);
+            assert_eq!(t, u);
+        }
+
+    }
+
+    /* FIXME:
+    // test that `t.map(|f| f.args.rev()).map(|f| f.args.rev()) == t`
+    #[test]
+    fn test_map_dag_rev() {
+        // create a bunch of terms
+        let mut s = StressApp::new(100).verbose(false).long_apps(true);
+        s.run();
+        let m = s.m.clone();
+
+        fn rev_args(m: &M, t: AST) -> AST {
+            let m = m.clone();
+            m.map(t, |m, t| {
+                m.get_mut().
+
+            }
+        }
+
+        for t in s.terms.iter() {
+            let u = m.map(t, |x| x);
+            assert_eq!(t, u);
+        }
+
+    }
+    */
 }
 
