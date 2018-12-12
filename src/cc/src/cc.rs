@@ -15,10 +15,12 @@ use {
         fmt::{self,Debug},
         collections::VecDeque,
     },
-    batsmt_core::{ast::{self,AST},Symbol,backtrack},
-    batsat::{Lit as BLit},
+    batsmt_core::{ast::{self,AST},Symbol,backtrack,theory},
     smallvec::SmallVec,
 };
+
+/// Boolean literal
+pub type BLit = theory::BLit;
 
 /// The congruence closure
 pub struct CC<S> where S: Symbol {
@@ -103,7 +105,7 @@ mod cc {
         pub fn m(&self) -> ast::ManagerRef<S> { self.m.get() }
 
         #[inline(always)]
-        pub fn m_mut(&self) -> ast::ManagerRefMut<S> { self.m.get_mut() }
+        pub fn m_mut(&mut self) -> ast::ManagerRefMut<S> { self.m.get_mut() }
 
         /// `cc.merge(t1,t2,lit)` merges `t1` and `t2` with explanation `lit`.
         pub fn merge(&self, t1: AST, t2: AST, lit: BLit) {

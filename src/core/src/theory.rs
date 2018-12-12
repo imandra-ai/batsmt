@@ -3,11 +3,11 @@
 
 use {
     smallvec::SmallVec,
-    crate::{symbol::Symbol, ast::{self,AST}, backtrack::Backtrackable},
+    crate::{symbol::Symbol, ast::AST, backtrack::Backtrackable},
 };
 
 /// A boolean literal
-pub use batsat::Lit as BLit;
+pub type BLit = batsat::Lit;
 
 type SVec<T> = SmallVec<[T; 3]>;
 
@@ -27,12 +27,7 @@ enum ActState {
 /// A theory is responsible for enforcing the semantics of some
 /// of the boolean literals.
 pub trait Theory<S:Symbol> : Backtrackable {
-    /// Concrete initialization function.
-    ///
-    /// The theory receives a term manager.
-    fn init(m: ast::Manager<S>) -> Self where Self : Sized;
-
-    /// Check a partial model.
+    /// Check a full model.
     ///
     /// ## Params:
     ///
@@ -41,6 +36,18 @@ pub trait Theory<S:Symbol> : Backtrackable {
     /// - `acts` is a set of actions available to the theory.
     fn final_check<I>(&mut self, acts: &mut Actions, i: I)
         where I: Iterator<Item=(AST, bool, BLit)>;
+
+
+    /// Check a partial model.
+    ///
+    /// The parameters are similar to those of `final_check`, but
+    /// this function is allowed to not fully check the model.
+    /// It will be called more often than `final_check` so it should be efficient.
+    ///
+    /// By default it does nothing.
+    fn partial_check<I>(&mut self, _acts: &mut Actions, _i: I)
+        where I: Iterator<Item=(AST, bool, BLit)>
+    {}
 }
 
 impl Actions {

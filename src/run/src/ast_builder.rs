@@ -1,15 +1,15 @@
 
 use {
     batsmt_parser as parser,
-    batsmt_core::{ast,AST,StrSymbol},
+    batsmt_core::{ast,AST,StrSymbol,solver},
+    batsmt_cc as cc,
     fxhash::FxHashMap,
 };
 
 type M = ast::Manager<StrSymbol>;
 
-/// AST builder for the parser
-pub struct AstBuilder {
-    m: M,
+#[derive(Clone,Debug)]
+pub struct Builtins {
     pub bool_: AST,
     pub true_: AST,
     pub false_: AST,
@@ -19,6 +19,12 @@ pub struct AstBuilder {
     pub and_: AST,
     pub or_: AST,
     pub imply_: AST,
+}
+
+/// AST builder for the parser
+pub struct AstBuilder {
+    m: M,
+    b: Builtins,
     sorts: FxHashMap<String, (AST, u8)>,
     funs: FxHashMap<String, (AST, Vec<AST>, AST)>, // sort
 }
@@ -32,6 +38,23 @@ mod ast_builder {
             let m = m.clone();
             Self {
                 m: m.clone(),
+                b: Builtins::new(&m),
+                funs: FxHashMap::default(),
+                sorts: FxHashMap::default(),
+            }
+        }
+
+        /// Convert builtins into `B`
+        pub fn builtins<B>(&self) -> B where Builtins: Into<B>
+        {
+            let b = self.b.clone();
+            b.into()
+        }
+    }
+
+    impl Builtins {
+        pub fn new(m: &M) -> Self {
+            Builtins {
                 bool_: m.mk_str("Bool"),
                 true_: m.mk_str("true"),
                 false_: m.mk_str("false"),
@@ -41,16 +64,28 @@ mod ast_builder {
                 imply_: m.mk_str("=>"),
                 not_: m.mk_str("not"),
                 distinct: m.mk_str("distinct"),
-                funs: FxHashMap::default(),
-                sorts: FxHashMap::default(),
             }
+        }
+    }
+
+    impl Into<solver::Builtins> for Builtins {
+        fn into(self) -> solver::Builtins {
+            let Builtins {true_, false_, bool_, ..} = self;
+            solver::Builtins {bool_,true_,false_}
+        }
+    }
+
+    impl Into<cc::Builtins> for Builtins {
+        fn into(self) -> cc::Builtins {
+            let Builtins {true_, false_, eq, distinct, ..} = self;
+            cc::Builtins {true_,false_,eq,distinct}
         }
     }
 
     impl parser::SortBuilder for AstBuilder {
         type Sort = AST;
 
-        fn get_bool(&self) -> AST { self.bool_ }
+        fn get_bool(&self) -> AST { self.b.bool_ }
 
         fn declare_sort(&mut self, s: String, arity: u8) -> AST {
             debug!("declare sort {:?} arity {}", &s, arity);
@@ -74,12 +109,12 @@ mod ast_builder {
         fn get_builtin(&self, op: parser::BuiltinOp) -> AST {
             use parser::BuiltinOp::*;
             match op {
-                Imply => self.imply_,
-                And => self.and_,
-                Or => self.or_,
-                Eq => self.eq,
-                Not => self.not_,
-                Distinct => self.distinct,
+                Imply => self.b.imply_,
+                And => self.b.and_,
+                Or => self.b.or_,
+                Eq => self.b.eq,
+                Not => self.b.not_,
+                Distinct => self.b.distinct,
             }
         }
 
@@ -106,5 +141,4 @@ mod ast_builder {
 
         fn let_(&mut self, _: &[(AST,AST)], body: AST) -> AST { body }
     }
-
 }

@@ -5,13 +5,20 @@ use batsat::{self,lbool};
 use {
     crate::{
         ast::{self,AST},
-        lit_map::{LitMap, Builtins as BoolBuiltins},
+        lit_map::LitMap,
         theory::{Theory,Actions}, symbol::Symbol,
     },
 };
 
 /// A boolean literal
 pub use batsat::Lit as BLit;
+
+#[derive(Copy,Clone,Debug)]
+pub struct Builtins {
+    pub bool_: AST, // the boolean sort
+    pub true_: AST, // term for `true`
+    pub false_: AST, // term for `false`
+}
 
 /// The theory given to the SAT solver
 struct CoreTheory<S:Symbol, Th: Theory<S>> {
@@ -44,12 +51,12 @@ mod solver {
 
     impl<S:Symbol, Th: Theory<S>> Solver<S,Th> {
         /// New Solver, using the given theory `th` and AST manager
-        pub fn new(m: &ast::Manager<S>, b: BoolBuiltins, th: Th) -> Self
+        pub fn new(m: &ast::Manager<S>, b: Builtins, th: Th) -> Self
         {
             let c = CoreTheory {
                 m: m.clone(),
                 th,
-                lit_map: LitMap::new(m, b),
+                lit_map: LitMap::new(m, b.into()),
                 acts: Actions::new(),
             };
             let opts = batsat::SolverOpts::default();
@@ -138,4 +145,16 @@ mod solver {
 
     }
 
+}
+
+mod builtins {
+    use crate::lit_map::Builtins as BoolBuiltins;
+    use super::*;
+
+    impl Into<BoolBuiltins> for Builtins {
+        fn into(self) -> BoolBuiltins {
+            let Builtins {true_, false_, bool_} = self;
+            BoolBuiltins { true_, false_, bool_}
+        }
+    }
 }

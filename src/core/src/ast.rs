@@ -230,6 +230,11 @@ mod node_stored {
         #[inline(always)]
         pub fn kind(&self) -> Kind { self.kind }
 
+        #[inline(always)]
+        pub fn is_app(&self) -> bool { self.kind() == Kind::App }
+        #[inline(always)]
+        pub fn is_sym(&self) -> bool { self.kind() == Kind::Sym }
+
         pub unsafe fn as_app(&self) -> &AppStored<'static> {
             debug_assert!(self.kind() == Kind::App);
             &self.data.app
@@ -334,6 +339,16 @@ mod manager {
         #[inline(always)]
         pub fn view(&self, ast: AST) -> View<S> {
             view_node(&self.nodes[ast.0 as usize])
+        }
+
+        #[inline(always)]
+        pub fn is_app(&self, ast: AST) -> bool {
+            self.nodes[ast.0 as usize].is_app()
+        }
+
+        #[inline(always)]
+        pub fn is_sym(&self, ast: AST) -> bool {
+            self.nodes[ast.0 as usize].is_sym()
         }
 
         /// Number of terms

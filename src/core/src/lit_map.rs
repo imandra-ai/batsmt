@@ -15,7 +15,7 @@ pub struct LitMap<S:Symbol> {
 }
 
 /// Builtin symbols required for this basic interface
-#[derive(Copy,Clone)]
+#[derive(Copy,Clone,Debug)]
 pub struct Builtins {
     pub bool_: AST, // the boolean sort
     pub true_: AST, // term for `true`

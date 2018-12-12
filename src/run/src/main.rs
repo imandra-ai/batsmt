@@ -14,8 +14,8 @@ mod ast_printer;
 
 use {
     std::{env,fs,error::Error},
-    batsmt_core::{ast,StrSymbol},
-    batsmt_cc::CC,
+    batsmt_core::{ast,StrSymbol,solver},
+    batsmt_cc as cc,
     batsmt_parser as parser,
     crate::ast_printer::PP,
 };
@@ -25,7 +25,10 @@ fn main() -> Result<(), Box<Error>> {
 
     let m : ast::Manager<StrSymbol> = ast::Manager::new();
 
-    let mut b = ast_builder::AstBuilder::new(&m);
+    let mut builder = ast_builder::AstBuilder::new(&m);
+    let s =
+        solver::Solver::new(&m, builder.builtins(),
+            cc::CCTheory::new(&m, builder.builtins()));
 
     // TODO: create a Solver parametrized by the CC
 
@@ -35,12 +38,12 @@ fn main() -> Result<(), Box<Error>> {
         match args.skip(1).next() {
             None => {
                 info!("parse stdin");
-                parser::parse_stdin(&mut b)?
+                parser::parse_stdin(&mut builder)?
             },
             Some(file) => {
                 info!("parse file {:?}", file);
                 let file = fs::File::open(file)?;
-                parser::parse(&mut b, file)?
+                parser::parse(&mut builder, file)?
             },
         }
     };
