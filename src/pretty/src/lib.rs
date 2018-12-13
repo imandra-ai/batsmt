@@ -232,6 +232,21 @@ pub fn string(s: String) -> impl Pretty { Op::Text(s) }
 /// Display a dynamic (owned) string
 pub fn text<U:Into<String>>(u: U) -> impl Pretty { Op::Text(u.into()) }
 
+struct Sexp<'a>(&'a [&'a dyn Pretty]);
+impl<'a> Pretty for Sexp<'a> {
+    fn pp(&self, ctx: &mut Ctx) {
+        ctx.sexp(|ctx| {
+            for (i,t) in self.0.iter().enumerate() {
+                if i > 0 { ctx.space(); }
+                (*t).pp(ctx)
+            }
+        });
+    }
+}
+
+/// Print the given arguments as a S-expression
+pub fn sexp_slice<'a>(v: &'a[&'a dyn Pretty]) -> impl Pretty + 'a { Sexp(v) }
+
 impl<A:Pretty,B:Pretty> Pretty for (A,B) {
     fn pp(&self, ctx: &mut Ctx) { self.0.pp(ctx); self.1.pp(ctx) }
 }
@@ -276,27 +291,16 @@ impl<T> Pretty for [T] where T : Pretty {
     }
 }
 
-impl<T> Pretty for Vec<T> where T : Pretty {
-    fn pp(&self, ctx: &mut Ctx) { self.as_slice().pp(ctx) }
+/// Make a s-expression from the given objects (which mustt be convertible to Pretty)
+#[macro_export]
+macro_rules! sexp {
+    ($( $t:expr ),* ) => {
+        sexp_slice(&[ $( $t ),* ])
+    }
 }
 
-/// Automatic definition of `Display` from `Pretty`
-#[macro_export]
-macro_rules! pretty_display {
-    ($t:ty) => {
-        impl fmt::Display for $t {
-            fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result
-                { Pretty::pp_fmt(&self,out) }
-        }
-    };
-    /* TODO: find how to define Display automatically for parametrized types
-    ($t:ty ; $( $param:ident ),*) => {
-        impl fmt::Display<$($param : fmt::Pretty),*> for $t< $($param),*> {
-            fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result
-                { Pretty::pp_fmt(&self,out) }
-        }
-    };
-    */
+impl<T> Pretty for Vec<T> where T : Pretty {
+    fn pp(&self, ctx: &mut Ctx) { self.as_slice().pp(ctx) }
 }
 
 // Implementations
@@ -314,13 +318,11 @@ fn test_display() {
     struct Foo(u32);
 
     impl Pretty for Foo {
-        fn pp(&self, ctx: &mut Ctx) { ctx.text_string(self.0.to_string()); }
+        fn pp(&self, ctx: &mut Ctx) { ctx.string(self.0.to_string()); }
     };
-    pretty_display!(Foo);
 
     let foo = Foo(42);
-    let s = format!("{}", &foo);
-
+    let s = format!("{}", display(&foo));
     assert_eq!("42", s);
 
     struct V<T>(Vec<T>);
@@ -328,14 +330,9 @@ fn test_display() {
         fn pp(&self, ctx: &mut Ctx) { self.0.pp(ctx) }
     };
 
-    /* FIXME
-    pretty_display!(V; T);
-    */
-    impl<T:Pretty> fmt::Display for V<T> {
-        fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result { Pretty::pp_fmt(&self,out) }
-    }
-
-    let s2 = format!("{}", &V(vec![Foo(1), Foo(23), Foo(105)]));
-
+    let s2 = format!("{}", display(V(vec![Foo(1), Foo(23), Foo(105)])));
     assert_eq!("(1 23 105)", s2);
+
+    let s3 = format!("{}", display(sexp!(&Foo(1), &Foo(23), &Foo(105))));
+    assert_eq!("(1 23 105)", s3);
 }

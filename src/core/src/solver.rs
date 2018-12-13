@@ -84,7 +84,7 @@ mod solver {
 
         // initial axioms,etc.
         fn init_logic(&mut self) {
-            debug!("solver.init-logic")
+            trace!("solver.init-logic")
         }
 
         /// Access literal map of this solver
@@ -92,13 +92,13 @@ mod solver {
 
         /// Add a boolean clause
         pub fn add_bool_clause_reuse(&mut self, c: &mut Vec<BLit>) {
-            debug!("solver.add-bool-clause {:?}", c);
+            trace!("solver.add-bool-clause {:?}", c);
             self.s0.sat.add_clause_reuse(c);
         }
 
         /// Add a clause made from signed terms
         pub fn add_clause_slice(&mut self, c: &[TheoryLit]) {
-            debug!("solver.add-clause\n{}", self.m.display(c));
+            trace!("solver.add-clause\n{}", self.m.display(c));
             // use `self.lits` as temporary storage
             self.lits.clear();
             let s0 = &mut self.s0;
@@ -156,7 +156,7 @@ mod solver {
             -> batsat::theory::CheckRes<A::Conflict>
             where A: batsat::theory::TheoryArgument
         {
-            debug!("solver.final-check ({} elts in trail)", a.model().len());
+            trace!("solver.final-check ({} elts in trail)", a.model().len());
             unimplemented!() // TODO: filter_map into theory lits, clear actions, call theory, process action
         }
     }

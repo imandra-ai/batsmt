@@ -216,6 +216,15 @@ impl pp::Pretty for Term {
     }
 }
 
+macro_rules! pretty_display {
+    ($t:ty) => {
+        impl fmt::Display for $t {
+            fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result
+                { Pretty::pp_fmt(&self,out) }
+        }
+    };
+}
+
 pretty_display!(Sort);
 pretty_display!(Fun);
 pretty_display!(Term);

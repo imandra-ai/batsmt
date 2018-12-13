@@ -199,7 +199,7 @@ impl Actions {
     pub fn add_lemma(&mut self, c: &[AST]) {
         match self.state {
             ActState::Props(ref mut cs) => {
-                debug!("theory.add_lemma {:?}", c);
+                trace!("theory.add_lemma {:?}", c);
                 let v = c.iter().map(|t| *t).collect();
                 cs.push(v)
             },
@@ -214,7 +214,7 @@ impl Actions {
     pub fn raise_conflict(&mut self, c: &[AST]) {
         // only create a conflict if there's not one already
         if let ActState::Props(_) = self.state {
-            debug!("theory.raise-conflict {:?}", c);
+            trace!("theory.raise-conflict {:?}", c);
             let c = c.iter().map(|t| *t).collect();
             self.state = ActState::Conflict(c);
         }

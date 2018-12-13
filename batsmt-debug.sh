@@ -1,7 +1,7 @@
 #!/bin/sh
 
-cargo build
+cargo build || exit 1
 
 export RUST_BACKTRACE=1
-export RUST_LOG=debug
+export RUST_LOG=trace
 exec ./target/debug/batsmt-run $@

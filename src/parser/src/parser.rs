@@ -66,7 +66,7 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
 
     // refill internal buffer
     fn refill(&mut self) -> Result<()> {
-        debug!("refill internal buffer (size {})", BUF_SIZE);
+        trace!("refill internal buffer (size {})", BUF_SIZE);
         debug_assert!(self.i >= self.len);
         self.i = 0;
         self.len = self.r.read(&mut self.buf)?;
@@ -277,7 +277,7 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
                 LetBinding {name: s.clone(), var, t: t.clone(), old_v}
             }).collect();
 
-        debug!("enter scope {:#?}", &scope);
+        trace!("enter scope {:#?}", &scope);
 
         for sc in scope.iter() {
             self.vars.insert(sc.name.clone(), sc.var.clone());
