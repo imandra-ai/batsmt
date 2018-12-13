@@ -90,20 +90,65 @@ impl<S:Symbol> Tseitin<S> {
                     View::App {f, args} if f == b.and_ => {
                         // obtain literals for subterms of the `and` into `tmp`
                         tmp.clear();
-                        for t in args.iter() {
-                            tmp.push(lit_map.unfold_not(*t, true).into());
+                        for &t in args.iter() {
+                            tmp.push(lit_map.unfold_not(t, true).into());
                         }
-                        let lit_and: TheoryLit = u.into();
+                        let lit_and = TheoryLit::new_b(u, true); // pure bool
 
                         // `lit_and => args[i]`
-                        for sub in tmp.iter() {
-                            cs.push(&[!lit_and, *sub]);
+                        for &sub in tmp.iter() {
+                            cs.push(&[!lit_and, sub]);
                         }
                         // `args[i] ==> lit_and`
                         {
                             tmp2.clear();
-                            for sub in tmp.iter() { tmp2.push(!*sub) }
+                            for &sub in tmp.iter() { tmp2.push(!sub) }
                             tmp2.push(lit_and);
+                            cs.push(&tmp2);
+                        }
+                    },
+                    View::App {f, args} if f == b.or_ => {
+                        // obtain literals for subterms of the `or` into `tmp`
+                        tmp.clear();
+                        for &t in args.iter() {
+                            tmp.push(lit_map.unfold_not(t, true).into());
+                        }
+                        let lit_or = TheoryLit::new_b(u, true); // pure bool
+
+                        // `args[i] => lit_or`
+                        for &sub in tmp.iter() {
+                            cs.push(&[!sub, lit_or]);
+                        }
+                        // `lit_or => ∨_i args[i]`
+                        {
+                            tmp2.clear();
+                            tmp2.extend_from_slice(&tmp);
+                            tmp2.push(!lit_or);
+                            cs.push(&tmp2);
+                        }
+                    },
+                    View::App {f, args} if f == b.imply_ => {
+                        // same as `or`, but all literals but the last are negated
+                        assert!(args.len() >= 1);
+                        tmp.clear();
+                        {
+                            let t_last = args[args.len()-1];
+                            tmp.push(lit_map.unfold_not(t_last, true).into());
+                        }
+                        for &t in args[.. args.len()-1].iter() {
+                            tmp.push(lit_map.unfold_not(t, false).into());
+                        }
+                        let lit_or = TheoryLit::new_b(u, true); // pure bool
+
+                        // `args[i] => lit_or`
+                        for &sub in tmp.iter() {
+                            cs.push(&[!sub, lit_or]);
+                        }
+                        // `lit_or => ∨_i args[i]`
+                        {
+                            tmp2.clear();
+                            tmp2.extend_from_slice(&tmp);
+                            tmp2.push(!lit_or);
                             cs.push(&tmp2);
                         }
                     },
@@ -111,6 +156,7 @@ impl<S:Symbol> Tseitin<S> {
                         cs.push(&[(u, true)]) // clause [true]
                     },
                     _ if u == b.false_ => {
+                        // TODO: is this needed? `u` maps to `not true` anyway?
                         cs.push(&[(u, false)]) // clause [¬false]
                     },
                     _ => (),

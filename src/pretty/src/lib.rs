@@ -113,8 +113,8 @@ impl Ctx {
                 Op::Close => {
                     let n = stack.exit_box();
                     let mut d = stack.pop();
-                    d = d.group();
                     if n > 0 { d = d.nest(n) }
+                    d = d.group();
                     stack.push(d) // might combine with previous box
                 },
                 Op::SStatic(str) => {
@@ -231,6 +231,22 @@ pub fn string(s: String) -> impl Pretty { Op::Text(s) }
 
 /// Display a dynamic (owned) string
 pub fn text<U:Into<String>>(u: U) -> impl Pretty { Op::Text(u.into()) }
+
+impl<A:Pretty,B:Pretty> Pretty for (A,B) {
+    fn pp(&self, ctx: &mut Ctx) { self.0.pp(ctx); self.1.pp(ctx) }
+}
+
+impl<A:Pretty,B:Pretty,C:Pretty> Pretty for (A,B,C) {
+    fn pp(&self, ctx: &mut Ctx) { self.0.pp(ctx); self.1.pp(ctx); self.2.pp(ctx); }
+}
+
+/// Print `a` then `b`
+pub fn pair<A,B>(a: A, b: B) -> impl Pretty where A : Pretty, B : Pretty { (a, b) }
+
+/// Print `a` then `b` then `c`
+pub fn triple<A,B,C>(a: A, b: B, c: C) -> impl Pretty
+    where A : Pretty, B : Pretty, C : Pretty
+{ (a,b,c) }
 
 impl<'a, T: Pretty> Pretty for &'a T {
     fn pp(&self, ctx: &mut Ctx) { (*self).pp(ctx) }

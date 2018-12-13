@@ -689,7 +689,7 @@ mod manager {
     }
 
     /// An AST can be printed, given a manager, if the symbols are pretty
-    impl<S:Symbol + pp::Pretty> PrettyM<S> for AST {
+    impl<S:Symbol> PrettyM<S> for AST {
         fn pp_m(&self, m: &Manager<S>, ctx: &mut pp::Ctx) {
             match m.get().view_sym(*self) {
                 ViewSym::Const(s) => s.pp(ctx),

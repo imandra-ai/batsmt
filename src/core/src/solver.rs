@@ -98,7 +98,7 @@ mod solver {
 
         /// Add a clause made from signed terms
         pub fn add_clause_slice(&mut self, c: &[TheoryLit]) {
-            debug!("solver.add-clause {}", self.m.display(c));
+            debug!("solver.add-clause\n{}", self.m.display(c));
             // use `self.lits` as temporary storage
             self.lits.clear();
             let s0 = &mut self.s0;
@@ -166,9 +166,17 @@ mod solver {
         fn get_or_create_lit(&mut self, l: TheoryLit) -> BLit {
             match l {
                 TheoryLit::B(l) => l,
+                TheoryLit::B_lazy(t,sign) => {
+                    let sat = &mut self.sat;
+                    let bidir = false;
+                    self.lit_map.get_term_or_else(t, sign, bidir,
+                                                  || { sat.new_var_default() })
+                },
                 TheoryLit::T(t,sign) => {
                     let sat = &mut self.sat;
-                    self.lit_map.get_term_or_else(t, sign, || { sat.new_var_default() })
+                    let bidir = true; // theory lit
+                    self.lit_map.get_term_or_else(t, sign, bidir,
+                                                  || { sat.new_var_default() })
                 },
             }
         }

@@ -62,7 +62,6 @@ fn main() -> Result<(), Box<Error>> {
             Statement::Assert(t) => {
                 let cs = tseitin.clauses(*t);
                 for c in cs {
-                    info!("add clause {:?}", c);
                     solver.add_clause_slice(c);
                 }
             },

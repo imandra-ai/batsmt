@@ -50,9 +50,11 @@ impl<S:Symbol> LitMap<S> {
     #[inline(always)]
     fn get_mut(&self) -> SharedRefMut<LitMapCell<S>> { self.0.borrow_mut() }
 
-    /// Add a bidirectional mapping from `t` to `lit`
-    pub fn add_term(&self, t: AST, lit: BLit) {
-        self.get_mut().add_term(t,lit)
+    /// Add a mapping from `t` to `lit`
+    ///
+    /// if `bidir` also remember that `lit` maps to `t`
+    pub fn add_term(&self, t: AST, lit: BLit, bidir: bool) {
+        self.get_mut().add_term(t,lit,bidir)
     }
 
     /// Find which literal this term maps to, if any
@@ -63,10 +65,11 @@ impl<S:Symbol> LitMap<S> {
     /// Find which literal this term maps to, or create a new one using `f`
     ///
     /// `f` is a generator of fresh boolean variables.
-    pub fn get_term_or_else<F>(&self, t: AST, sign: bool, f: F) -> BLit
+    /// `bidir` if true, remember that this literal maps to this term
+    pub fn get_term_or_else<F>(&self, t: AST, sign: bool, bidir: bool, f: F) -> BLit
         where F: FnOnce() -> BVar
     {
-        self.get_mut().get_term_or_else(t,sign,f)
+        self.get_mut().get_term_or_else(t,sign,bidir,f)
     }
 
     /// Map the given literal into a signed term
@@ -121,7 +124,7 @@ impl<S:Symbol> LitMapCell<S> {
         self.term_to_lit.get(&t).map(|lit| lit_apply_sign(*lit, sign))
     }
 
-    fn get_term_or_else<F>(&mut self, t: AST, sign: bool, f: F) -> BLit
+    fn get_term_or_else<F>(&mut self, t: AST, sign: bool, bidir: bool, f: F) -> BLit
         where F: FnOnce() -> BVar
     {
         let (t, sign) = self.unfold_not(t, sign);
@@ -130,28 +133,30 @@ impl<S:Symbol> LitMapCell<S> {
             .unwrap_or_else(|| {
                 let lit = BLit::new(f(), true);
                 // remember mapping
-                self.add_term_normalized(t, lit);
+                self.add_term_normalized(t, lit, bidir);
                 lit
             });
         lit_apply_sign(lit, sign)
     }
 
     // Add a bidirectional mapping from `t` to `lit`
-    fn add_term(&mut self, t: AST, mut lit: BLit) {
+    fn add_term(&mut self, t: AST, mut lit: BLit, bidir: bool) {
         let (t, sign) = self.unfold_not(t, true);
         if !sign {
             lit = !lit; // mapping `not t` to `a42` means mapping `t` to `¬a42`
         };
-        self.add_term_normalized(t, lit)
+        self.add_term_normalized(t, lit, bidir)
     }
 
     // assume `t` is not a negation
-    fn add_term_normalized(&mut self, t: AST, lit: BLit) {
+    fn add_term_normalized(&mut self, t: AST, lit: BLit, bidir: bool) {
         debug_assert_eq!(t, self.unfold_not(t,true).0);
         debug_assert!(! self.term_to_lit.contains_key(&t));
-        let pad = (AST::SENTINEL, true); // used to fill the map
-        self.lit_to_term.insert(lit, (t, true), pad);
-        self.lit_to_term.insert(! lit, (t, false), pad);
+        if bidir {
+            let pad = (AST::SENTINEL, true); // used to fill the map
+            self.lit_to_term.insert(lit, (t, true), pad);
+            self.lit_to_term.insert(! lit, (t, false), pad);
+        }
         self.term_to_lit.insert(t, lit);
     }
 }
