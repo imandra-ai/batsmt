@@ -236,6 +236,26 @@ impl<'a, T: Pretty> Pretty for &'a T {
     fn pp(&self, ctx: &mut Ctx) { (*self).pp(ctx) }
 }
 
+struct TmpRef<'a, T: Pretty>(&'a T);
+impl<'a, T:Pretty> fmt::Display for TmpRef<'a,T> {
+    fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result
+    { Pretty::pp_fmt(self.0,out) }
+}
+impl<'a, T:Pretty> fmt::Debug for TmpRef<'a,T> {
+    fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result
+    { Pretty::pp_fmt(self.0,out) }
+}
+
+/// Turn a pretty-printable object into a display-able one
+pub fn display<'a, T>(x: &'a T) -> impl fmt::Display + 'a where T: Pretty {
+    TmpRef(x)
+}
+
+/// Turn a pretty-printable object into a debug-able one
+pub fn debug<'a, T>(x: &'a T) -> impl fmt::Debug + 'a where T: Pretty {
+    TmpRef(x)
+}
+
 /// Print arrays as S-expressions
 impl<T> Pretty for [T] where T : Pretty {
     fn pp(&self, ctx: &mut Ctx) {
@@ -246,6 +266,20 @@ impl<T> Pretty for [T] where T : Pretty {
 impl<T> Pretty for Vec<T> where T : Pretty {
     fn pp(&self, ctx: &mut Ctx) { self.as_slice().pp(ctx) }
 }
+
+/* FIXME: can this work?
+/// Quantified version of `Pretty`
+pub trait Pretty1<'a> : 'a {
+    fn pp(&self, ctx: &mut Ctx);
+}
+
+/// Go from pretty1 to pretty
+impl<'b, T> Pretty for &'b T where T: for<'a> Pretty1<'a> {
+    fn pp(&self, ctx: &mut Ctx) {
+        Pretty1::pp(*self, ctx)
+    }
+}
+*/
 
 /// Automatic definition of `Display` from `Pretty`
 #[macro_export]

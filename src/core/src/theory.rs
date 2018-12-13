@@ -4,12 +4,32 @@
 use {
     smallvec::SmallVec,
     crate::{symbol::Symbol, ast::AST, backtrack::Backtrackable},
+    batsmt_pretty as pp,
 };
 
 /// A boolean literal
 pub type BLit = batsat::Lit;
 
 type SVec<T> = SmallVec<[T; 3]>;
+
+/// A theory-level literal, either a boolean literal, or a boolean term plus a sign.
+///
+/// The conversion to SAT literals of the latter
+/// is done automatically and theories
+/// should not have to worry about it.
+#[derive(Copy,Clone,Debug,Eq,PartialEq)]
+pub enum TheoryLit {
+    T(AST, bool),
+    B(BLit),
+}
+
+/// A theory-level clause, such as a lemma or theory conflict
+///
+/// It is composed of a set of `TheoryLit`.
+#[derive(Clone)]
+pub struct TheoryClause {
+    lits: SVec<TheoryLit>,
+}
 
 /// A set of actions available to theories
 pub struct Actions {
@@ -89,3 +109,9 @@ impl ActState {
     fn new() -> Self { ActState::Props(SVec::new()) }
     fn clear(&mut self) { *self = ActState::Props(SVec::new()); }
 }
+
+/* FIXME: implem of pretty + `debug` and `display` methods
+impl<'a> pretty::Pretty for (&'a ast::Manager, &'a TheoryClause) {
+
+}
+*/

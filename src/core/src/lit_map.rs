@@ -6,7 +6,7 @@ use {
         symbol::Symbol, ast::{self,AST,View},
         util::{Shared,SharedRef,SharedRefMut},
     },
-    batsat::{Lit as BLit, LMap},
+    batsat::{Lit as BLit, Var as BVar, LMap},
 };
 
 /// Builtin symbols required for this basic interface
@@ -60,16 +60,25 @@ impl<S:Symbol> LitMap<S> {
         self.get().get_term(t,sign)
     }
 
-    /// Find which literal this term maps to, if any
-    pub fn get_or_insert_term<F>(&self, t: AST, sign: bool, f: F) -> BLit
-        where F: FnOnce(AST) -> BLit
+    /// Find which literal this term maps to, or create a new one using `f`
+    ///
+    /// `f` is a generator of fresh boolean variables.
+    pub fn get_term_or_else<F>(&self, t: AST, sign: bool, f: F) -> BLit
+        where F: FnOnce() -> BVar
     {
-        self.get_mut().get_or_insert_term(t,sign,f)
+        self.get_mut().get_term_or_else(t,sign,f)
     }
 
     /// Map the given literal into a signed term
     pub fn map_lit(&self, lit: BLit) -> (AST, bool) {
         self.get().lit_to_term[lit]
+    }
+
+    /// Given `t = not^n(u)`, returns `u, not^n(sign)`.
+    ///
+    /// This way `u` is never a negation.
+    pub fn unfold_not(&self, t: AST, sign: bool) -> (AST, bool) {
+        self.get().unfold_not(t,sign)
     }
 }
 
@@ -112,14 +121,14 @@ impl<S:Symbol> LitMapCell<S> {
         self.term_to_lit.get(&t).map(|lit| lit_apply_sign(*lit, sign))
     }
 
-    fn get_or_insert_term<F>(&mut self, t: AST, sign: bool, f: F) -> BLit
-        where F: FnOnce(AST) -> BLit
+    fn get_term_or_else<F>(&mut self, t: AST, sign: bool, f: F) -> BLit
+        where F: FnOnce() -> BVar
     {
         let (t, sign) = self.unfold_not(t, sign);
         let lit =
             self.term_to_lit.get(&t).map(|lit| *lit)
             .unwrap_or_else(|| {
-                let lit = f(t);
+                let lit = BLit::new(f(), true);
                 // remember mapping
                 self.add_term_normalized(t, lit);
                 lit
@@ -144,8 +153,5 @@ impl<S:Symbol> LitMapCell<S> {
         self.lit_to_term.insert(lit, (t, true), pad);
         self.lit_to_term.insert(! lit, (t, false), pad);
         self.term_to_lit.insert(t, lit);
-
     }
 }
-
-

@@ -2,6 +2,7 @@
 //! Tseitin Transformation
 
 use {
+    std::ops::Not,
     batsmt_core::{
         ast::{self,AST,View,iter_dag::State as AstIter},Symbol,
         lit_map::LitMap,
@@ -18,7 +19,8 @@ pub struct Tseitin<S:Symbol> {
     m: M<S>, // manager
     b: Builtins,
     iter: AstIter<S>, // to traverse subterms
-    tmp: Vec<(AST,bool)>, // temp clause
+    tmp: Vec<L>, // temp clause
+    tmp2: Vec<L>, // temp clause
     lit_map: LitMap<S>,
     cs: ClauseSet, // clauses
 }
@@ -37,7 +39,28 @@ pub struct Builtins {
     pub and_: AST,
     pub or_: AST,
     pub imply_: AST,
+    pub distinct: AST,
+    pub eq: AST,
 }
+
+// A temporary representation of a literal
+#[derive(Copy,Clone)]
+struct L(AST, bool);
+
+impl Not for L {
+    type Output = Self;
+    /// Negation on the AST-based literals
+    fn not(self) -> Self { L(self.0, !self.1) }
+}
+
+impl Into<(AST,bool)> for L {
+    fn into(self) -> (AST,bool) { (self.0,self.1) }
+}
+
+impl From<(AST,bool)> for L {
+    fn from(p: (AST,bool)) -> Self { L(p.0,p.1) }
+}
+
 
 impl<S:Symbol> Tseitin<S> {
     /// Create a new Tseitin transformation
@@ -46,6 +69,7 @@ impl<S:Symbol> Tseitin<S> {
             b, m: m.clone(),
             lit_map: lit_map.clone(),
             tmp: Vec::new(),
+            tmp2: Vec::new(),
             iter: AstIter::new(&m),
             cs: ClauseSet::new(),
         }
@@ -62,29 +86,60 @@ impl<S:Symbol> Tseitin<S> {
     /// `tseitin.clauses(t)` turns the boolean term `t` into a set of clauses.
     ///
     /// The clauses define boolean connectives occurring inside `t`.
+    /// ## params
+    /// - `t` is the formula to normalize
     pub fn clauses(&mut self, t: AST) -> impl Iterator<Item=&[(AST,bool)]> {
         self.cs.clear();
 
-        // traverse `t` as a DAG
-        self.iter.iter(t, |u| {
-            // `u` is a subterm that has never been processed.
+        {
+            let Tseitin {
+                b, ref mut cs, m, lit_map,
+                ref mut tmp, ref mut tmp2, ..} = self;
+            let mr = m.get();
+            // traverse `t` as a DAG
+            self.iter.iter(t, |u| {
+                // `u` is a subterm that has never been processed.
+                match mr.view(u) {
+                    View::App {f, args} if f == b.not_ => {
+                        debug_assert_eq!(1, args.len());
+                        () // nothing to do here
+                    },
+                    View::App {f, args} if f == b.and_ => {
+                        // obtain literals for subterms of the `and` into `tmp`
+                        tmp.clear();
+                        for t in args.iter() {
+                            tmp.push(lit_map.unfold_not(*t, true).into());
+                        }
+                        let lit_and = L(u, true);
 
-            let mr = self.m.get();
-            match mr.view(u) {
-                View::App {f, args} if f == self.b.not_ => {
-                    debug_assert_eq!(1, args.len());
-                    let lit = self.lit_map.find_signed(t);
-                },
-                _ if u == self.b.true_ => {
-                    panic!("true") // FIXME
-                },
-                _ if u == self.b.false_ => {
-                    panic!("false") // FIXME
-                },
-                _ => (),
+                        // `lit_and => args[i]`
+                        for sub in tmp.iter() {
+                            cs.push(&[!lit_and, *sub]);
+                        }
+                        // `args[i] ==> lit_and`
+                        {
+                            tmp2.clear();
+                            for sub in tmp.iter() { tmp2.push(!*sub) }
+                            tmp2.push(lit_and);
+                            cs.push(&tmp2);
+                        }
+                    },
+                    _ if u == b.true_ => {
+                        cs.push(&[(u, true)]) // clause [true]
+                    },
+                    _ if u == b.false_ => {
+                        cs.push(&[(u, false)]) // clause [¬false]
+                    },
+                    _ => (),
+                }
+            });
+        }
 
-            }
-        });
+        {
+            // unit clause asserting that `t` is true
+            let (t,sign) = self.lit_map.unfold_not(t, true);
+            self.cs.push(&[(t,sign)]);
+        }
 
         ClauseIter{cs: &self.cs, idx: 0}
     }
@@ -111,10 +166,12 @@ mod clauses {
         }
 
         /// Push a clause
-        pub fn push(&mut self, c: &[(AST,bool)]) {
+        pub fn push<L>(&mut self, c: &[L])
+            where L: Copy + Into<(AST,bool)>
+        {
             let idx = self.lits.len();
             self.offsets.push((idx, c.len()));
-            self.lits.extend_from_slice(c);
+            self.lits.extend(c.iter().map(|&x| x.into()));
         }
     }
 

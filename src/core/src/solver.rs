@@ -13,6 +13,9 @@ use {
 /// A boolean literal
 pub use batsat::Lit as BLit;
 
+/// A boolean variable
+pub use batsat::Var as BVar;
+
 #[derive(Copy,Clone,Debug)]
 pub struct Builtins {
     pub bool_: AST, // the boolean sort
@@ -69,10 +72,11 @@ mod solver {
             let cb = batsat::BasicCallbacks::new();
             // create SAT solver
             let sat = batsat::Solver::new_with(opts, cb, c);
-            let s = Solver {
+            let mut s = Solver {
                 s0: Solver0 { sat, lit_map, },
                 lits: Vec::new(),
             };
+            s.init_logic();
             s
         }
 
@@ -144,6 +148,7 @@ mod solver {
             -> batsat::theory::CheckRes<A::Conflict>
             where A: batsat::theory::TheoryArgument
         {
+            debug!("solver.final-check");
             unimplemented!() // TODO
         }
     }
@@ -151,22 +156,8 @@ mod solver {
     impl<S:Symbol, Th: Theory<S>> Solver0<S,Th> {
         // find or make a literal for `t`
         fn get_or_create_lit(&mut self, t: AST, sign: bool) -> BLit {
-            // convert terms into boolean lits
-            let lit_opt = {
-                let th = self.sat.theory_mut();
-                th.lit_map.get_term(t, sign)
-            };
-            match lit_opt {
-                Some(lit) => lit,
-                None => {
-                    // allocate a new lit and add it to `lit_map`
-                    let v = self.sat.new_var_default();
-                    let lit = BLit::new(v, true);
-                    self.lit_map.add_term(t, lit);
-                    // put sign back
-                    lit_map::lit_apply_sign(lit, sign)
-                }
-            }
+            let sat = &mut self.sat;
+            self.lit_map.get_term_or_else(t, sign, || { sat.new_var_default() })
         }
     }
 }

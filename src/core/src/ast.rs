@@ -17,6 +17,7 @@ use {
         util::{Shared,SharedRef,SharedRefMut},
     },
     fxhash::{FxHashMap,FxHashSet},
+    batsmt_pretty as pp,
 };
 
 /// The unique identifier of an AST node.
@@ -616,6 +617,15 @@ mod manager {
         /// Make a symbol node from a owned string
         pub fn mk_string(&self, s: String) -> AST { self.get_mut().mk_string(s) }
     }
+
+    // ### Pretty printing
+
+    /* FIXME: implement pretty for AST (if View is pretty? :-s)
+    impl<'a,S:Symbol> pp::Pretty for (&'a Manager<S>, AST)
+        where S::View<'a>: pp::Pretty1
+    {
+    }
+    */
 }
 
 /// A bitset whose elements are AST nodes

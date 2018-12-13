@@ -52,7 +52,7 @@ fn main() -> Result<(), Box<Error>> {
             cc::CCTheory::new(&m, builder.builtins()));
 
     // Tseitin transformation, to handle formulas
-    let tseitin = Tseitin::new(&m, builder.builtins());
+    let mut tseitin = Tseitin::new(&m, solver.lit_map(), builder.builtins());
 
     for s in &stmts {
         info!("parsed statement {}", PP::new(&m, s.clone()));
@@ -60,8 +60,9 @@ fn main() -> Result<(), Box<Error>> {
         // process statement
         match s {
             Statement::Assert(t) => {
-                let cs = tseitin.clauses(t);
-                for c in cs.into_iter() {
+                let cs = tseitin.clauses(*t);
+                for c in cs {
+                    info!("add clause {:?}", c);
                     solver.add_clause(c);
                 }
             },
