@@ -73,8 +73,15 @@ impl<S:Symbol> LitMap<S> {
     }
 
     /// Map the given literal into a signed term
-    pub fn map_lit(&self, lit: BLit) -> (AST, bool) {
-        self.get().lit_to_term[lit]
+    pub fn map_lit(&self, lit: BLit) -> Option<(AST, bool)> {
+        let r = self.get();
+        if r.lit_to_term.has(lit) {
+            let pair = r.lit_to_term[lit];
+            // is it a real value?
+            if pair.0 == AST::SENTINEL { None } else { Some(pair) }
+        } else {
+            None
+        }
     }
 
     /// Given `t = not^n(u)`, returns `u, not^n(sign)`.
@@ -150,6 +157,7 @@ impl<S:Symbol> LitMapCell<S> {
 
     // assume `t` is not a negation
     fn add_term_normalized(&mut self, t: AST, lit: BLit, bidir: bool) {
+        assert_ne!(t, AST::SENTINEL); // breaks invariants
         debug_assert_eq!(t, self.unfold_not(t,true).0);
         debug_assert!(! self.term_to_lit.contains_key(&t));
         if bidir {
