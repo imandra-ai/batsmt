@@ -2,9 +2,10 @@
 //! Tseitin Transformation
 
 use {
-    std::ops::Not,
     batsmt_core::{
-        ast::{self,AST,View,iter_dag::State as AstIter},Symbol,
+        ast::{self,AST,View,iter_dag::State as AstIter},
+        Symbol,
+        theory::{TheoryLit},
         lit_map::LitMap,
     },
 };
@@ -19,15 +20,15 @@ pub struct Tseitin<S:Symbol> {
     m: M<S>, // manager
     b: Builtins,
     iter: AstIter<S>, // to traverse subterms
-    tmp: Vec<L>, // temp clause
-    tmp2: Vec<L>, // temp clause
+    tmp: Vec<TheoryLit>, // temp clause
+    tmp2: Vec<TheoryLit>, // temp clause
     lit_map: LitMap<S>,
     cs: ClauseSet, // clauses
 }
 
 #[derive(Clone)]
 struct ClauseSet {
-    lits: Vec<(AST,bool)>, // clause lits
+    lits: Vec<TheoryLit>, // clause lits
     offsets: Vec<(usize,usize)>, // slices in `lits`
 }
 
@@ -41,24 +42,6 @@ pub struct Builtins {
     pub imply_: AST,
     pub distinct: AST,
     pub eq: AST,
-}
-
-// A temporary representation of a literal
-#[derive(Copy,Clone)]
-struct L(AST, bool);
-
-impl Not for L {
-    type Output = Self;
-    /// Negation on the AST-based literals
-    fn not(self) -> Self { L(self.0, !self.1) }
-}
-
-impl Into<(AST,bool)> for L {
-    fn into(self) -> (AST,bool) { (self.0,self.1) }
-}
-
-impl From<(AST,bool)> for L {
-    fn from(p: (AST,bool)) -> Self { L(p.0,p.1) }
 }
 
 
@@ -88,7 +71,7 @@ impl<S:Symbol> Tseitin<S> {
     /// The clauses define boolean connectives occurring inside `t`.
     /// ## params
     /// - `t` is the formula to normalize
-    pub fn clauses(&mut self, t: AST) -> impl Iterator<Item=&[(AST,bool)]> {
+    pub fn clauses(&mut self, t: AST) -> impl Iterator<Item=&[TheoryLit]> {
         self.cs.clear();
 
         {
@@ -110,7 +93,7 @@ impl<S:Symbol> Tseitin<S> {
                         for t in args.iter() {
                             tmp.push(lit_map.unfold_not(*t, true).into());
                         }
-                        let lit_and = L(u, true);
+                        let lit_and: TheoryLit = u.into();
 
                         // `lit_and => args[i]`
                         for sub in tmp.iter() {
@@ -167,7 +150,7 @@ mod clauses {
 
         /// Push a clause
         pub fn push<L>(&mut self, c: &[L])
-            where L: Copy + Into<(AST,bool)>
+            where L: Copy + Into<TheoryLit>
         {
             let idx = self.lits.len();
             self.offsets.push((idx, c.len()));
@@ -176,7 +159,7 @@ mod clauses {
     }
 
     impl<'a> Iterator for ClauseIter<'a> {
-        type Item = &'a [(AST,bool)];
+        type Item = &'a [TheoryLit];
 
         fn next(&mut self) -> Option<Self::Item> {
             let cs = self.cs;

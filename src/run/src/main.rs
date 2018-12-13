@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<Error>> {
                 let cs = tseitin.clauses(*t);
                 for c in cs {
                     info!("add clause {:?}", c);
-                    solver.add_clause(c);
+                    solver.add_clause_slice(c);
                 }
             },
             Statement::CheckSat => {

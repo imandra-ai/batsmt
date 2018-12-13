@@ -5,8 +5,8 @@ use batsat::{self,lbool};
 use {
     crate::{
         ast::{self,AST},
-        lit_map::{self,LitMap},
-        theory::{Theory,Actions}, symbol::Symbol,
+        lit_map::{LitMap},
+        theory::{Theory,TheoryLit,TheoryClause,Actions}, symbol::Symbol,
     },
 };
 
@@ -38,6 +38,7 @@ struct CoreTheory<S:Symbol, Th: Theory<S>> {
 /// a theory to interpret boolean terms.
 pub struct Solver<S:Symbol, Th: Theory<S>> {
     s0: Solver0<S,Th>,
+    m: ast::Manager<S>,
     lits: Vec<BLit>, // temporary for clause
 }
 
@@ -74,6 +75,7 @@ mod solver {
             let sat = batsat::Solver::new_with(opts, cb, c);
             let mut s = Solver {
                 s0: Solver0 { sat, lit_map, },
+                m: m.clone(),
                 lits: Vec::new(),
             };
             s.init_logic();
@@ -95,17 +97,23 @@ mod solver {
         }
 
         /// Add a clause made from signed terms
-        pub fn add_clause(&mut self, c: &[(AST, bool)]) {
-            debug!("solver.add-clause {:?}", c);
+        pub fn add_clause_slice(&mut self, c: &[TheoryLit]) {
+            debug!("solver.add-clause {}", self.m.display(c));
+            // use `self.lits` as temporary storage
             self.lits.clear();
             let s0 = &mut self.s0;
             self.lits.extend(
                 c.iter()
-                .map(|(t,sign)| {
-                    let lit = s0.get_or_create_lit(*t,*sign);
+                .map(|lit| {
+                    let lit = s0.get_or_create_lit(*lit);
                     lit
                 }));
             self.s0.sat.add_clause_reuse(&mut self.lits);
+        }
+
+        /// Add a clause made from signed terms
+        pub fn add_clause(&mut self, c: &TheoryClause) {
+            self.add_clause_slice(& *c)
         }
 
         /// Solve the set of constraints added with `add_clause` until now
@@ -155,9 +163,14 @@ mod solver {
 
     impl<S:Symbol, Th: Theory<S>> Solver0<S,Th> {
         // find or make a literal for `t`
-        fn get_or_create_lit(&mut self, t: AST, sign: bool) -> BLit {
-            let sat = &mut self.sat;
-            self.lit_map.get_term_or_else(t, sign, || { sat.new_var_default() })
+        fn get_or_create_lit(&mut self, l: TheoryLit) -> BLit {
+            match l {
+                TheoryLit::B(l) => l,
+                TheoryLit::T(t,sign) => {
+                    let sat = &mut self.sat;
+                    self.lit_map.get_term_or_else(t, sign, || { sat.new_var_default() })
+                },
+            }
         }
     }
 }

@@ -96,7 +96,7 @@ impl<T,S> pp::Pretty for Statement<T,S>
             },
             &Statement::DeclareSort(ref s,n) => {
                 ctx.sexp(|ctx| {
-                    ctx.str("declare-sort").space().pp(&s).space().text_string(n.to_string());
+                    ctx.str("declare-sort").space().pp(&s).space().string(n.to_string());
                 });
             },
             &Statement::DeclareFun(ref f, ref args, ref ret) => {

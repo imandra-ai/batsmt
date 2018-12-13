@@ -143,7 +143,7 @@ impl Ctx {
     pub fn text<U>(&mut self, u: &U) -> &mut Self
         where U:ToOwned<Owned=String>, String:Borrow<U>
     { self.push_(Op::Text(u.to_owned())) }
-    pub fn text_string(&mut self, s: String) -> &mut Self { self.push_(Op::Text(s)) }
+    pub fn string(&mut self, s: String) -> &mut Self { self.push_(Op::Text(s)) }
     pub fn newline(&mut self) -> &mut Self { self.push_(Op::Newline) }
     pub fn space(&mut self) -> &mut Self { self.push_(Op::Space) }
     fn open_indent(&mut self, u: usize) -> &mut Self { self.push_(Op::Open(u)); self }
@@ -286,10 +286,10 @@ macro_rules! pretty_display {
 // Implementations
 
 impl<'a> Pretty for &'a str {
-    fn pp(&self, ctx: &mut Ctx) { ctx.text_string(self.to_string()); }
+    fn pp(&self, ctx: &mut Ctx) { ctx.string(self.to_string()); }
 }
 impl Pretty for String {
-    fn pp(&self, ctx: &mut Ctx) { ctx.text_string(self.clone()); }
+    fn pp(&self, ctx: &mut Ctx) { ctx.string(self.clone()); }
 }
 
 #[test]
