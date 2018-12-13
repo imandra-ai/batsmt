@@ -144,7 +144,7 @@ mod ast_builder {
             }
         }
 
-        fn ite(&mut self, a: AST, b: AST, c: AST) -> AST {
+        fn ite(&mut self, _a: AST, _b: AST, _c: AST) -> AST {
             panic!("ite not implemented yet"); // FIXME once we have micro theories
         }
 

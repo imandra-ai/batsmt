@@ -1,6 +1,7 @@
 
 use {
     std::{mem, fmt::{self,Debug}, slice},
+    batsmt_pretty as pp,
 };
 
 /// View on a stored symbol
@@ -81,5 +82,9 @@ pub mod str {
             let string = String::from_raw_parts(ptr as *mut u8, len, cap);
             drop(string)
         }
+    }
+
+    impl pp::Pretty for Sym {
+        fn pp(&self, ctx: &mut pp::Ctx) { ctx.str(self.view()); }
     }
 }

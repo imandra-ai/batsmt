@@ -9,7 +9,7 @@
 
 use {
     std::{
-        ops::{Deref,DerefMut},
+        ops::{Deref,DerefMut}, fmt,
         slice, u32, marker::PhantomData,
     },
     crate::{
@@ -29,10 +29,24 @@ impl AST {
     pub const SENTINEL : AST = AST(u32::MAX);
 }
 
-/// The definition of an AST node, as seen from outside
+/// The definition of an AST node, as seen from outside.
+///
+/// This view automatically gives a view of the symbols as well.
 #[derive(Debug,Copy,Clone)]
 pub enum View<'a, S : SymbolView<'a>> {
-    Const(S::View), // symbol
+    Const(S::View), // symbol view
+    App {
+        f: AST,
+        args: &'a [AST],
+    }
+}
+
+/// The definition of an AST node, as seen from outside.
+///
+/// This view gives access to the symbol itself.
+#[derive(Debug,Copy,Clone)]
+pub enum ViewSym<'a, S : Symbol> {
+    Const(S), // symbol tiself
     App {
         f: AST,
         args: &'a [AST],
@@ -195,9 +209,7 @@ struct NodeStored<S:Symbol> {
 }
 
 // helper to make a view from a stored node
-fn view_node<'a, S>(n: &'a NodeStored<S>) -> View<'a,S>
-    where S : Symbol
-{
+fn view_node<'a, S>(n: &'a NodeStored<S>) -> View<'a,S> where S : Symbol {
     match n.kind() {
         Kind::App => {
             let k = unsafe {n.as_app()};
@@ -205,6 +217,20 @@ fn view_node<'a, S>(n: &'a NodeStored<S>) -> View<'a,S>
         },
         Kind::Sym => {
             View::Const(unsafe {n.as_sym()}.view())
+        },
+        Kind::Undef => panic!("cannot access undefined AST"),
+    }
+}
+
+// helper to make a view from a stored node
+fn view_sym_node<'a, S>(n: &'a NodeStored<S>) -> ViewSym<'a,S> where S : Symbol {
+    match n.kind() {
+        Kind::App => {
+            let k = unsafe {n.as_app()};
+            ViewSym::App {f: k.f(), args: k.args()}
+        },
+        Kind::Sym => {
+            ViewSym::Const(unsafe {n.as_sym()})
         },
         Kind::Undef => panic!("cannot access undefined AST"),
     }
@@ -312,6 +338,9 @@ pub struct ManagerRef<'a, S:Symbol>(SharedRef<'a, ManagerCell<S>>);
 /// It has a limited lifetime (`'a`) and cannot be aliased.
 pub struct ManagerRefMut<'a, S:Symbol>(SharedRefMut<'a, ManagerCell<S>>);
 
+/// used for printing
+struct WithManager<'a, S:Symbol, T>(&'a Manager<S>, T);
+
 mod manager {
     use super::*;
 
@@ -333,10 +362,16 @@ mod manager {
             }
         }
 
-        /// View the given symbol
+        /// View the given AST node
         #[inline(always)]
         pub fn view(&self, ast: AST) -> View<S> {
             view_node(&self.nodes[ast.0 as usize])
+        }
+
+        /// View the given AST node
+        #[inline(always)]
+        pub fn view_sym(&self, ast: AST) -> ViewSym<S> {
+            view_sym_node(&self.nodes[ast.0 as usize])
         }
 
         #[inline(always)]
@@ -620,12 +655,38 @@ mod manager {
 
     // ### Pretty printing
 
-    /* FIXME: implement pretty for AST (if View is pretty? :-s)
-    impl<'a,S:Symbol> pp::Pretty for (&'a Manager<S>, AST)
-        where S::View<'a>: pp::Pretty1
-    {
+    impl<S:Symbol+pp::Pretty> Manager<S> {
+        /// Pretty-printable version of the given AST
+        pub fn pp<'a>(&'a self, ast: AST) -> impl pp::Pretty+'a { WithManager(&self, ast) }
+
+        /// Pretty-printable version of the given AST
+        pub fn display<'a>(&'a self, ast: AST) -> impl fmt::Display+'a {
+            pp::display(WithManager(&self, ast))
+        }
+
+        /// Pretty-printable version of the given AST
+        pub fn debug<'a>(&'a self, ast: AST) -> impl fmt::Debug+'a {
+            pp::debug(WithManager(&self, ast))
+        }
     }
-    */
+
+    impl<'a, S:Symbol+pp::Pretty> pp::Pretty for WithManager<'a,S,AST> {
+        fn pp(&self, ctx: &mut pp::Ctx) {
+            let WithManager(m,t) = self;
+            match m.get().view_sym(*t) {
+                ViewSym::Const(s) => s.pp(ctx),
+                ViewSym::App{f,args} if args.len() == 0 => {
+                    ctx.pp(&m.pp(f)); // just f
+                },
+                ViewSym::App{f,args} => {
+                    ctx.sexp(|ctx| {
+                        ctx.pp(&m.pp(f)).space();
+                        ctx.iter(" ", args.iter().map(|u| m.pp(*u)));
+                    });
+                }
+            }
+        }
+    }
 }
 
 /// A bitset whose elements are AST nodes
