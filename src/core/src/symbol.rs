@@ -85,6 +85,12 @@ pub mod str {
     }
 
     impl pp::Pretty for Sym {
-        fn pp(&self, ctx: &mut pp::Ctx) { ctx.str(self.view()); }
+        fn pp(&self, ctx: &mut pp::Ctx) {
+            let s = self.view();
+            let escape = s.contains(|c| {c == ' ' || c == '\n'});
+            if escape { ctx.str("|"); }
+            ctx.str(s);
+            if escape { ctx.str("|"); }
+        }
     }
 }
