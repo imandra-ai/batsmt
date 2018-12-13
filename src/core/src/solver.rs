@@ -156,8 +156,8 @@ mod solver {
             -> batsat::theory::CheckRes<A::Conflict>
             where A: batsat::theory::TheoryArgument
         {
-            debug!("solver.final-check");
-            unimplemented!() // TODO
+            debug!("solver.final-check ({} elts in trail)", a.model().len());
+            unimplemented!() // TODO: filter_map into theory lits, clear actions, call theory, process action
         }
     }
 
@@ -166,7 +166,7 @@ mod solver {
         fn get_or_create_lit(&mut self, l: TheoryLit) -> BLit {
             match l {
                 TheoryLit::B(l) => l,
-                TheoryLit::B_lazy(t,sign) => {
+                TheoryLit::BLazy(t,sign) => {
                     let sat = &mut self.sat;
                     let bidir = false;
                     self.lit_map.get_term_or_else(t, sign, bidir,

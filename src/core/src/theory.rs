@@ -22,7 +22,7 @@ type M<S> = ast::Manager<S>;
 #[derive(Copy,Clone,Debug,Eq,PartialEq)]
 pub enum TheoryLit {
     T(AST, bool), // theory lit
-    B_lazy(AST, bool), // to be turned into B
+    BLazy(AST, bool), // to be turned into B
     B(BLit),
 }
 
@@ -78,8 +78,13 @@ mod theory_lit {
 
     impl TheoryLit {
         pub fn new(ast: AST, sign: bool) -> Self { TheoryLit::T(ast,sign) }
-        pub fn new_b(ast: AST, sign: bool) -> Self { TheoryLit::B_lazy(ast,sign) }
+        pub fn new_b(ast: AST, sign: bool) -> Self { TheoryLit::BLazy(ast,sign) }
         pub fn from_blit(b: BLit) -> Self { TheoryLit::B(b) }
+
+        pub fn is_theory(&self) -> bool { match self { TheoryLit::T(..) => true, _ => false } }
+        pub fn is_pure_bool(&self) -> bool {
+            match self { TheoryLit::BLazy(..) | TheoryLit::B(..) => true, _ => false }
+        }
     }
 
     impl<S:Symbol> ast::PrettyM<S> for TheoryLit {
@@ -89,19 +94,14 @@ mod theory_lit {
                     ctx.str(if lit.sign() {"+"} else {"-"}).string(format!("{}", lit.idx()));
                 },
                 TheoryLit::T(t,sign) => {
-                    if *sign { ctx.pp(&m.pp(*t)); }
-                    else {
-                        ctx.sexp(|ctx| {
-                            ctx.str("¬").space().pp(&m.pp(*t));
-                        });
-                    }
+                    let s = if *sign { "t+" } else { "t-" };
+                    ctx.sexp(|ctx| {
+                        ctx.str(s).space().pp(&m.pp(*t));
+                    });
                 },
-                TheoryLit::B_lazy(t,sign) => {
-                    if *sign {
-                        ctx.sexp(|ctx| {ctx.str("b+").space().pp(&m.pp(*t)); });
-                    } else {
-                        ctx.sexp(|ctx| { ctx.str("b-").space().pp(&m.pp(*t)); });
-                    }
+                TheoryLit::BLazy(t,sign) => {
+                    let s = if *sign { "b+" } else { "b-" };
+                    ctx.sexp(|ctx| {ctx.str(s).space().pp(&m.pp(*t)); });
                 },
             }
         }
@@ -128,7 +128,7 @@ mod theory_lit {
             match self {
                 TheoryLit::B(lit) => (!lit).into(),
                 TheoryLit::T(t,sign) => Self::new(t, !sign),
-                TheoryLit::B_lazy(t,sign) => Self::new_b(t, !sign),
+                TheoryLit::BLazy(t,sign) => Self::new_b(t, !sign),
             }
         }
     }

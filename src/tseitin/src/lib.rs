@@ -44,6 +44,32 @@ pub struct Builtins {
     pub eq: AST,
 }
 
+// temporary structure
+struct LitMapB<'a, S:Symbol> {
+    m: M<S>,
+    lit_map: &'a LitMap<S>,
+    b: Builtins,
+}
+
+impl<'a, S:Symbol> LitMapB<'a,S> {
+    /// Map `t,sign` to either a theory literal, or a lazy pure boolean literal
+    fn term_to_lit(&self, t: AST) -> TheoryLit {
+        let (t,sign) = self.lit_map.unfold_not(t, true);
+        let b = &self.b;
+        match self.m.get().view(t) {
+            View::App {f, args: _} => {
+                if f == b.true_ || f == b.false_ {
+                    TheoryLit::new(t, sign)
+                } else if f == b.and_ || f == b.or_ || f == b.imply_ {
+                    TheoryLit::new_b(t, sign)
+                } else {
+                    TheoryLit::new(t, sign)
+                }
+            },
+            View::Const(_) => TheoryLit::new(t,sign),
+        }
+    }
+}
 
 impl<S:Symbol> Tseitin<S> {
     /// Create a new Tseitin transformation
@@ -82,6 +108,7 @@ impl<S:Symbol> Tseitin<S> {
             // traverse `t` as a DAG
             self.iter.iter(t, |u| {
                 // `u` is a subterm that has never been processed.
+                let lmb = LitMapB{lit_map, b: b.clone(), m: m.clone()};
                 match mr.view(u) {
                     View::App {f, args} if f == b.not_ => {
                         debug_assert_eq!(1, args.len());
@@ -91,9 +118,10 @@ impl<S:Symbol> Tseitin<S> {
                         // obtain literals for subterms of the `and` into `tmp`
                         tmp.clear();
                         for &t in args.iter() {
-                            tmp.push(lit_map.unfold_not(t, true).into());
+                            tmp.push(lmb.term_to_lit(t));
                         }
-                        let lit_and = TheoryLit::new_b(u, true); // pure bool
+                        let lit_and = lmb.term_to_lit(u); // pure bool
+                        debug_assert!(lit_and.is_pure_bool());
 
                         // `lit_and => args[i]`
                         for &sub in tmp.iter() {
@@ -111,9 +139,10 @@ impl<S:Symbol> Tseitin<S> {
                         // obtain literals for subterms of the `or` into `tmp`
                         tmp.clear();
                         for &t in args.iter() {
-                            tmp.push(lit_map.unfold_not(t, true).into());
+                            tmp.push(lmb.term_to_lit(t));
                         }
-                        let lit_or = TheoryLit::new_b(u, true); // pure bool
+                        let lit_or = lmb.term_to_lit(u); // pure bool
+                        debug_assert!(lit_or.is_pure_bool());
 
                         // `args[i] => lit_or`
                         for &sub in tmp.iter() {
@@ -133,12 +162,14 @@ impl<S:Symbol> Tseitin<S> {
                         tmp.clear();
                         {
                             let t_last = args[args.len()-1];
-                            tmp.push(lit_map.unfold_not(t_last, true).into());
+                            tmp.push(lmb.term_to_lit(t_last));
                         }
                         for &t in args[.. args.len()-1].iter() {
-                            tmp.push(lit_map.unfold_not(t, false).into());
+                            // negation here, LHS of implication
+                            tmp.push(! lmb.term_to_lit(t));
                         }
-                        let lit_or = TheoryLit::new_b(u, true); // pure bool
+                        let lit_or = lmb.term_to_lit(u); // pure bool
+                        debug_assert!(lit_or.is_pure_bool());
 
                         // `args[i] => lit_or`
                         for &sub in tmp.iter() {
@@ -153,11 +184,11 @@ impl<S:Symbol> Tseitin<S> {
                         }
                     },
                     _ if u == b.true_ => {
-                        cs.push(&[(u, true)]) // clause [true]
+                        cs.push(&[TheoryLit::new(u, true)]) // clause [true]
                     },
                     _ if u == b.false_ => {
                         // TODO: is this needed? `u` maps to `not true` anyway?
-                        cs.push(&[(u, false)]) // clause [¬false]
+                        cs.push(&[TheoryLit::new(u, false)]) // clause [¬false]
                     },
                     _ => (),
                 }
