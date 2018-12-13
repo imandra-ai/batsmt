@@ -5,12 +5,10 @@ use {
     batsmt_core::{
         ast::{self,AST,View,iter_dag::State as AstIter},
         Symbol,
-        theory::{TheoryLit},
+        theory::{TheoryLit,TheoryClauseSet},
         lit_map::LitMap,
     },
 };
-
-// TODO: eliminate `distinct` into a n^2 conjunction of `=`
 
 type M<S> = ast::Manager<S>;
 
@@ -23,13 +21,7 @@ pub struct Tseitin<S:Symbol> {
     tmp: Vec<TheoryLit>, // temp clause
     tmp2: Vec<TheoryLit>, // temp clause
     lit_map: LitMap<S>,
-    cs: ClauseSet, // clauses
-}
-
-#[derive(Clone)]
-struct ClauseSet {
-    lits: Vec<TheoryLit>, // clause lits
-    offsets: Vec<(usize,usize)>, // slices in `lits`
+    cs: TheoryClauseSet, // clauses
 }
 
 #[derive(Clone,Debug)]
@@ -80,7 +72,7 @@ impl<S:Symbol> Tseitin<S> {
             tmp: Vec::new(),
             tmp2: Vec::new(),
             iter: AstIter::new(&m),
-            cs: ClauseSet::new(),
+            cs: TheoryClauseSet::new(),
         }
     }
 
@@ -190,6 +182,10 @@ impl<S:Symbol> Tseitin<S> {
                         // TODO: is this needed? `u` maps to `not true` anyway?
                         cs.push(&[TheoryLit::new(u, false)]) // clause [¬false]
                     },
+                    View::App {f, args} if f == b.distinct => {
+                        // TODO: eliminate `distinct` into a n^2 conjunction of `=`
+                        unimplemented!("distinct is not supported yet");
+                    },
                     _ => (),
                 }
             });
@@ -201,55 +197,8 @@ impl<S:Symbol> Tseitin<S> {
             self.cs.push(&[(t,sign)]);
         }
 
-        ClauseIter{cs: &self.cs, idx: 0}
+        self.cs.iter()
     }
 
 }
-
-// iterator over clauses
-struct ClauseIter<'a> {
-    cs: &'a ClauseSet,
-    idx: usize, // in `cs.offsets`
-}
-
-mod clauses {
-    use super::*;
-
-    impl ClauseSet {
-        pub fn new() -> Self {
-            Self {lits: Vec::new(), offsets: Vec::new() }
-        }
-
-        pub fn clear(&mut self) {
-            self.offsets.clear();
-            self.lits.clear();
-        }
-
-        /// Push a clause
-        pub fn push<L>(&mut self, c: &[L])
-            where L: Copy + Into<TheoryLit>
-        {
-            let idx = self.lits.len();
-            self.offsets.push((idx, c.len()));
-            self.lits.extend(c.iter().map(|&x| x.into()));
-        }
-    }
-
-    impl<'a> Iterator for ClauseIter<'a> {
-        type Item = &'a [TheoryLit];
-
-        fn next(&mut self) -> Option<Self::Item> {
-            let cs = self.cs;
-            if self.idx >= cs.offsets.len() {
-                None
-            } else {
-                let (off,len) = cs.offsets[self.idx];
-                self.idx += 1;
-                Some(&cs.lits[off..off+len])
-            }
-        }
-    }
-}
-
-
 

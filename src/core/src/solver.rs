@@ -153,11 +153,6 @@ mod solver {
 
     impl<S:Symbol, Th: Theory<S>> CoreTheory<S, Th> {
         #[inline(always)]
-        fn map_term(&self, t: AST, sign: bool) -> BLit {
-            self.lit_map.get_term(t,sign).expect("term doesn't map to a literal")
-        }
-
-        #[inline(always)]
         fn map_lit(&self, lit: BLit) -> Option<(AST, bool)> {
             self.lit_map.map_lit(lit)
         }
@@ -266,9 +261,9 @@ mod solver {
         /// Convert the given theory clause into an array of boolean literals.
         ///
         /// The result is stored in `lits`
-        fn convert_th_clause(&mut self, c: &TheoryClause) {
+        fn convert_th_clause(&mut self, c: &[TheoryLit]) {
             self.lits.clear();
-            for lit in c.iter() {
+            for &lit in c.iter() {
                 let lit = self.convert_th_lit(lit);
                 self.lits.push(lit);
             }

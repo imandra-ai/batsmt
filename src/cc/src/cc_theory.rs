@@ -3,6 +3,7 @@
 
 use {
     batsmt_core::{self as core,theory,ast::{self,AST},symbol::Symbol},
+    batsmt_pretty as pp,
     crate::cc::{CC,BLit},
 };
 
@@ -40,15 +41,15 @@ impl<S:Symbol> core::backtrack::Backtrackable for CCTheory<S> {
     fn n_levels(&self) -> usize { self.cc.n_levels() }
 }
 
+// what do to from a tuple
+enum Op<'a> {
+    Eq(AST,AST),
+    Distinct(&'a [AST]), // more than 2 elements
+}
+
 impl<S:Symbol> theory::Theory<S> for CCTheory<S> {
     fn final_check(&mut self, acts: &mut theory::Actions, trail: &theory::Trail) {
         let mut do_sth = false;
-
-        // what do to from a tuple
-        enum Op<'a> {
-            Eqn(AST,AST),
-            Distinct(&'a [AST])
-        };
 
         // local borrow of AST manager
         let m = self.m.get();
@@ -61,9 +62,9 @@ impl<S:Symbol> theory::Theory<S> for CCTheory<S> {
                     ast::View::App {f, args} if f == self.builtins.eq => {
                         assert_eq!(2,args.len());
                         if sign {
-                            Op::Eqn(args[0], args[1])
+                            Op::Eq(args[0], args[1])
                         } else {
-                            Op::Distinct(args)
+                            Op::Eq(ast, self.builtins.false_) // `(a=b)=false`
                         }
                     },
                     ast::View::App {f, args} if f == self.builtins.distinct => {
@@ -73,25 +74,56 @@ impl<S:Symbol> theory::Theory<S> for CCTheory<S> {
                         Op::Distinct(args)
                     },
                     _ if sign => {
-                        Op::Eqn(ast, self.builtins.true_)
+                        Op::Eq(ast, self.builtins.true_)
                     },
                     _ => {
-                        Op::Eqn(ast, self.builtins.false_)
+                        Op::Eq(ast, self.builtins.false_)
                     }
                 }
             };
 
             do_sth = true;
 
-            // now add to CC
-            unimplemented!() // FIXME
+            trace!("cc: op {}", pp::display(self.m.pp(&op)));
+            match op {
+                Op::Eq(a,b) => {
+                    self.cc.merge(a,b,lit)
+                },
+                Op::Distinct(_) => unimplemented!("`distinct` is not supported"),
+            }
         }
 
         // check CC's satisfiability
         if do_sth {
             match self.cc.check() {
-                Ok(props) => panic!(), // FIXME
-                Err(c) => panic!(), // FIXME
+                Ok(props) => {
+                    for c in props.iter() {
+
+                    }
+                },
+                Err(c) => {
+                }
+            }
+        }
+    }
+}
+
+mod op {
+    use super::*;
+
+    impl<'a,S:Symbol> ast::PrettyM<S> for Op<'a> {
+        fn pp_m(&self, m: &M<S>, ctx: &mut pp::Ctx) {
+            match self {
+                Op::Eq(a,b) => {
+                    ctx.sexp(|ctx| {
+                        ctx.str("=").space().array(pp::space(),&[m.pp(a), m.pp(b)]);
+                    });
+                },
+                Op::Distinct(args) => {
+                    ctx.sexp(|ctx| {
+                        ctx.str("distinct").space().iter(pp::space(), args.iter().map(|t| m.pp(t)));
+                    });
+                },
             }
         }
     }

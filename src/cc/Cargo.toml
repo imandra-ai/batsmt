@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 
-batsat = "0.2"
 batsmt-core = { path="../core" }
+batsmt-pretty = { path="../pretty" }
 smallvec = "0.6"
 log = "0.4"

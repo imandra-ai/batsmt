@@ -2,7 +2,7 @@
 //! SAT solver Theory
 
 use {
-    std::{ops::{Deref,Not},},
+    std::{ops::{Deref,Not}, fmt},
     smallvec::SmallVec,
     crate::{symbol::Symbol, ast::{self,AST}, backtrack::Backtrackable},
     batsmt_pretty as pp,
@@ -34,15 +34,25 @@ pub struct TheoryClause {
     lits: SVec<TheoryLit>,
 }
 
+/// A set of theory clauses, with efficient append
+#[derive(Clone)]
+pub struct TheoryClauseSet {
+    lits: Vec<TheoryLit>, // clause lits
+    offsets: Vec<(usize,usize)>, // slices in `lits`
+}
+
 /// A set of actions available to theories
 pub struct Actions {
-    state: ActState,
+    cs: TheoryClauseSet,
+    conflict: bool,
 }
 
 #[derive(Clone,Debug)]
-pub(crate) enum ActState {
-    Props(SVec<TheoryClause>), // propagations (new lemmas)
-    Conflict(TheoryClause), // conflict reached
+pub(crate) enum ActState<'a> {
+    /// propagations (new lemmas)
+    Props(&'a TheoryClauseSet),
+    /// conflict reached
+    Conflict(&'a [TheoryLit])
 }
 
 /// The theory subset of the (partial) model picked by the SAT solver.
@@ -188,6 +198,90 @@ mod theory_clause {
             Self::from_slice(lits)
         }
     }
+
+    impl<'a> From<&'a [BLit]> for TheoryClause {
+        fn from(lits: &'a [BLit]) -> Self {
+            Self::from_iter(lits.iter().map(|l| *l))
+        }
+    }
+}
+
+mod theory_clause_set {
+    use super::*;
+
+    impl TheoryClauseSet {
+        /// New set of clauses.
+        pub fn new() -> Self {
+            Self {lits: Vec::new(), offsets: Vec::new() }
+        }
+
+        /// Remove all clauses internally.
+        ///
+        /// Internal storage is kept.
+        pub fn clear(&mut self) {
+            self.offsets.clear();
+            self.lits.clear();
+        }
+
+        /// Push a clause into the set.
+        pub fn push<L>(&mut self, c: &[L])
+            where L: Copy + Into<TheoryLit>
+        {
+            let idx = self.lits.len();
+            self.offsets.push((idx, c.len()));
+            self.lits.extend(c.iter().map(|&x| x.into()));
+        }
+
+        /// Push a clause (as an iterator) into the set.
+        pub fn push_iter<U, I>(&mut self, i: I)
+            where I: Iterator<Item=U>, U: Into<TheoryLit>
+        {
+            let idx = self.lits.len();
+            self.lits.extend(i.map(|x| x.into()));
+            let len = self.lits.len() - idx;
+            self.offsets.push((idx, len));
+        }
+
+        /// Iterate over the contained clauses.
+        ///
+        /// Use `c.into()` over the slices to turn them into proper `TheoryClause`,
+        /// if needed.
+        pub fn iter<'a>(&'a self) -> impl Iterator<Item=&'a [TheoryLit]> {
+            CSIter{cs: &self, idx: 0}
+        }
+    }
+
+    impl fmt::Debug for TheoryClauseSet {
+        fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+            write!(fmt, "clause_set(")?;
+            for c in self.iter() {
+                c.fmt(fmt)?
+            }
+            write!(fmt, ")")
+        }
+    }
+
+    // iterator over clauses
+    struct CSIter<'a> {
+        cs: &'a TheoryClauseSet,
+        idx: usize, // in `cs.offsets`
+    }
+
+    // the iterator over clauses
+    impl<'a> Iterator for CSIter<'a> {
+        type Item = &'a [TheoryLit];
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let cs = self.cs;
+            if self.idx >= cs.offsets.len() {
+                None
+            } else {
+                let (off,len) = cs.offsets[self.idx];
+                self.idx += 1;
+                Some(&cs.lits[off..off+len])
+            }
+        }
+    }
 }
 
 impl<'a> Trail<'a> {
@@ -208,24 +302,49 @@ impl<'a> Trail<'a> {
 impl Actions {
     /// Create a new set of actions
     pub(crate) fn new() -> Self {
-        Self {state: ActState::new() }
+        Self {
+            conflict: false,
+            cs: TheoryClauseSet::new(),
+        }
     }
 
     /// Reset actions
-    pub(crate) fn clear(&mut self) { self.state.clear(); }
+    pub(crate) fn clear(&mut self) {
+        self.cs.clear();
+        self.conflict = false;
+    }
 
     /// Return current state.
-    #[inline(always)]
-    pub(crate) fn state(&self) -> &ActState { &self.state }
+    ///
+    /// Either a set of propagated clauses, or a single conflict clause
+    pub(crate) fn state<'a>(&'a self) -> ActState<'a> {
+        if self.conflict {
+            let c = self.cs.iter().next().expect("conflict but no conflict clause");
+            ActState::Conflict(c)
+        } else {
+            ActState::Props(&self.cs)
+        }
+    }
 
     /// Instantiate the given lemma
     pub fn add_lemma(&mut self, c: &[TheoryLit]) {
-        match self.state {
-            ActState::Props(ref mut cs) => {
-                trace!("theory.add_lemma {:?}", c);
-                cs.push(c.into())
-            },
-            ActState::Conflict(_) => (), // ignore
+        if ! self.conflict {
+            trace!("theory.add_lemma {:?}", c);
+            self.cs.push(c.into())
+        }
+    }
+
+    pub fn add_bool_lemma(&mut self, c: &[BLit]) {
+        if ! self.conflict {
+            trace!("theory.add-lemma {:?}", c);
+            self.cs.push(c.into())
+        }
+    }
+
+    pub fn add_bool_lemma_iter<I>(&mut self, i: I) where I: Iterator<Item=BLit> {
+        if ! self.conflict {
+            trace!("theory.add-lemma-iter");
+            self.cs.push_iter(i);
         }
     }
 
@@ -235,15 +354,12 @@ impl Actions {
     /// is false in the current model.
     pub fn raise_conflict(&mut self, c: &[TheoryLit]) {
         // only create a conflict if there's not one already
-        if let ActState::Props(_) = self.state {
+        if ! self.conflict {
             trace!("theory.raise-conflict {:?}", c);
-            self.state = ActState::Conflict(c.into());
+            self.conflict = true;
+            self.cs.clear(); // remove propagated lemmas
+            self.cs.push(c);
         }
     }
-}
-
-impl ActState {
-    fn new() -> Self { ActState::Props(SVec::new()) }
-    fn clear(&mut self) { *self = ActState::Props(SVec::new()); }
 }
 
