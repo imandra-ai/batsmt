@@ -1,12 +1,17 @@
 
 //! Main SMT solver
 
-use batsat::{self,lbool};
 use {
+    batsat::{
+        self as sat,lbool,
+        theory::CheckRes,
+    },
+    batsmt_pretty as pp,
     crate::{
         ast::{self,AST},
         lit_map::{LitMap},
-        theory::{Theory,TheoryLit,TheoryClause,Actions}, symbol::Symbol,
+        theory::{Theory,TheoryLit,TheoryClause,Actions,ActState,Trail},
+        symbol::Symbol,
     },
 };
 
@@ -24,12 +29,21 @@ pub struct Builtins {
     pub not_: AST,
 }
 
+/// used to build SAT clauses efficiently
+struct BClauseBuild<'a,S:Symbol,F:FnMut() -> sat::Var> {
+    lits: &'a mut Vec<BLit>,
+    lit_map: &'a mut LitMap<S>,
+    f: F,
+}
+
 /// The theory given to the SAT solver
 struct CoreTheory<S:Symbol, Th: Theory<S>> {
     m: ast::Manager<S>,
     th: Th,
     lit_map: LitMap<S>,
     acts: Actions,
+    lits: Vec<BLit>,
+    th_trail: Vec<(AST,bool,BLit)>, // temporary for trail slices
 }
 
 /// A SMT solver.
@@ -60,14 +74,15 @@ mod solver {
 
     impl<S:Symbol, Th: Theory<S>> Solver<S,Th> {
         /// New Solver, using the given theory `th` and AST manager
-        pub fn new(m: &ast::Manager<S>, b: Builtins, th: Th) -> Self
-        {
+        pub fn new(m: &ast::Manager<S>, b: Builtins, th: Th) -> Self {
             let lit_map = LitMap::new(m, b.into());
             let c = CoreTheory {
                 m: m.clone(),
                 lit_map: lit_map.clone(),
+                lits: Vec::new(),
                 th,
                 acts: Actions::new(),
+                th_trail: Vec::new(),
             };
             let opts = batsat::SolverOpts::default();
             let cb = batsat::BasicCallbacks::new();
@@ -104,8 +119,8 @@ mod solver {
             let s0 = &mut self.s0;
             self.lits.extend(
                 c.iter()
-                .map(|lit| {
-                    let lit = s0.get_or_create_lit(*lit);
+                .map(|&lit| {
+                    let lit = s0.get_or_create_lit(lit);
                     lit
                 }));
             self.s0.sat.add_clause_reuse(&mut self.lits);
@@ -119,6 +134,7 @@ mod solver {
         /// Solve the set of constraints added with `add_clause` until now
         pub fn solve_with(&mut self, assumptions: &[BLit]) -> Res {
             info!("solver.sat.solve ({} assumptions)", assumptions.len());
+            trace!("assumptions: {:?}", assumptions);
             let r = self.s0.sat.solve_limited(assumptions);
             // convert result
             if r == lbool::TRUE {
@@ -136,11 +152,13 @@ mod solver {
     }
 
     impl<S:Symbol, Th: Theory<S>> CoreTheory<S, Th> {
+        #[inline(always)]
         fn map_term(&self, t: AST, sign: bool) -> BLit {
             self.lit_map.get_term(t,sign).expect("term doesn't map to a literal")
         }
 
-        fn map_lit(&self, lit: BLit) -> (AST, bool) {
+        #[inline(always)]
+        fn map_lit(&self, lit: BLit) -> Option<(AST, bool)> {
             self.lit_map.map_lit(lit)
         }
     }
@@ -152,12 +170,54 @@ mod solver {
         fn pop_levels(&mut self, n: usize) { self.th.pop_levels(n) }
 
         // main check
-        fn final_check<A>(&mut self, a: &mut A)
-            -> batsat::theory::CheckRes<A::Conflict>
+        fn final_check<A>(&mut self, a: &mut A) -> CheckRes<A::Conflict>
             where A: batsat::theory::TheoryArgument
         {
             trace!("solver.final-check ({} elts in trail)", a.model().len());
-            unimplemented!() // TODO: filter_map into theory lits, clear actions, call theory, process action
+
+            // obtain theory literals from `a`
+            self.th_trail.clear();
+            for &lit in a.model().iter() {
+                if let Some((t,sign)) = self.map_lit(lit) {
+                    self.th_trail.push((t,sign,lit));
+                }
+            }
+
+            if self.th_trail.len() == 0 {
+                // nothing to do
+                debug!("no theory lits in the model, return Done");
+                return CheckRes::Done; // trivial
+            }
+
+            self.acts.clear(); // reset
+            self.th.final_check(&mut self.acts, &Trail(&self.th_trail));
+
+            // used to convert theory clauses into boolean clauses
+            match self.acts.state() {
+                ActState::Props(cs) => {
+                    for c in cs.iter() {
+                        trace!("add theory lemma {}", pp::display(self.m.pp(c)));
+                        let mut cbuild =
+                            BClauseBuild::new(&mut self.lits, &mut self.lit_map,
+                                              || { a.mk_new_lit().var() });
+                        cbuild.convert_th_clause(c);
+                        a.add_theory_lemma(&mut self.lits);
+                    }
+                    trace!("check: done");
+                    CheckRes::Done
+                },
+                ActState::Conflict(c) => {
+                    trace!("build conflict clause {}", pp::display(self.m.pp(c)));
+                    let mut cbuild =
+                        BClauseBuild::new(&mut self.lits, &mut self.lit_map,
+                                          || { a.mk_new_lit().var() });
+                    cbuild.convert_th_clause(c);
+                    drop(cbuild); // to borrow `a`
+                    let confl = a.mk_conflict(&mut self.lits);
+                    trace!("check: conflict");
+                    CheckRes::Conflict(confl)
+                }
+            }
         }
     }
 
@@ -178,6 +238,39 @@ mod solver {
                     self.lit_map.get_term_or_else(t, sign, bidir,
                                                   || { sat.new_var_default() })
                 },
+            }
+        }
+    }
+
+    impl<'a, S:Symbol, F:FnMut()->sat::Var> BClauseBuild<'a,S,F> {
+        fn new(lits: &'a mut Vec<BLit>, lit_map: &'a mut LitMap<S>, f: F) -> Self {
+            Self { lits, lit_map, f }
+        }
+
+        /// Convert a theory literal into a boolean literal
+        fn convert_th_lit(&mut self, lit: TheoryLit) -> BLit {
+            let f = &mut self.f;
+            match lit {
+                TheoryLit::B(l) => l,
+                TheoryLit::BLazy(t,sign) => {
+                    let bidir = false;
+                    self.lit_map.get_term_or_else(t, sign, bidir, || f())
+                },
+                TheoryLit::T(t,sign) => {
+                    let bidir = true; // theory lit
+                    self.lit_map.get_term_or_else(t, sign, bidir, || f())
+                },
+            }
+        }
+
+        /// Convert the given theory clause into an array of boolean literals.
+        ///
+        /// The result is stored in `lits`
+        fn convert_th_clause(&mut self, c: &TheoryClause) {
+            self.lits.clear();
+            for lit in c.iter() {
+                let lit = self.convert_th_lit(lit);
+                self.lits.push(lit);
             }
         }
     }

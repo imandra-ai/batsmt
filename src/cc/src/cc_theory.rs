@@ -41,9 +41,7 @@ impl<S:Symbol> core::backtrack::Backtrackable for CCTheory<S> {
 }
 
 impl<S:Symbol> theory::Theory<S> for CCTheory<S> {
-    fn final_check<I>(&mut self, acts: &mut theory::Actions, i: I)
-        where I: Iterator<Item=(AST, bool, BLit)>
-    {
+    fn final_check(&mut self, acts: &mut theory::Actions, trail: &theory::Trail) {
         let mut do_sth = false;
 
         // what do to from a tuple
@@ -56,7 +54,7 @@ impl<S:Symbol> theory::Theory<S> for CCTheory<S> {
         let m = self.m.get();
 
         // update congruence closure
-        for (ast,sign,lit) in i {
+        for (ast,sign,lit) in trail.iter() {
             // convert `ast is {true,false}` into
             let op = {
                 match m.view(ast) {
@@ -86,7 +84,7 @@ impl<S:Symbol> theory::Theory<S> for CCTheory<S> {
             do_sth = true;
 
             // now add to CC
-            panic!() // FIXME
+            unimplemented!() // FIXME
         }
 
         // check CC's satisfiability

@@ -29,7 +29,7 @@ pub enum TheoryLit {
 /// A theory-level clause, such as a lemma or theory conflict
 ///
 /// It is composed of a set of `TheoryLit`.
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 pub struct TheoryClause {
     lits: SVec<TheoryLit>,
 }
@@ -40,10 +40,16 @@ pub struct Actions {
 }
 
 #[derive(Clone,Debug)]
-enum ActState {
-    Props(SVec<Vec<AST>>), // propagations
-    Conflict(SVec<AST>), // conflict reached
+pub(crate) enum ActState {
+    Props(SVec<TheoryClause>), // propagations (new lemmas)
+    Conflict(TheoryClause), // conflict reached
 }
+
+/// The theory subset of the (partial) model picked by the SAT solver.
+///
+/// This is given to the theory in order to check its validity. It doesn't show
+/// purely boolean literals.
+pub struct Trail<'a>(pub(crate) &'a [(AST,bool,BLit)]);
 
 /// Interface satisfied by a SMT theory.
 ///
@@ -54,23 +60,21 @@ pub trait Theory<S:Symbol> : Backtrackable {
     ///
     /// ## Params:
     ///
-    /// - `i` iterates over triples `(term, bool, literal)` where `literal`
-    ///     is `term <=> bool`
+    /// - `trail` contains triples `(term, bool, literal)` where `literal`
+    ///     is `term <=> bool` and the current model contains `literal`
     /// - `acts` is a set of actions available to the theory.
-    fn final_check<I>(&mut self, acts: &mut Actions, i: I)
-        where I: Iterator<Item=(AST, bool, BLit)>;
+    fn final_check(&mut self, acts: &mut Actions, trail: &Trail);
 
 
     /// Check a partial model.
     ///
     /// The parameters are similar to those of `final_check`, but
-    /// this function is allowed to not fully check the model.
+    /// this function is allowed to not fully check the model, and `trail`
+    /// only contains _new_ literals (since the last call to `partial_check`).
     /// It will be called more often than `final_check` so it should be efficient.
     ///
     /// By default it does nothing.
-    fn partial_check<I>(&mut self, _acts: &mut Actions, _i: I)
-        where I: Iterator<Item=(AST, bool, BLit)>
-    {}
+    fn partial_check(&mut self, _acts: &mut Actions, _trail: &Trail) {}
 }
 
 mod theory_lit {
@@ -186,6 +190,21 @@ mod theory_clause {
     }
 }
 
+impl<'a> Trail<'a> {
+    #[inline(always)]
+    /// Access the underlying items
+    pub fn as_slice(&self) -> &'a [(AST,bool,BLit)] { &self.0 }
+
+    /// Iterate on the underlying items
+    pub fn iter(&self) -> impl Iterator<Item=(AST,bool,BLit)> + 'a {
+        self.0.iter().map(|&t| t)
+    }
+
+    /// Number of literals assigned
+    #[inline(always)]
+    pub fn len(&self) -> usize { self.0.len() }
+}
+
 impl Actions {
     /// Create a new set of actions
     pub(crate) fn new() -> Self {
@@ -195,13 +214,16 @@ impl Actions {
     /// Reset actions
     pub(crate) fn clear(&mut self) { self.state.clear(); }
 
+    /// Return current state.
+    #[inline(always)]
+    pub(crate) fn state(&self) -> &ActState { &self.state }
+
     /// Instantiate the given lemma
-    pub fn add_lemma(&mut self, c: &[AST]) {
+    pub fn add_lemma(&mut self, c: &[TheoryLit]) {
         match self.state {
             ActState::Props(ref mut cs) => {
                 trace!("theory.add_lemma {:?}", c);
-                let v = c.iter().map(|t| *t).collect();
-                cs.push(v)
+                cs.push(c.into())
             },
             ActState::Conflict(_) => (), // ignore
         }
@@ -211,12 +233,11 @@ impl Actions {
     ///
     /// This clause should be a valid theory lemma (a valid tautology) that
     /// is false in the current model.
-    pub fn raise_conflict(&mut self, c: &[AST]) {
+    pub fn raise_conflict(&mut self, c: &[TheoryLit]) {
         // only create a conflict if there's not one already
         if let ActState::Props(_) = self.state {
             trace!("theory.raise-conflict {:?}", c);
-            let c = c.iter().map(|t| *t).collect();
-            self.state = ActState::Conflict(c);
+            self.state = ActState::Conflict(c.into());
         }
     }
 }

@@ -267,6 +267,28 @@ impl<'a, T: Pretty> Pretty for &'a T {
     fn pp(&self, ctx: &mut Ctx) { (*self).pp(ctx) }
 }
 
+/// Print `T` using its Debug implementation
+pub fn from_debug<T:fmt::Debug>(x: T) -> impl Pretty {
+    struct Dbg<T:fmt::Debug>(T);
+    impl<T:fmt::Debug> Pretty for Dbg<T> {
+        fn pp(&self, ctx: &mut Ctx) { ctx.string(format!("{:?}", self.0)); }
+    }
+    Dbg(x)
+}
+
+/// Alias to `from_debug`
+pub fn dbg<T:fmt::Debug>(x: T) -> impl Pretty { from_debug(x) }
+
+/// Print `T` using its Display implementation
+pub fn from_display<T:fmt::Display>(x: T) -> impl Pretty {
+    struct Dis<T:fmt::Display>(T);
+    impl<T:fmt::Display> Pretty for Dis<T> {
+        fn pp(&self, ctx: &mut Ctx) { ctx.string(format!("{}", self.0)); }
+    }
+    Dis(x)
+}
+
+// temporary holder
 struct Tmp<T: Pretty>(T);
 
 impl<T:Pretty> fmt::Display for Tmp<T> {
