@@ -4,22 +4,14 @@
 use {
     batsmt_core::{self as core,theory,ast::{self,AST},symbol::Symbol},
     batsmt_pretty as pp,
-    crate::cc::{CC,BLit},
+    crate::cc::{self,CC,BLit},
 };
 
 // TODO: notion of micro theory should come here
 
-// TODO: Builtins structure with true,false,bool,eq,distinct
-
-#[derive(Debug,Clone)]
-pub struct Builtins {
-    pub true_: AST,
-    pub false_: AST,
-    pub eq: AST,
-    pub distinct: AST,
-}
-
 type M<S> = ast::Manager<S>;
+
+pub type Builtins = cc::Builtins;
 
 /// A theory built on top of a congruence closure.
 pub struct CCTheory<S:Symbol>{
@@ -30,7 +22,7 @@ pub struct CCTheory<S:Symbol>{
 
 impl<S:Symbol> CCTheory<S> {
     pub fn new(m: &M<S>, b: Builtins) -> Self {
-        let cc = CC::new(&m);
+        let cc = CC::new(&m, b.clone());
         Self { builtins: b, m: m.clone(), cc }
     }
 }
@@ -97,11 +89,16 @@ impl<S:Symbol> theory::Theory<S> for CCTheory<S> {
         if do_sth {
             match self.cc.check() {
                 Ok(props) => {
-                    for c in props.iter() {
-
+                    for _c in props.iter() {
+                        unimplemented!("cannot do propagation yet");
+                        // TODO: convert into clause? OR directly add this to batsat?
+                        // TODO: `acts` should take `add_propagation(TheoryList, I: Iterator…)`
+                        //       and make a lemma out of it, or use better API
+                        // acts.add_bool_lemma(c);
                     }
                 },
                 Err(c) => {
+                    acts.raise_conflict_iter(c.0.iter())
                 }
             }
         }

@@ -91,11 +91,29 @@ mod theory_lit {
     use super::*;
 
     impl TheoryLit {
-        pub fn new(ast: AST, sign: bool) -> Self { TheoryLit::T(ast,sign) }
+        /// Make a theory literal.
+        ///
+        /// This literal will map bidirectionally with the term, and
+        /// will be passed to the Theory whenever it's decided by the SAT solver.
+        pub fn new_t(ast: AST, sign: bool) -> Self { TheoryLit::T(ast,sign) }
+
+        /// Make a lazy pure boolean literal.
+        ///
+        /// This designates a pure boolean literal that will live in the SAT
+        /// solver but will not be passed to the theory.
+        /// The same term will always map to the same boolean literal.
         pub fn new_b(ast: AST, sign: bool) -> Self { TheoryLit::BLazy(ast,sign) }
+
+        /// Wrap a pure boolean literal.
+        ///
+        /// This pure SAT literal will never be passed to the theory.
+        /// It is given to the SAT solver as is.
         pub fn from_blit(b: BLit) -> Self { TheoryLit::B(b) }
 
+        /// Is is a theory literal (i.e. given to the theory when in a partial model)?
         pub fn is_theory(&self) -> bool { match self { TheoryLit::T(..) => true, _ => false } }
+
+        /// Is it a pure boolean literal (i.e. not a theory literal)?
         pub fn is_pure_bool(&self) -> bool {
             match self { TheoryLit::BLazy(..) | TheoryLit::B(..) => true, _ => false }
         }
@@ -126,12 +144,16 @@ mod theory_lit {
         fn from(l: BLit) -> Self { TheoryLit::B(l) }
     }
 
+    impl<'a,T> From<&'a T> for TheoryLit where T:Clone, TheoryLit: From<T> {
+        fn from(x: &'a T) -> Self { x.clone().into() }
+    }
+
     impl From<(AST,bool)> for TheoryLit {
-        fn from(p: (AST,bool)) -> Self { Self::new(p.0,p.1) }
+        fn from(p: (AST,bool)) -> Self { Self::new_t(p.0,p.1) }
     }
 
     impl From<AST> for TheoryLit {
-        fn from(t: AST) -> Self { Self::new(t, true) }
+        fn from(t: AST) -> Self { Self::new_t(t, true) }
     }
 
     // easy negation
@@ -141,7 +163,7 @@ mod theory_lit {
         fn not(self) -> Self {
             match self {
                 TheoryLit::B(lit) => (!lit).into(),
-                TheoryLit::T(t,sign) => Self::new(t, !sign),
+                TheoryLit::T(t,sign) => Self::new_t(t, !sign),
                 TheoryLit::BLazy(t,sign) => Self::new_b(t, !sign),
             }
         }
@@ -341,7 +363,9 @@ impl Actions {
         }
     }
 
-    pub fn add_bool_lemma_iter<I>(&mut self, i: I) where I: Iterator<Item=BLit> {
+    pub fn add_lemma_iter<U, I>(&mut self, i: I)
+        where I: Iterator<Item=U>, U: Into<TheoryLit>
+    {
         if ! self.conflict {
             trace!("theory.add-lemma-iter");
             self.cs.push_iter(i);
@@ -359,6 +383,19 @@ impl Actions {
             self.conflict = true;
             self.cs.clear(); // remove propagated lemmas
             self.cs.push(c);
+        }
+    }
+
+    /// Add a conflict clause.
+    ///
+    /// The clause is built from an iterator over theory lits
+    pub fn raise_conflict_iter<U, I>(&mut self, i: I)
+        where I: Iterator<Item=U>, U: Into<TheoryLit>
+    {
+        if ! self.conflict {
+            trace!("theory.raise-conflict-iter");
+            self.conflict = true;
+            self.cs.push_iter(i);
         }
     }
 }

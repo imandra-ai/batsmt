@@ -51,14 +51,15 @@ impl<'a, S:Symbol> LitMapB<'a,S> {
         match self.m.get().view(t) {
             View::App {f, args: _} => {
                 if f == b.true_ || f == b.false_ {
-                    TheoryLit::new(t, sign)
+                    TheoryLit::new_b(t, sign)
                 } else if f == b.and_ || f == b.or_ || f == b.imply_ {
                     TheoryLit::new_b(t, sign)
                 } else {
-                    TheoryLit::new(t, sign)
+                    // theory literal
+                    TheoryLit::new_t(t, sign)
                 }
             },
-            View::Const(_) => TheoryLit::new(t,sign),
+            View::Const(_) => TheoryLit::new_t(t,sign),
         }
     }
 }
@@ -176,13 +177,13 @@ impl<S:Symbol> Tseitin<S> {
                         }
                     },
                     _ if u == b.true_ => {
-                        cs.push(&[TheoryLit::new(u, true)]) // clause [true]
+                        cs.push(&[TheoryLit::new_b(u, true)]) // clause [true]
                     },
                     _ if u == b.false_ => {
                         // TODO: is this needed? `u` maps to `not true` anyway?
-                        cs.push(&[TheoryLit::new(u, false)]) // clause [¬false]
+                        cs.push(&[TheoryLit::new_b(u, false)]) // clause [¬false]
                     },
-                    View::App {f, args} if f == b.distinct => {
+                    View::App {f, args: _} if f == b.distinct => {
                         // TODO: eliminate `distinct` into a n^2 conjunction of `=`
                         unimplemented!("distinct is not supported yet");
                     },
@@ -192,9 +193,10 @@ impl<S:Symbol> Tseitin<S> {
         }
 
         {
+            let lmb = LitMapB{lit_map: &mut self.lit_map, b: self.b.clone(), m: self.m.clone()};
             // unit clause asserting that `t` is true
-            let (t,sign) = self.lit_map.unfold_not(t, true);
-            self.cs.push(&[(t,sign)]);
+            let top_lit = lmb.term_to_lit(t);
+            self.cs.push(&[top_lit]);
         }
 
         self.cs.iter()

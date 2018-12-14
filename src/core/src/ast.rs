@@ -790,6 +790,17 @@ mod dense_map {
             }
         }
 
+        /// Access the given key, return a mutable reference to its value
+        pub fn get_mut(&mut self, ast: AST) -> Option<&mut V> {
+            let i = ast.0 as usize;
+            if self.mem.contains(i) {
+                debug_assert!(i < self.vec.len());
+                Some(&mut self.vec[i])
+            } else {
+                None
+            }
+        }
+
         /// Does the map contain this key?
         pub fn contains(&self, ast: AST) -> bool {
             let i = ast.0 as usize;

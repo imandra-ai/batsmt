@@ -17,7 +17,7 @@ pub trait Backtrackable {
     fn n_levels(&self) -> usize;
 }
 
-/// Trivial backtracking state
+/// Trivial backtracking implementation, which doesn't do anything.
 pub struct Stateless{n_levels: usize}
 
 impl Stateless {
@@ -65,6 +65,7 @@ impl<Op> Stack<Op> {
     ///
     /// In general, when one wants to perform some invertible action, using
     /// this stack and performing the change via an `O` value is a good move.
+    #[inline]
     pub fn push<Ctx>(&mut self, ctx: &mut Ctx, mut op: Op)
         where Ctx : PerformOp<Op> 
     {
