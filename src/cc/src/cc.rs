@@ -37,7 +37,7 @@ pub struct CC<S> where S: Symbol {
     m: ast::Manager<S>, // the AST manager
     ok: bool, // no conflict?
     props: SVec<Propagation>,
-    stack: backtrack::Stack<Op>,
+    stack: backtrack::Stack<UndoOp>,
     m_s: PhantomData<S>,
     cc0: RefCell<CC0>,
 }
@@ -95,10 +95,9 @@ pub struct Propagation {
 #[derive(Clone)]
 pub struct Conflict(pub SVec<BLit>);
 
-/// Backtrackable operations on the congruence closure
-enum Op {
-    Merge(Repr, Repr, Expl),
-    SignalConflict,
+/// Undo operations on the congruence closure
+enum UndoOp {
+    Merge(Repr, Repr),
 }
 
 /// Operation to perform in the main fixpoint
@@ -190,6 +189,25 @@ mod cc {
 
         /// Find representative of the given node
         fn find(&self, id: NodeID) -> Repr { self[id].root }
+
+        fn perform_undo(&mut self, op: UndoOp) {
+            match op {
+                UndoOp::Merge(a,b) => {
+                    if self[a.0].is_root() {
+                        // unmerge b from a
+                        let n = &mut self[b.0];
+                        debug_assert!(! n.is_root());
+                        n.root = b;
+                    } else {
+                        // unmerge a
+                        debug_assert!(self[b.0].is_root());
+                        let n = &mut self[a.0];
+                        debug_assert!(! n.is_root());
+                        n.root = a;
+                    }
+                }
+            }
+        }
     }
 
     impl std::ops::Index<NodeID> for CC0 {
@@ -210,35 +228,15 @@ mod cc {
     impl<S: Symbol> backtrack::Backtrackable for CC<S> {
         fn push_level(&mut self) {
             let mut cc0 = self.cc0.borrow_mut();
-            self.stack.promote(&mut *cc0).push_level();
+            self.stack.push_level();
         }
 
         fn pop_levels(&mut self, n: usize) {
             let mut cc0 = self.cc0.borrow_mut();
-            self.stack.promote(&mut *cc0).pop_levels(n);
+            self.stack.pop_levels(n, |op| cc0.perform_undo(op))
         }
 
         fn n_levels(&self) -> usize { self.stack.n_levels() }
-    }
-
-    // how top apply `Op` to the core congruence closure
-    impl backtrack::PerformOp<Op> for CC0 {
-        fn do_op(&mut self, op: &mut Op) {
-            match op {
-                Op::Merge(a,b,expl) => {
-                    let ra = self.find(a.0);
-                    let rb = self.find(b.0);
-                    if ra != rb {
-                        unimplemented!() // TODO
-                    }
-                }
-                , _ => panic!() // TODO: remove?
-            }
-        }
-
-        fn undo_op(&mut self, op: &mut Op) {
-            unimplemented!(); // TODO
-        }
     }
 }
 
