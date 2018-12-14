@@ -16,27 +16,15 @@ use {
         collections::VecDeque,
     },
     batsmt_core::{ast::{self,AST},Symbol,backtrack},
-    batsmt_solver::theory,
-    smallvec::SmallVec,
+    crate::{types::BLit,PropagationSet,Conflict,Builtins,CCInterface,SVec},
 };
-
-/// Boolean literal
-pub type BLit = theory::BLit;
-
-/// Builtin symbols required by the congruence closure
-#[derive(Debug,Clone)]
-pub struct Builtins {
-    pub true_: AST,
-    pub false_: AST,
-    pub eq: AST,
-    pub distinct: AST,
-}
 
 /// The congruence closure
 pub struct CC<S> where S: Symbol {
     m: ast::Manager<S>, // the AST manager
     ok: bool, // no conflict?
-    props: SVec<Propagation>,
+    props: PropagationSet,
+    confl: Vec<BLit>, // tmp for conflict
     stack: backtrack::Stack<UndoOp>,
     m_s: PhantomData<S>,
     cc0: RefCell<CC0>,
@@ -69,9 +57,6 @@ struct NodeID(AST);
 #[derive(Debug,Clone,Copy,Eq,PartialEq,Hash,Ord,PartialOrd)]
 struct Repr(NodeID);
 
-/// a small vector of `T`
-pub type SVec<T> = SmallVec<[T; 3]>;
-
 type Merge = (Repr,Repr);
 type Merges = SVec<Merge>;
 
@@ -82,19 +67,6 @@ enum Expl {
     Merges(Merges), // congruence, injectivity, etc.
 }
 
-/// Propagation: `guard => concl`
-///
-/// Note that `guard` literals should all be true in current trail.
-#[derive(Clone)]
-pub struct Propagation {
-    pub concl: BLit,
-    pub guard: SVec<BLit>,
-}
-
-/// A conflict is a set of literals that forms a clause
-#[derive(Clone)]
-pub struct Conflict(pub SVec<BLit>);
-
 /// Undo operations on the congruence closure
 enum UndoOp {
     Merge(Repr, Repr),
@@ -104,6 +76,25 @@ enum UndoOp {
 enum Task {
     Merge(AST, AST, Expl),
     Distinct(SVec<AST>, Expl),
+}
+
+impl<S:Symbol> CCInterface for CC<S> {
+    fn merge(&mut self, t1: AST, t2: AST, lit: BLit) {
+        let expl = Expl::Lit(lit);
+        self.cc0.borrow_mut().tasks.push_back(Task::Merge(t1,t2,expl))
+    }
+
+    fn distinct(&mut self, ts: &[AST], lit: BLit) {
+        let mut v = SVec::with_capacity(ts.len());
+        v.extend_from_slice(ts);
+        let expl = Expl::Lit(lit);
+        self.cc0.borrow_mut().tasks.push_back(Task::Distinct(v,expl))
+    }
+
+    fn check(&mut self) -> Result<&PropagationSet, Conflict> {
+        info!("cc check!");
+        self.check_internal()
+    }
 }
 
 // main congruence closure operations
@@ -118,7 +109,8 @@ mod cc {
                 m: m.clone(),
                 ok: true,
                 m_s: PhantomData::default(),
-                props: SVec::new(),
+                props: PropagationSet::new(),
+                confl: vec!(),
                 stack: backtrack::Stack::new(),
                 cc0: RefCell::new(CC0::new(b)),
             }
@@ -129,35 +121,11 @@ mod cc {
 
         #[inline(always)]
         pub fn m_mut(&mut self) -> ast::ManagerRefMut<S> { self.m.get_mut() }
-
-        /// `cc.merge(t1,t2,lit)` merges `t1` and `t2` with explanation `lit`.
-        pub fn merge(&self, t1: AST, t2: AST, lit: BLit) {
-            let expl = Expl::Lit(lit);
-            self.cc0.borrow_mut().tasks.push_back(Task::Merge(t1,t2,expl))
-        }
-
-        /// `cc.distinct(terms,lit)` asserts that all elements of `terms` are disjoint
-        pub fn distinct(&self, ts: &[AST], lit: BLit) {
-            let mut v = SVec::with_capacity(ts.len());
-            v.extend_from_slice(ts);
-            let expl = Expl::Lit(lit);
-            self.cc0.borrow_mut().tasks.push_back(Task::Distinct(v,expl))
-        }
-
-        /// Check if the set of `merge` and `distinct` seen so far is consistent.
-        ///
-        /// Returns `Ok(props)` if the result is safisfiable with propagations `props`,
-        /// and `Err(c)` if `c` is a valid conflict clause that contradicts
-        /// the current trail.
-        pub fn check(&mut self) -> Result<SVec<Propagation>, Conflict> {
-            info!("cc check!");
-            self.check_internal()
-        }
     }
 
     impl<S:Symbol> CC<S> {
         // main `check` function, performs the fixpoint
-        fn check_internal(&mut self) -> Result<SVec<Propagation>, Conflict> {
+        pub(super) fn check_internal(&mut self) -> Result<&PropagationSet, Conflict> {
             let mut cc0 = self.cc0.borrow_mut();
             while let Some(task) = cc0.tasks.pop_front() {
                 match task {
@@ -171,7 +139,7 @@ mod cc {
 
 
             }
-            Ok(self.props.clone())
+            Ok(&self.props)
         }
 
     }

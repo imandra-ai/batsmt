@@ -41,20 +41,23 @@ impl Backtrackable for Stateless {
     fn n_levels(&self) -> usize { self.n_levels }
 }
 
-/// Implementation of `Backtrackable` using a stack of invertible operations.
+/// A stack of items that support backtrack-able `push`.
 ///
-/// Note that such operations should be ready to be called several times,
-/// for example in a context where operations are pushed onto the stack
-/// out of order (in which case they may be undone and done again several times).
-pub struct Stack<Op> {
-    ops: Vec<Op>,
+/// This can be used to push "undo" operations when mutating a structure
+/// in a backtrackable context. The `pop_levels` function should be called
+/// with a function `f` that will undo the modifications.
+///
+/// It can also be used as a normal stack of objects where `push` is undone
+/// upon backtracking.
+pub struct Stack<T> {
+    st: Vec<T>,
     levels: Vec<u32>, // we assume the stack never goes over u32
 }
 
-impl<Op> Stack<Op> {
+impl<T> Stack<T> {
     /// New stack.
     pub fn new() -> Self {
-        Stack { ops: Vec::new(), levels: Vec::new(), }
+        Stack { st: Vec::new(), levels: Vec::new(), }
     }
 
     #[inline(always)]
@@ -65,19 +68,21 @@ impl<Op> Stack<Op> {
     /// This is useful for implementing `Backtrackable` by deferring undo
     /// actions to this `Stack`.
     pub fn push_level(&mut self) {
-        let cur_size = self.ops.len();
+        let cur_size = self.st.len();
         if cur_size > u32::MAX as usize { panic!("backtrack stack is too deep") };
         self.levels.push(cur_size as u32);
     }
 
-    /// `stack.push(ctx,op)` pushes `op` so it's undone upon backtracking.
+    /// `stack.push(ctx,x)` pushes `x` onto the stack.
+    ///
+    /// `x` will be pop'd upon backtracking, and some function called on it.
     ///
     /// In general, when one wants to perform some invertible action,
     /// it can be done by performing the action and immediately after
-    /// pushing its undoing `Op` onto this stack.
-    #[inline]
-    pub fn push_undo(&mut self, op: Op) {
-        self.ops.push(op);
+    /// pushing its undoing `T` onto this stack.
+    #[inline(always)]
+    pub fn push(&mut self, x: T) {
+        self.st.push(x);
     }
 
     /// Pop `n` backtracking levels, performing "undo" actions with `f`.
@@ -88,7 +93,7 @@ impl<Op> Stack<Op> {
     /// This is useful for implementing `Backtrackable` by deferring undo
     /// actions to this `Stack`.
     pub fn pop_levels<F>(&mut self, n: usize, mut f: F)
-        where F: FnMut(Op)
+        where F: FnMut(T)
     {
         debug!("pop-levels {}", n);
         if n > self.levels.len() {
@@ -102,8 +107,20 @@ impl<Op> Stack<Op> {
             offset as usize
         };
         while self.levels.len() > offset {
-            let op = self.ops.pop().unwrap();
+            let op = self.st.pop().unwrap();
             f(op)
         }
+    }
+
+    /// Iterate over the items in the stack.
+    #[inline(always)]
+    pub fn iter(&self) -> impl Iterator<Item=&T> {
+        self.st.iter()
+    }
+
+    /// Immutable view into the internal operations
+    #[inline(always)]
+    pub fn as_slice(&self) -> &[T] {
+        &self.st
     }
 }

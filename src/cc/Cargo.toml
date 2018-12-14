@@ -9,5 +9,6 @@ edition = "2018"
 batsmt-core = { path="../core" }
 batsmt-pretty = { path="../pretty" }
 batsmt-solver = { path="../solver" }
-smallvec = "0.6"
+smallvec = "^0.6"
+fxhash = "^0.2"
 log = "0.4"
