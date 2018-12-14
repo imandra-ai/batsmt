@@ -5,7 +5,9 @@ use {
     batsmt_core::{
         ast::{self,AST,View,iter_dag::State as AstIter},
         Symbol,
-        theory::{TheoryLit,TheoryClauseSet},
+    },
+    batsmt_solver::{
+        theory::{TheoryLit,TheoryClauseSet,TheoryClauseRef},
         lit_map::LitMap,
     },
 };
@@ -90,7 +92,7 @@ impl<S:Symbol> Tseitin<S> {
     /// The clauses define boolean connectives occurring inside `t`.
     /// ## params
     /// - `t` is the formula to normalize
-    pub fn clauses(&mut self, t: AST) -> impl Iterator<Item=&[TheoryLit]> {
+    pub fn clauses(&mut self, t: AST) -> impl Iterator<Item=TheoryClauseRef> {
         self.cs.clear();
 
         {

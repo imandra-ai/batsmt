@@ -7,6 +7,7 @@ extern crate batsmt_cc;
 extern crate batsmt_parser;
 extern crate batsmt_pretty;
 extern crate batsmt_tseitin;
+extern crate batsmt_solver;
 extern crate fxhash;
 #[macro_use] extern crate log;
 
@@ -15,10 +16,11 @@ mod ast_printer;
 
 use {
     std::{env,fs,error::Error},
-    batsmt_core::{ast,StrSymbol,solver},
+    batsmt_core::{ast,StrSymbol},
     batsmt_cc as cc,
     batsmt_parser::{self as parser, Statement},
     batsmt_tseitin::Tseitin,
+    batsmt_solver as solver,
     crate::ast_printer::PP,
 };
 

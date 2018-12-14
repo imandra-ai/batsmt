@@ -19,7 +19,7 @@ dependencies = [
 [[package]]
 name = "batsat"
 version = "0.2.0"
-source = "git+https://github.com/c-cube/batsat#95867c01b33dee29ab2044af08ea115e709874f9"
+source = "git+https://github.com/c-cube/batsat#ec7a31fcaafa6c92471eae4bd9026d4252145940"
 dependencies = [
  "bit-vec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "smallvec 0.6.7 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -31,6 +31,7 @@ version = "0.1.0"
 dependencies = [
  "batsmt-core 0.1.0",
  "batsmt-pretty 0.1.0",
+ "batsmt-solver 0.1.0",
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "smallvec 0.6.7 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -39,7 +40,6 @@ dependencies = [
 name = "batsmt-core"
 version = "0.1.0"
 dependencies = [
- "batsat 0.2.0 (git+https://github.com/c-cube/batsat)",
  "batsmt-pretty 0.1.0",
  "bit-set 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "fxhash 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -72,6 +72,7 @@ dependencies = [
  "batsmt-core 0.1.0",
  "batsmt-parser 0.1.0",
  "batsmt-pretty 0.1.0",
+ "batsmt-solver 0.1.0",
  "batsmt-tseitin 0.1.0",
  "env_logger 0.5.13 (registry+https://github.com/rust-lang/crates.io-index)",
  "fxhash 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -79,10 +80,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "batsmt-solver"
+version = "0.1.0"
+dependencies = [
+ "batsat 0.2.0 (git+https://github.com/c-cube/batsat)",
+ "batsmt-core 0.1.0",
+ "batsmt-pretty 0.1.0",
+ "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "smallvec 0.6.7 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "batsmt-tseitin"
 version = "0.1.0"
 dependencies = [
  "batsmt-core 0.1.0",
+ "batsmt-solver 0.1.0",
 ]
 
 [[package]]

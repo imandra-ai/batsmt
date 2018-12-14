@@ -4,7 +4,7 @@
 use {
     std::{ops::{Deref,Not}, fmt},
     smallvec::SmallVec,
-    crate::{symbol::Symbol, ast::{self,AST}, backtrack::Backtrackable},
+    batsmt_core::{symbol::Symbol, ast::{self,AST}, backtrack::Backtrackable},
     batsmt_pretty as pp,
 };
 
@@ -34,6 +34,14 @@ pub struct TheoryClause {
     lits: SVec<TheoryLit>,
 }
 
+/// A temporary theory-level clause, such as a lemma or theory conflict
+///
+/// It is composed of a set of `TheoryLit`.
+#[derive(Clone,Copy,Debug)]
+pub struct TheoryClauseRef<'a> {
+    lits: &'a [TheoryLit],
+}
+
 /// A set of theory clauses, with efficient append
 #[derive(Clone)]
 pub struct TheoryClauseSet {
@@ -52,7 +60,7 @@ pub(crate) enum ActState<'a> {
     /// propagations (new lemmas)
     Props(&'a TheoryClauseSet),
     /// conflict reached
-    Conflict(&'a [TheoryLit])
+    Conflict(TheoryClauseRef<'a>)
 }
 
 /// The theory subset of the (partial) model picked by the SAT solver.
@@ -119,8 +127,8 @@ mod theory_lit {
         }
     }
 
-    impl<S:Symbol> ast::PrettyM<S> for TheoryLit {
-        fn pp_m(&self, m: &M<S>, ctx: &mut pp::Ctx) {
+    impl ast::PrettyM for TheoryLit {
+        fn pp_m<S:Symbol>(&self, m: &M<S>, ctx: &mut pp::Ctx) {
             match self {
                 TheoryLit::B(lit) => {
                     ctx.str(if lit.sign() {"+"} else {"-"}).string(format!("{}", lit.idx()));
@@ -168,24 +176,30 @@ mod theory_lit {
             }
         }
     }
-
-    // Print a list of literals
-    impl<'a, S:Symbol> ast::PrettyM<S> for &'a [TheoryLit] {
-        fn pp_m(&self, m: &M<S>, ctx: &mut pp::Ctx) {
-            ctx.sexp(|ctx| {
-                ctx.iter(pp::pair(" ∨", pp::space()),
-                    self.iter().map(|lit| m.pp(*lit)));
-            });
-        }
-    }
 }
 
 mod theory_clause {
     use super::*;
 
+    impl<'a> TheoryClauseRef<'a> {
+        pub fn iter(&'a self) -> impl Iterator<Item=TheoryLit> + 'a {
+            self.lits.iter().map(|l| *l)
+        }
+    }
+
+    impl<'a> Deref for TheoryClauseRef<'a> {
+        type Target = [TheoryLit];
+        fn deref(&self) -> &Self::Target { &self.lits }
+    }
+
     impl TheoryClause {
         /// Create a clause from the given lits
         pub fn new(v: SVec<TheoryLit>) -> Self { TheoryClause{ lits: v } }
+
+        /// Obtain a temporary reference
+        pub fn as_ref(&self) -> TheoryClauseRef {
+            TheoryClauseRef{lits:&self.lits}
+        }
 
         /// Create from a slice
         pub fn from_slice(v: &[TheoryLit]) -> Self {
@@ -199,14 +213,26 @@ mod theory_clause {
             let v = i.map(|x| x.into()).collect();
             Self::new(v)
         }
-        
+
         pub fn iter<'a>(&'a self) -> impl Iterator<Item=TheoryLit> + 'a {
             self.lits.iter().map(|l| *l)
         }
     }
 
-    impl<S:Symbol> ast::PrettyM<S> for TheoryClause {
-        fn pp_m(&self, m: &M<S>, ctx: &mut pp::Ctx) { (&self).pp_m(m,ctx) }
+    // Print a list of literals
+    impl<'a> ast::PrettyM for TheoryClauseRef<'a> {
+        fn pp_m<S:Symbol>(&self, m: &M<S>, ctx: &mut pp::Ctx) {
+            ctx.sexp(|ctx| {
+                ctx.iter(pp::pair(" ∨", pp::space()),
+                    self.lits.iter().map(|lit| m.pp(*lit)));
+            });
+        }
+    }
+
+    impl ast::PrettyM for TheoryClause {
+        fn pp_m<S:Symbol>(&self, m: &M<S>, ctx: &mut pp::Ctx) {
+            self.as_ref().pp_m(m,ctx)
+        }
     }
 
     impl Deref for TheoryClause {
@@ -268,7 +294,7 @@ mod theory_clause_set {
         ///
         /// Use `c.into()` over the slices to turn them into proper `TheoryClause`,
         /// if needed.
-        pub fn iter<'a>(&'a self) -> impl Iterator<Item=&'a [TheoryLit]> {
+        pub fn iter<'a>(&'a self) -> impl Iterator<Item=TheoryClauseRef<'a>> {
             CSIter{cs: &self, idx: 0}
         }
     }
@@ -291,7 +317,7 @@ mod theory_clause_set {
 
     // the iterator over clauses
     impl<'a> Iterator for CSIter<'a> {
-        type Item = &'a [TheoryLit];
+        type Item = TheoryClauseRef<'a>;
 
         fn next(&mut self) -> Option<Self::Item> {
             let cs = self.cs;
@@ -300,7 +326,7 @@ mod theory_clause_set {
             } else {
                 let (off,len) = cs.offsets[self.idx];
                 self.idx += 1;
-                Some(&cs.lits[off..off+len])
+                Some(TheoryClauseRef{lits: &cs.lits[off..off+len]})
             }
         }
     }

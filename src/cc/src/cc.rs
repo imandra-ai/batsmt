@@ -15,7 +15,8 @@ use {
         fmt::{self,Debug},
         collections::VecDeque,
     },
-    batsmt_core::{ast::{self,AST},Symbol,backtrack,theory},
+    batsmt_core::{ast::{self,AST},Symbol,backtrack},
+    batsmt_solver::theory,
     smallvec::SmallVec,
 };
 

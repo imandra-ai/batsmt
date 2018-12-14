@@ -1,7 +1,8 @@
 
 use {
     batsmt_parser as parser,
-    batsmt_core::{ast,AST,StrSymbol,solver,lit_map},
+    batsmt_core::{ast,AST,StrSymbol},
+    batsmt_solver::{solver,lit_map},
     batsmt_cc as cc,
     batsmt_tseitin as tseitin,
     fxhash::FxHashMap,

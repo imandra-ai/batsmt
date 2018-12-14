@@ -6,6 +6,7 @@ authors = ["Simon Cruanes <simon.cruanes.2007@m4x.org>"]
 [dependencies]
 
 batsmt-core = {path = "../core"}
+batsmt-solver = {path = "../solver"}
 batsmt-cc = {path = "../cc"}
 batsmt-parser = {path = "../parser"}
 batsmt-pretty = {path = "../pretty"}

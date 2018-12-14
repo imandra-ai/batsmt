@@ -2,7 +2,7 @@
 //! Mapping between (boolean) terms and SAT literals
 
 use {
-    crate::{
+    batsmt_core::{
         symbol::Symbol, ast::{self,AST,View},
         util::{Shared,SharedRef,SharedRefMut},
     },

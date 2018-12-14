@@ -1,13 +1,13 @@
 [package]
-name = "batsmt-core"
+name = "batsmt-solver"
 version = "0.1.0"
 authors = ["Simon Cruanes <simon.cruanes.2007@m4x.org>"]
 edition = "2018"
 
 [dependencies]
 
-bit-set = "0.5.0"
-log = "0.4"
-fxhash = "^0.2.1"
-smallvec = "0.6"
+batsmt-core = { path = "../core" }
 batsmt-pretty = { path = "../pretty" }
+batsat = { git="https://github.com/c-cube/batsat", version = "^0.2"}
+smallvec = "0.6"
+log = "0.4"

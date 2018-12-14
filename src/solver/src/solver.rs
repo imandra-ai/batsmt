@@ -7,11 +7,13 @@ use {
         theory::CheckRes,
     },
     batsmt_pretty as pp,
-    crate::{
+    batsmt_core::{
         ast::{self,AST},
-        lit_map::{LitMap},
-        theory::{Theory,TheoryLit,TheoryClause,Actions,ActState,Trail},
         symbol::Symbol,
+    },
+    crate::{
+        lit_map::{LitMap},
+        theory::{Theory,TheoryLit,TheoryClause,TheoryClauseRef,Actions,ActState,Trail},
     },
 };
 
@@ -112,14 +114,14 @@ mod solver {
         }
 
         /// Add a clause made from signed terms
-        pub fn add_clause_slice(&mut self, c: &[TheoryLit]) {
+        pub fn add_clause_slice(&mut self, c: TheoryClauseRef) {
             trace!("solver.add-clause\n{}", self.m.display(c));
             // use `self.lits` as temporary storage
             self.lits.clear();
             let s0 = &mut self.s0;
             self.lits.extend(
                 c.iter()
-                .map(|&lit| {
+                .map(|lit| {
                     let lit = s0.get_or_create_lit(lit);
                     lit
                 }));
@@ -128,7 +130,7 @@ mod solver {
 
         /// Add a clause made from signed terms
         pub fn add_clause(&mut self, c: &TheoryClause) {
-            self.add_clause_slice(& *c)
+            self.add_clause_slice(c.as_ref())
         }
 
         /// Solve the set of constraints added with `add_clause` until now
@@ -261,9 +263,9 @@ mod solver {
         /// Convert the given theory clause into an array of boolean literals.
         ///
         /// The result is stored in `lits`
-        fn convert_th_clause(&mut self, c: &[TheoryLit]) {
+        fn convert_th_clause(&mut self, c: TheoryClauseRef) {
             self.lits.clear();
-            for &lit in c.iter() {
+            for lit in c.iter() {
                 let lit = self.convert_th_lit(lit);
                 self.lits.push(lit);
             }

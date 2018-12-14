@@ -2,7 +2,8 @@
 //! Theory built on the congruence closure
 
 use {
-    batsmt_core::{self as core,theory,ast::{self,AST},symbol::Symbol},
+    batsmt_core::{self as core,ast::{self,AST},symbol::Symbol},
+    batsmt_solver::{theory},
     batsmt_pretty as pp,
     crate::cc::{self,CC,BLit},
 };
@@ -108,8 +109,8 @@ impl<S:Symbol> theory::Theory<S> for CCTheory<S> {
 mod op {
     use super::*;
 
-    impl<'a,S:Symbol> ast::PrettyM<S> for Op<'a> {
-        fn pp_m(&self, m: &M<S>, ctx: &mut pp::Ctx) {
+    impl<'a> ast::PrettyM for Op<'a> {
+        fn pp_m<S:Symbol>(&self, m: &M<S>, ctx: &mut pp::Ctx) {
             match self {
                 Op::Eq(a,b) => {
                     ctx.sexp(|ctx| {

@@ -7,3 +7,4 @@ edition = "2018"
 [dependencies]
 
 batsmt-core = {path = "../core"}
+batsmt-solver = {path = "../solver"}

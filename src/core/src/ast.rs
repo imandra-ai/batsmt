@@ -342,8 +342,8 @@ pub struct ManagerRefMut<'a, S:Symbol>(SharedRefMut<'a, ManagerCell<S>>);
 struct WithManager<'a, S:Symbol, T>(&'a Manager<S>, T);
 
 /// Objects that can be pretty-printed if paired with a manager
-pub trait PrettyM<S:Symbol> {
-    fn pp_m(&self, m: &Manager<S>, ctx: &mut pp::Ctx);
+pub trait PrettyM {
+    fn pp_m<S:Symbol>(&self, m: &Manager<S>, ctx: &mut pp::Ctx);
 }
 
 mod manager {
@@ -662,35 +662,35 @@ mod manager {
 
     impl<S:Symbol> Manager<S> {
         /// Pretty-printable version of the given object
-        pub fn pp<'a, T:PrettyM<S>+'a>(&'a self, x:T) -> impl pp::Pretty+'a {
+        pub fn pp<'a, T:PrettyM+'a>(&'a self, x:T) -> impl pp::Pretty+'a {
             WithManager(&self, x)
         }
 
         /// Pretty-printable version of the given object
-        pub fn display<'a, T:PrettyM<S>+'a>(&'a self, x: T) -> impl fmt::Display+'a {
+        pub fn display<'a, T:PrettyM+'a>(&'a self, x: T) -> impl fmt::Display+'a {
             pp::display(WithManager(&self, x))
         }
 
         /// Pretty-printable version of the given object
-        pub fn debug<'a, T:PrettyM<S>+'a>(&'a self, x: T) -> impl fmt::Debug+'a {
+        pub fn debug<'a, T:PrettyM+'a>(&'a self, x: T) -> impl fmt::Debug+'a {
             pp::debug(WithManager(&self, x))
         }
     }
 
-    impl<'a, S:Symbol, T:PrettyM<S>> pp::Pretty for WithManager<'a,S,T> {
+    impl<'a, S:Symbol, T:PrettyM> pp::Pretty for WithManager<'a,S,T> {
         fn pp(&self, ctx: &mut pp::Ctx) {
             let WithManager(m,t) = self;
             t.pp_m(m, ctx)
         }
     }
 
-    impl<'a, S:Symbol, T:PrettyM<S>> PrettyM<S> for &'a T {
-        fn pp_m(&self, m: &Manager<S>, ctx: &mut pp::Ctx) { (*self).pp_m(m,ctx) }
+    impl<'a, T:PrettyM> PrettyM for &'a T {
+        fn pp_m<S:Symbol>(&self, m: &Manager<S>, ctx: &mut pp::Ctx) { (*self).pp_m(m,ctx) }
     }
 
     /// An AST can be printed, given a manager, if the symbols are pretty
-    impl<S:Symbol> PrettyM<S> for AST {
-        fn pp_m(&self, m: &Manager<S>, ctx: &mut pp::Ctx) {
+    impl PrettyM for AST {
+        fn pp_m<S:Symbol>(&self, m: &Manager<S>, ctx: &mut pp::Ctx) {
             match m.get().view_sym(*self) {
                 ViewSym::Const(s) => s.pp(ctx),
                 ViewSym::App{f,args} if args.len() == 0 => {

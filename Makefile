@@ -27,6 +27,8 @@ test:
 test-release:
 	cargo test --release -- $(TEST_FLAGS)
 
+dev: check debug test build
+
 watch:
 	while find src/ -print0 | xargs -0 inotifywait -e delete_self -e modify ; do \
 		echo "============ at `date` ==========" ; \
