@@ -130,8 +130,9 @@ impl<'a, S:Symbol> Solve<'a, S> {
         for &op in ops.iter() {
             let ok = self.perform_op(op);
             if !ok {
-                // copy conflict
-                self.confl.extend(self.all_lits.iter());
+                // build conflict (all literals used so far, negated)
+                self.confl.clear();
+                self.confl.extend(self.all_lits.iter().map(|&l| !l));
                 return false;
             }
         }
@@ -287,6 +288,18 @@ impl<'a, S:Symbol> Solve<'a, S> {
             }
         }
 
+        for &t in parents_a.iter().chain(parents_b.iter()) {
+            match self.m.get().view(t) {
+                View::App {f, args} => {
+                    // `a=b` where a and b are merged --> merge with true
+                    if f == self.b.eq && self.is_eq(args[0], args[1]) {
+                        new_congr.push((t, self.b.true_));
+                    }
+                },
+                _ => ()
+            }
+        }
+
         // merge parents_b into parents_a and put it back into place
         {
             parents_a.extend_from_slice(&parents_b);
@@ -318,6 +331,11 @@ impl<'a, S:Symbol> Solve<'a, S> {
                             new_congr.push((t,u));
                         }
                     }
+                }
+
+                // `a=b` where a and b are merged --> merge with true
+                if f == self.b.eq && self.is_eq(args[0], args[1]) {
+                    new_congr.push((t, self.b.true_));
                 }
 
                 for (t,u) in new_congr {
