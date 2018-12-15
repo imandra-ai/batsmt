@@ -135,7 +135,7 @@ impl<S:Symbol> theory::Theory<S> for CCTheory<S> {
 
             do_sth = true;
 
-            trace!("cc: op {}", pp::display(self.m.pp(&op)));
+            trace!("cc: op {:?} (blit {:?})", self.m.dbg(&op), lit);
             match op {
                 Op::Eq(a,b) => {
                     self.cc.merge(a,b,lit)

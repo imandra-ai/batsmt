@@ -131,7 +131,7 @@ mod theory_lit {
         fn pp_m<S:Symbol>(&self, m: &M<S>, ctx: &mut pp::Ctx) {
             match self {
                 TheoryLit::B(lit) => {
-                    ctx.str(if lit.sign() {"+"} else {"-"}).string(format!("{}", lit.idx()));
+                    pp::Pretty::pp(&pp::dbg(lit), ctx);
                 },
                 TheoryLit::T(t,sign) => {
                     let s = if *sign { "t+" } else { "t-" };

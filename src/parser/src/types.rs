@@ -86,7 +86,7 @@ impl<T,S> pp::Pretty for Statement<T,S>
         match self {
             &Statement::SetInfo(ref a, ref b) => {
                 ctx.sexp(|ctx| {
-                    ctx.str("set-info").space().pp(&a).space().pp(&b);
+                    ctx.str("set-info").space().pp(&a).space().pp(&pp::dbg(&b));
                 });
             },
             &Statement::SetLogic(ref a) => {

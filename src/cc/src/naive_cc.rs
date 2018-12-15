@@ -172,7 +172,7 @@ impl<'a, S:Symbol> Solve<'a, S> {
         if ra == rb {
             true
         } else {
-            trace!("merge {} and {}", self.m.display(ra.0), self.m.display(rb.0));
+            trace!("merge {:?} and {:?}", self.m.dbg_ast(ra.0), self.m.dbg_ast(rb.0));
             self.all_lits.insert(lit); // may be involved in conflict
 
             self.tasks.push_back(Task::Merge(a,b));
@@ -321,7 +321,7 @@ impl<'a, S:Symbol> Solve<'a, S> {
                 }
 
                 for (t,u) in new_congr {
-                    trace!("update-term({}): merge with {}", m.display(t), m.display(u));
+                    trace!("update-term({:?}): merge with {:?}", m.dbg_ast(t), m.dbg_ast(u));
                     self.tasks.push_back(Task::Merge(t,u))
                 }
             },

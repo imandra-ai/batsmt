@@ -5,13 +5,12 @@ extern crate batsmt_cc;
 mod cc {
     use batsmt_core::{ast,StrSymbol};
     use batsmt_cc::*;
-    use std::cell::RefCell;
 
     type M = ast::Manager<StrSymbol>;
 
-    fn b(m: &M) -> cc::Builtins {
+    fn b(m: &M) -> Builtins {
         let m = m.clone();
-        cc::Builtins {
+        Builtins {
             true_: m.mk_str("true"),
             false_: m.mk_str("false"),
             eq: m.mk_str("="),
