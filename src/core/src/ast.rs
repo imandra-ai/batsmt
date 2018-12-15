@@ -422,8 +422,11 @@ mod manager {
         /// `m.mk_app(f, args)` creates the application of `f` to `args`.
         ///
         /// If the term is structurally equal to an existing term, then this
-        /// ensures the exact same AST is returned ("hashconsing")
+        /// ensures the exact same AST is returned ("hashconsing").
+        /// If `args` is empty, return `f`.
         pub fn mk_app(&mut self, f: AST, args: &[AST]) -> AST {
+            if args.len() == 0 { return f }
+
             let k = AppStored::mk_ref(f, args);
 
             // borrow multiple fields
