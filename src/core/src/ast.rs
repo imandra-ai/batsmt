@@ -672,10 +672,17 @@ mod manager {
         }
 
         /// Pretty-printable version of the given object
-        pub fn debug<'a, T:PrettyM+'a>(&'a self, x: T) -> impl fmt::Debug+'a {
+        pub fn dbg<'a, T:PrettyM+'a>(&'a self, x: T) -> impl fmt::Debug+'a {
             pp::debug(WithManager(&self, x))
         }
+
+        /// Term with more debug info
+        pub fn dbg_ast<'a>(&'a self, t: AST) -> impl fmt::Debug+'a {
+            self.dbg(DbgAST(t))
+        }
     }
+
+    struct DbgAST(AST); // marker for "more debug"-y printing
 
     impl<'a, S:Symbol, T:PrettyM> pp::Pretty for WithManager<'a,S,T> {
         fn pp(&self, ctx: &mut pp::Ctx) {
@@ -703,6 +710,13 @@ mod manager {
                     });
                 }
             }
+        }
+    }
+
+    impl PrettyM for DbgAST {
+        fn pp_m<S:Symbol>(&self, m: &Manager<S>, ctx: &mut pp::Ctx) {
+            self.0.pp_m(m,ctx);
+            ctx.string(format!("/{}", (self.0).0)); // print unique ID
         }
     }
 }
