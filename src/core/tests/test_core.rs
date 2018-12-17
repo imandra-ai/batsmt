@@ -133,7 +133,7 @@ mod ast {
 
     impl StressApp {
         fn new(n: usize) -> Self {
-            let mut m = M::new();
+            let m = M::new();
             let f = m.mk_str("f");
             let g = m.mk_str("g");
             let a = m.mk_str("a");
@@ -368,3 +368,53 @@ mod ast {
     */
 }
 
+mod backtrack {
+    use batsmt_core::backtrack::*;
+
+    #[test]
+    fn test_stack() {
+        let mut s = Stack::new();
+
+        s.push(0);
+        s.push_level();
+        assert_eq!(s.n_levels(), 1);
+        assert_eq!(s.as_slice(), &[0]);
+
+        s.push(1);
+        s.push(2);
+
+        assert_eq!(s.as_slice(), &[0,1,2]);
+
+        s.push_level();
+        assert_eq!(s.n_levels(), 2);
+        assert_eq!(s.as_slice(), &[0,1,2]);
+
+        s.push(3);
+        assert_eq!(s.as_slice(), &[0,1,2,3]);
+
+        s.pop_levels(2, |x| { assert!(x > 0) });
+        assert_eq!(s.n_levels(), 0);
+        assert_eq!(s.as_slice(), &[0]);
+
+        s.push_level();
+
+        s.push(1);
+        s.push(2);
+
+        s.push_level();
+        assert_eq!(s.n_levels(), 2);
+        assert_eq!(s.as_slice(), &[0,1,2]);
+
+        s.push(3);
+        s.push(4);
+        assert_eq!(s.as_slice(), &[0,1,2,3,4]);
+
+        s.pop_levels(1, |x| { assert!(x >= 3) });
+        assert_eq!(s.n_levels(), 1);
+        assert_eq!(s.as_slice(), &[0,1,2]);
+
+        s.pop_levels(1, |x| { assert!(x > 0) });
+        assert_eq!(s.n_levels(), 0);
+        assert_eq!(s.as_slice(), &[0]);
+    }
+}
