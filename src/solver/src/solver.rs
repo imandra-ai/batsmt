@@ -87,8 +87,11 @@ mod solver {
                 acts: Actions::new(),
                 th_trail: Vec::new(),
             };
-            let opts = batsat::SolverOpts::default();
             let cb = Cb::new();
+            let mut opts = batsat::SolverOpts::default();
+            opts.luby_restart = false;
+            opts.restart_first = 1000;
+            opts.restart_inc = 15.;
             // create SAT solver
             let sat = batsat::Solver::new_with(opts, cb, c);
             let mut s = Solver {
