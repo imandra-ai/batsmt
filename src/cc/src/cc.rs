@@ -95,6 +95,7 @@ impl<S:Symbol> CCInterface for CC<S> {
         info!("cc check!");
         self.check_internal()
     }
+    fn impl_descr(&self) -> &'static str { "fast congruence closure"}
 }
 
 // main congruence closure operations

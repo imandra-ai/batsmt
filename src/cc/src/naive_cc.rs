@@ -5,7 +5,7 @@
 
 use {
     std::{
-        marker::PhantomData, collections::VecDeque,
+        marker::PhantomData, collections::VecDeque, fmt,
     },
     fxhash::{FxHashMap,FxHashSet},
     batsmt_core::{AST,ast,ast::View,Symbol,backtrack},
@@ -14,7 +14,7 @@ use {
 
 type M<S> = ast::Manager<S>;
 
-#[derive(Clone,Copy,Debug)]
+#[derive(Clone,Copy)]
 enum Op {
     Merge(AST,AST,BLit),
 }
@@ -65,8 +65,10 @@ impl<S:Symbol> CCInterface for NaiveCC<S> {
     }
 
     fn check(&mut self) -> Result<&PropagationSet, Conflict> {
-        info!("cc check!");
+        debug!("cc.check()");
         // create local solver
+        self.props.clear();
+        self.confl.clear();
         let mut solve =
             Solve::new(&self.m, self.b.clone(),
                 &mut self.props,
@@ -79,6 +81,7 @@ impl<S:Symbol> CCInterface for NaiveCC<S> {
             Err(Conflict(&self.confl))
         }
     }
+    fn impl_descr(&self) -> &'static str { "naive congruence closure"}
 }
 
 impl<S:Symbol> NaiveCC<S> {
@@ -127,6 +130,7 @@ impl<'a, S:Symbol> Solve<'a, S> {
 
     /// entry point
     pub(super) fn check_internal(&mut self, ops: &[Op]) -> bool {
+        trace!("naive-cc.check (ops: {:?})", ops);
         for &op in ops.iter() {
             let ok = self.perform_op(op);
             if !ok {
@@ -345,5 +349,13 @@ impl<'a, S:Symbol> Solve<'a, S> {
             },
             _ => (),
         };
+    }
+}
+
+impl fmt::Debug for Op {
+    fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Op::Merge(a,b,lit) => write!(out, "merge({:?},{:?},{:?})",a,b,lit),
+        }
     }
 }

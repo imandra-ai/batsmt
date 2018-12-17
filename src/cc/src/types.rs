@@ -56,6 +56,9 @@ pub trait CCInterface : backtrack::Backtrackable {
     /// and `Err(c)` if `c` is a valid conflict clause that contradicts
     /// the current trail.
     fn check(&mut self) -> Result<&PropagationSet, Conflict>;
+
+    /// Description of this particular implementation
+    fn impl_descr(&self) -> &'static str;
 }
 
 mod propagation {

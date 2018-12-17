@@ -2,58 +2,21 @@
 //! Theory built on the congruence closure
 
 use {
-    batsmt_core::{self as core,ast::{self,AST},symbol::Symbol, backtrack},
-    batsmt_solver::{theory,theory::BLit},
+    batsmt_core::{self as core,ast::{self,AST},symbol::Symbol},
+    batsmt_solver::{theory},
     batsmt_pretty as pp,
-    crate::{Builtins,cc::CC,naive_cc::NaiveCC,CCInterface,Conflict,PropagationSet},
+    crate::{Builtins,cc::CC,naive_cc::NaiveCC,CCInterface},
 };
 
 // TODO: notion of micro theory should come here
 
 type M<S> = ast::Manager<S>;
 
-// pick implementation of CC
-enum CCI<S:Symbol> {
-    Fast(CC<S>),
-    Slow(NaiveCC<S>),
-}
+#[cfg(feature="naive")]
+type CCI<S> = NaiveCC<S>;
 
-mod cci {
-    use super::*;
-
-    // make analysis by case on CCI easier
-    macro_rules! fun_case {
-        ( $f:ident, SELF [ $( $arg:ident $ty:ty ),* ], $ret:ty, $c:ident, $rhs: expr ) => {
-            fn $f(&self, $( $arg: $ty ),* ) -> $ret {
-                match self {
-                    CCI::Fast($c) => $rhs,
-                    CCI::Slow($c) => $rhs,
-                }
-            }
-        };
-
-        ( $f:ident, MUT [ $( $arg:ident $ty:ty ),* ], $ret:ty, $c:ident, $rhs: expr ) => {
-            fn $f(&mut self, $( $arg: $ty ),*) -> $ret {
-                match self {
-                    CCI::Fast($c) => $rhs,
-                    CCI::Slow($c) => $rhs,
-                }
-            }
-        };
-    }
-
-    impl<S:Symbol> backtrack::Backtrackable for CCI<S> {
-        fun_case!(push_level, MUT [], (), c, c.push_level());
-        fun_case!(pop_levels, MUT [n usize], (), c, c.push_level());
-        fun_case!(n_levels, SELF [], usize, c, c.n_levels());
-    }
-
-    impl<S:Symbol> CCInterface for CCI<S> {
-        fun_case!(merge, MUT [t1 AST, t2 AST, lit BLit], (), c, c.merge(t1,t2,lit));
-        fun_case!(distinct, MUT [ts &[AST], lit BLit], (), c, c.distinct(ts,lit));
-        fun_case!(check, MUT [], Result<&PropagationSet,Conflict>, c, c.check());
-    }
-}
+#[cfg(not(feature="naive"))]
+type CCI<S> = CC<S>;
 
 /// A theory built on top of a congruence closure.
 pub struct CCTheory<S:Symbol>{
@@ -65,22 +28,11 @@ pub struct CCTheory<S:Symbol>{
 mod cc_theory {
     use super::*;
 
-    // TODO: use std::env to do it at runtime?
-    // this determines which implementation to use
-    const USE_FAST : bool = false;
-
     impl<S:Symbol> CCTheory<S> {
         /// Build a new theory for equality, based on congruence closure.
         pub fn new(m: &M<S>, b: Builtins) -> Self {
-            let cc = {
-                if USE_FAST {
-                    debug!("use fast CC");
-                    CCI::Fast(CC::new(&m, b.clone()))
-                } else {
-                    debug!("use slow CC");
-                    CCI::Slow(NaiveCC::new(&m, b.clone()))
-                }
-            };
+            let cc = CCI::new(&m, b.clone());
+            debug!("use {}", cc.impl_descr());
             Self { builtins: b, m: m.clone(), cc }
         }
     }
@@ -158,7 +110,8 @@ impl<S:Symbol> theory::Theory<S> for CCTheory<S> {
                     }
                 },
                 Err(c) => {
-                    acts.raise_conflict_iter(c.0.iter())
+                    let costly = true;
+                    acts.raise_conflict_iter(c.0.iter(), costly)
                 }
             }
         }
