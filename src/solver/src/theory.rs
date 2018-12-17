@@ -53,6 +53,7 @@ pub struct TheoryClauseSet {
 pub struct Actions {
     cs: TheoryClauseSet,
     conflict: bool,
+    costly_conflict: bool,
 }
 
 #[derive(Clone,Debug)]
@@ -60,7 +61,10 @@ pub(crate) enum ActState<'a> {
     /// propagations (new lemmas)
     Props(&'a TheoryClauseSet),
     /// conflict reached
-    Conflict(TheoryClauseRef<'a>)
+    Conflict {
+        c: TheoryClauseRef<'a>,
+        costly: bool,
+    }
 }
 
 /// The theory subset of the (partial) model picked by the SAT solver.
@@ -352,6 +356,7 @@ impl Actions {
     pub(crate) fn new() -> Self {
         Self {
             conflict: false,
+            costly_conflict: false,
             cs: TheoryClauseSet::new(),
         }
     }
@@ -360,6 +365,7 @@ impl Actions {
     pub(crate) fn clear(&mut self) {
         self.cs.clear();
         self.conflict = false;
+        self.costly_conflict = false;
     }
 
     /// Return current state.
@@ -368,7 +374,7 @@ impl Actions {
     pub(crate) fn state<'a>(&'a self) -> ActState<'a> {
         if self.conflict {
             let c = self.cs.iter().next().expect("conflict but no conflict clause");
-            ActState::Conflict(c)
+            ActState::Conflict {c, costly: self.costly_conflict}
         } else {
             ActState::Props(&self.cs)
         }
@@ -402,11 +408,12 @@ impl Actions {
     ///
     /// This clause should be a valid theory lemma (a valid tautology) that
     /// is false in the current model.
-    pub fn raise_conflict(&mut self, c: &[TheoryLit]) {
+    pub fn raise_conflict(&mut self, c: &[TheoryLit], costly: bool) {
         // only create a conflict if there's not one already
         if ! self.conflict {
-            trace!("theory.raise-conflict {:?}", c);
+            trace!("theory.raise-conflict {:?} (costly: {})", c, costly);
             self.conflict = true;
+            self.costly_conflict = costly;
             self.cs.clear(); // remove propagated lemmas
             self.cs.push(c);
         }
@@ -415,12 +422,14 @@ impl Actions {
     /// Add a conflict clause.
     ///
     /// The clause is built from an iterator over theory lits
-    pub fn raise_conflict_iter<U, I>(&mut self, i: I)
+    pub fn raise_conflict_iter<U, I>(&mut self, i: I, costly: bool)
         where I: Iterator<Item=U>, U: Into<TheoryLit>
     {
         if ! self.conflict {
-            trace!("theory.raise-conflict-iter");
+            trace!("theory.raise-conflict-iter (costly: {})", costly);
             self.conflict = true;
+            self.costly_conflict = costly;
+            self.cs.clear(); // remove propagated lemmas
             self.cs.push_iter(i);
         }
     }

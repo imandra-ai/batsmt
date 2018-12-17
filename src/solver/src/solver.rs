@@ -2,6 +2,7 @@
 //! Main SMT solver
 
 use {
+    std::fmt,
     batsat::{
         self as sat,lbool,
         theory::CheckRes,
@@ -59,7 +60,7 @@ pub struct Solver<S:Symbol, Th: Theory<S>> {
 }
 
 struct Solver0<S:Symbol, Th: Theory<S>> {
-    sat: batsat::Solver<batsat::BasicCallbacks, CoreTheory<S, Th>>,
+    sat: batsat::Solver<solver::Cb, CoreTheory<S, Th>>,
     lit_map: LitMap<S>,
 }
 
@@ -87,7 +88,7 @@ mod solver {
                 th_trail: Vec::new(),
             };
             let opts = batsat::SolverOpts::default();
-            let cb = batsat::BasicCallbacks::new();
+            let cb = Cb::new();
             // create SAT solver
             let sat = batsat::Solver::new_with(opts, cb, c);
             let mut s = Solver {
@@ -137,7 +138,11 @@ mod solver {
         pub fn solve_with(&mut self, assumptions: &[BLit]) -> Res {
             info!("solver.sat.solve ({} assumptions)", assumptions.len());
             trace!("assumptions: {:?}", assumptions);
-            let r = self.s0.sat.solve_limited(assumptions);
+            let sat = &mut self.s0.sat;
+            let r = sat.solve_limited(assumptions);
+            info!("solver.sat.stats: conflicts {}, decisions {}, propagations {}, {}",
+                  sat.num_conflicts(), sat.num_decisions(),
+                  sat.num_propagations(), sat.cb().stats());
             // convert result
             if r == lbool::TRUE {
                 Res::SAT
@@ -163,15 +168,13 @@ mod solver {
     // `CoreTheory` is a SAT theory
     impl<S:Symbol, Th: Theory<S>> batsat::Theory for CoreTheory<S,Th> {
         fn create_level(&mut self) { self.th.push_level() }
-
         fn pop_levels(&mut self, n: usize) { self.th.pop_levels(n) }
+        fn n_levels(&self) -> usize { self.th.n_levels() }
 
         // main check
         fn final_check<A>(&mut self, a: &mut A) -> CheckRes<A::Conflict>
             where A: batsat::theory::TheoryArgument
         {
-            trace!("solver.final-check ({} elts in trail)", a.model().len());
-
             // obtain theory literals from `a`
             self.th_trail.clear();
             for &lit in a.model().iter() {
@@ -180,9 +183,12 @@ mod solver {
                 }
             }
 
+            trace!("solver.final-check ({} level(s), {} elt(s) in trail, among which {} from theory)",
+                self.n_levels(), a.model().len(), self.th_trail.len());
+
             if self.th_trail.len() == 0 {
                 // nothing to do
-                debug!("no theory lits in the model, return Done");
+                trace!("no theory lits in the model, return Done");
                 return CheckRes::Done; // trivial
             }
 
@@ -203,14 +209,14 @@ mod solver {
                     trace!("check: done");
                     CheckRes::Done
                 },
-                ActState::Conflict(c) => {
-                    trace!("build conflict clause {}", pp::display(self.m.pp(c)));
+                ActState::Conflict{c, costly} => {
+                    trace!("build conflict clause {} (costly {})", pp::display(self.m.pp(c)), costly);
                     let mut cbuild =
                         BClauseBuild::new(&mut self.lits, &mut self.lit_map,
                                           || { a.mk_new_lit().var() });
                     cbuild.convert_th_clause(c);
                     drop(cbuild); // to borrow `a`
-                    let confl = a.mk_conflict(&mut self.lits);
+                    let confl = a.mk_conflict(&mut self.lits, costly);
                     trace!("check: conflict");
                     CheckRes::Conflict(confl)
                 }
@@ -270,6 +276,34 @@ mod solver {
                 self.lits.push(lit);
             }
         }
+    }
+
+    /// Used for callbacks
+    pub(super) struct Cb {
+        n_restarts: u32,
+        n_gc_calls: u32,
+    }
+
+    impl Cb {
+        fn new() -> Self {
+            Cb {
+                n_restarts: 0, n_gc_calls: 0,
+            }
+        }
+
+        fn stats<'a>(&'a self) -> impl fmt::Display+'a { self }
+    }
+
+    impl fmt::Display for Cb {
+        fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result {
+            write!(out, "restarts: {}, gc.calls: {}",
+                   self.n_restarts, self.n_gc_calls)
+        }
+    }
+
+    impl batsat::Callbacks for Cb {
+        fn on_restart(&mut self) { self.n_restarts += 1 }
+        fn on_gc(&mut self, _: usize, _: usize) { self.n_gc_calls += 1; }
     }
 }
 
