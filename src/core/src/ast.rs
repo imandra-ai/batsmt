@@ -724,6 +724,55 @@ mod manager {
     }
 }
 
+mod view {
+    use super::*;
+
+    impl<'a,S:Symbol> View<'a, S> {
+        pub fn is_app(&self) -> bool { match self { View::App{..} => true, _ => false } }
+        pub fn is_const(&self) -> bool { match self { View::Const(..) => true, _ => false } }
+
+        /// Iterate over the immediate subterms of this view.
+        pub fn subterms(&self) -> impl Iterator<Item=AST> + 'a {
+            match self {
+                View::Const(_) => ViewIter::Nil,
+                View::App{f, args} => ViewIter::App(*f, args),
+            }
+        }
+    }
+
+    // custom iterator oversubterms
+    enum ViewIter<'a> {
+        Nil,
+        Args(&'a [AST], usize),
+        App(AST, &'a [AST]),
+    }
+
+    // custom iterator
+    impl<'a> Iterator for ViewIter<'a> {
+        type Item = AST;
+        fn next(&mut self) -> Option<Self::Item> {
+            match self {
+                ViewIter::Nil => None,
+                ViewIter::App(f,args) => {
+                    let f = *f;
+                    *self = ViewIter::Args(args,0);
+                    Some(f)
+                },
+                ViewIter::Args(args, n) => {
+                    if *n == args.len() {
+                        None
+                    } else {
+                        let t = args[*n];
+                        *n += 1;
+                        Some(t)
+                    }
+                }
+            }
+        }
+    }
+
+}
+
 /// A bitset whose elements are AST nodes
 pub struct BitSet(::bit_set::BitSet);
 
