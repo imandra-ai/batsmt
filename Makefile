@@ -23,6 +23,7 @@ TEST_FLAGS ?= --test-threads=1 --nocapture
 
 test:
 	cargo test -- $(TEST_FLAGS)
+	#RUST_BACKTRACE=full cargo test -- $(TEST_FLAGS)
 
 test-release:
 	cargo test --release -- $(TEST_FLAGS)
