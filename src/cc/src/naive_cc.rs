@@ -64,7 +64,7 @@ impl<S:Symbol> CCInterface for NaiveCC<S> {
         unimplemented!("no handling of `distinct` in naiveCC")
     }
 
-    fn check(&mut self) -> Result<&PropagationSet, Conflict> {
+    fn final_check(&mut self) -> Result<&PropagationSet, Conflict> {
         debug!("cc.check()");
         // create local solver
         self.props.clear();
@@ -81,6 +81,9 @@ impl<S:Symbol> CCInterface for NaiveCC<S> {
             Err(Conflict(&self.confl))
         }
     }
+
+    // NOTE: do not implement partial check at all.
+
     fn impl_descr(&self) -> &'static str { "naive congruence closure"}
 }
 

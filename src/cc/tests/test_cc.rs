@@ -24,7 +24,6 @@ mod cc {
         let mut cc = CC::new(&m, b(&m));
 
         // access m
-        let mut m = cc.m_mut();
         m.mk_str("f");
     }
 

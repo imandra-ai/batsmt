@@ -37,7 +37,7 @@ struct CC0<S:Symbol> {
     tasks: VecDeque<Task>, // operations to perform
     undo: backtrack::Stack<UndoOp>,
     tmp_parents: ParentList,
-    // TODO: remove recursion to_add: Vec<Explore<AST>>, // for adding terms
+    traverse: ast::iter_suffix::State<S>, // for recursive traversal
     cc1: CC1<S>,
 }
 
@@ -126,10 +126,18 @@ impl<S:Symbol> CCInterface for CC<S> {
         self.cc0.tasks.push_back(Task::Distinct(v,expl))
     }
 
-    fn check(&mut self) -> Result<&PropagationSet, Conflict> {
-        debug!("cc.check()");
+    fn final_check(&mut self) -> Result<&PropagationSet, Conflict> {
+        debug!("cc.final-check()");
         self.check_internal()
     }
+
+    fn partial_check(&mut self) -> Option<Result<&PropagationSet, Conflict>> {
+        debug!("cc.partial-check()");
+        Some(self.check_internal())
+    }
+
+    fn has_partial_check() -> bool { true }
+
     fn impl_descr(&self) -> &'static str { "fast congruence closure"}
 }
 
@@ -181,7 +189,7 @@ mod cc {
                 tasks: VecDeque::new(),
                 undo: backtrack::Stack::new(),
                 tmp_parents: ParentList::new(),
-                // to_add: vec!(),
+                traverse: ast::iter_suffix::State::new(m),
                 cc1: CC1::new(m),
             }
         }
@@ -195,26 +203,28 @@ mod cc {
         }
 
         /// Add this term to the congruence closure, if not present already
-        fn add_term(&mut self, t: AST) {
-            // TODO: remove recursion, use a specific stack?
-            let mr = self.m.get();
-            if ! self.cc1.nodes.contains(t) {
-                trace!("add-term {:?}", self.m.dbg_ast(t));
-                // first, add subterms
-                for u in mr.view(t).subterms() {
-                    self.add_term(u);
-                }
+        fn add_term(&mut self, t0: AST) {
+            self.traverse.clear();
 
-                self.cc1.nodes.insert(t, Node::new(NodeID(t)));
+            let CC0 {traverse, undo, m, cc1, ..} = self;
+            let mr = m.get();
+            // traverse in postfix order (shared context: `cc1`)
+            traverse.iter(
+                t0, cc1,
+                |cc1,t| { !cc1.nodes.contains(t) },
+                |cc1,t| {
+                    debug_assert!(!cc1.nodes.contains(t));
+                    trace!("add-term {:?}", m.dbg_ast(t));
+                    cc1.nodes.insert(t, Node::new(NodeID(t)));
 
-                // now add itself to its children's list of parents
-                for u in mr.view(t).subterms() {
-                    debug_assert!(self.cc1.nodes.contains(u));
-                    let parents = self.cc1.parents(self.cc1.find(NodeID(u)));
-                    parents.push(NodeID(t));
-                }
-                self.undo.push(UndoOp::RemoveTerm(t));
-            }
+                    // now add itself to its children's list of parents.
+                    for u in mr.view(t).subterms() {
+                        debug_assert!(cc1.nodes.contains(u)); // postfix order
+                        let parents = cc1.parents_mut(cc1.find(NodeID(u)));
+                        parents.push(NodeID(t));
+                    }
+                    undo.push(UndoOp::RemoveTerm(t));
+                });
         }
 
         // merge `a` and `b`, if they're not already equal
@@ -335,8 +345,8 @@ mod cc {
         }
 
         /// Call `f` with a mutable ref on all nodes of the class of `r`
-        fn iter_class<'a, F>(&'a mut self, r: Repr, f: F)
-            where F: FnMut(&'a mut Node)
+        fn iter_class<F>(&mut self, r: Repr, mut f: F)
+            where F: for<'b> FnMut(&'b mut Node)
         {
             let mut t = r.0;
             loop {
@@ -350,12 +360,30 @@ mod cc {
 
         /// Reroot proof forest for the class of `r` so that `r` is the root.
         fn reroot_forest(&mut self, r: Repr) {
-            let mut t = r.0;
-            loop {
-                let n = self[t];
+            let (mut cur, mut expl) = match &self[r.0].expl {
+                None => {
+                    return; // rooted in `t` already
+                },
+                Some((u,e)) => (*u,e.clone()),
+            };
 
+            let mut prev = r.0;
+            loop {
+                let cur_node = &mut self[cur];
+                let mut expl_tup = Some((prev,expl));
+                std::mem::swap(&mut cur_node.expl, &mut expl_tup);
+
+                // `expl_tup` now points to `cur`'s former pointer.
+                match expl_tup {
+                    None => break,
+                    Some((next, expl_next)) => {
+                        // follow pointer
+                        prev = cur;
+                        cur = next;
+                        expl = expl_next;
+                    },
+                }
             }
-            unimplemented!("reroot forest");
         }
     }
 

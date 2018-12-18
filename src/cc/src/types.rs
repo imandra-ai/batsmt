@@ -55,7 +55,13 @@ pub trait CCInterface : backtrack::Backtrackable {
     /// Returns `Ok(props)` if the result is safisfiable with propagations `props`,
     /// and `Err(c)` if `c` is a valid conflict clause that contradicts
     /// the current trail.
-    fn check(&mut self) -> Result<&PropagationSet, Conflict>;
+    fn final_check(&mut self) -> Result<&PropagationSet, Conflict>;
+
+    /// Same as `final_check` but can return `None` if it didn't do anything.
+    fn partial_check(&mut self) -> Option<Result<&PropagationSet, Conflict>> { None }
+
+    /// Can it handle partial checks?
+    fn has_partial_check() -> bool { false }
 
     /// Description of this particular implementation
     fn impl_descr(&self) -> &'static str;

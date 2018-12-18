@@ -5,8 +5,11 @@ use {
     batsmt_core::{self as core,ast::{self,AST},symbol::Symbol},
     batsmt_solver::{theory},
     batsmt_pretty as pp,
-    crate::{Builtins,cc::CC,naive_cc::NaiveCC,CCInterface},
+    crate::{Builtins,CCInterface},
 };
+
+#[allow(unused_imports)]
+use crate::{naive_cc::NaiveCC,cc::CC};
 
 // TODO: notion of micro theory should come here
 
@@ -25,33 +28,20 @@ pub struct CCTheory<S:Symbol>{
     cc: CCI<S>,
 }
 
-mod cc_theory {
-    use super::*;
+impl<S:Symbol> CCTheory<S> {
+    /// Build a new theory for equality, based on congruence closure.
+    pub fn new(m: &M<S>, b: Builtins) -> Self {
+        let cc = CCI::new(&m, b.clone());
+        debug!("use {}", cc.impl_descr());
+        Self { builtins: b, m: m.clone(), cc }
+    }
 
-    impl<S:Symbol> CCTheory<S> {
-        /// Build a new theory for equality, based on congruence closure.
-        pub fn new(m: &M<S>, b: Builtins) -> Self {
-            let cc = CCI::new(&m, b.clone());
-            debug!("use {}", cc.impl_descr());
-            Self { builtins: b, m: m.clone(), cc }
+    fn check(&mut self, partial: bool, acts: &mut theory::Actions, trail: &theory::Trail) -> bool {
+        if partial && ! CCI::<S>::has_partial_check() {
+            return false; // doesn't handle partial checks
         }
-    }
 
-    impl<S:Symbol> core::backtrack::Backtrackable for CCTheory<S> {
-        fn push_level(&mut self) { self.cc.push_level() }
-        fn pop_levels(&mut self, n:usize) { self.cc.pop_levels(n) }
-        fn n_levels(&self) -> usize { self.cc.n_levels() }
-    }
-}
-
-// what do to from a tuple
-enum Op<'a> {
-    Eq(AST,AST),
-    Distinct(&'a [AST]), // more than 2 elements
-}
-
-impl<S:Symbol> theory::Theory<S> for CCTheory<S> {
-    fn final_check(&mut self, acts: &mut theory::Actions, trail: &theory::Trail) {
+        debug!("cc.{}-check", if partial { "partial" } else { "final" });
         let mut do_sth = false;
 
         // local borrow of AST manager
@@ -87,7 +77,7 @@ impl<S:Symbol> theory::Theory<S> for CCTheory<S> {
 
             do_sth = true;
 
-            trace!("cc: op {:?} (blit {:?})", self.m.dbg(&op), lit);
+            trace!("process-op {:?} (blit {:?})", self.m.dbg(&op), lit);
             match op {
                 Op::Eq(a,b) => {
                     self.cc.merge(a,b,lit)
@@ -98,7 +88,16 @@ impl<S:Symbol> theory::Theory<S> for CCTheory<S> {
 
         // check CC's satisfiability
         if do_sth {
-            match self.cc.check() {
+            let res = if partial {
+                if let Some(r) = self.cc.partial_check() {
+                    r
+                } else {
+                    return false // didn't do anything
+                }
+            } else {
+                self.cc.final_check()
+            };
+            match res {
                 Ok(props) if props.len() == 0 => (), // trivial!
                 Ok(props) => {
                     for _c in props.iter() {
@@ -113,8 +112,31 @@ impl<S:Symbol> theory::Theory<S> for CCTheory<S> {
                     let costly = true;
                     acts.raise_conflict_iter(c.0.iter(), costly)
                 }
-            }
+            };
         }
+        true
+    }
+}
+
+impl<S:Symbol> core::backtrack::Backtrackable for CCTheory<S> {
+    fn push_level(&mut self) { self.cc.push_level() }
+    fn pop_levels(&mut self, n:usize) { self.cc.pop_levels(n) }
+    fn n_levels(&self) -> usize { self.cc.n_levels() }
+}
+
+// what do to from a tuple
+enum Op<'a> {
+    Eq(AST,AST),
+    Distinct(&'a [AST]), // more than 2 elements
+}
+
+impl<S:Symbol> theory::Theory<S> for CCTheory<S> {
+    fn final_check(&mut self, acts: &mut theory::Actions, trail: &theory::Trail) {
+        self.check(false, acts, trail);
+    }
+
+    fn partial_check(&mut self, acts: &mut theory::Actions, trail: &theory::Trail) -> bool {
+        self.check(true, acts, trail)
     }
 }
 
