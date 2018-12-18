@@ -417,4 +417,50 @@ mod backtrack {
         assert_eq!(s.n_levels(), 0);
         assert_eq!(s.as_slice(), &[0]);
     }
+
+    #[test]
+    fn test_ref() {
+        let mut s = Ref::new(0);
+
+        *s += 1;
+        s.push_level();
+        assert_eq!(s.n_levels(), 1);
+        assert_eq!(*s, 1);
+
+        *s = 10;
+        *s = 11;
+
+        assert_eq!(*s, 11);
+
+        s.push_level();
+        assert_eq!(s.n_levels(), 2);
+        assert_eq!(*s, 11);
+
+        *s -= 5;
+        assert_eq!(*s, 6);
+
+        s.pop_levels(2);
+        assert_eq!(s.n_levels(), 0);
+        assert_eq!(*s, 1);
+
+        s.push_level();
+
+        *s += 10;
+
+        s.push_level();
+        assert_eq!(s.n_levels(), 2);
+        assert_eq!(*s, 11);
+
+        *s = 20;
+        assert_eq!(*s, 20);
+
+        s.pop_levels(1);
+        assert_eq!(s.n_levels(), 1);
+        assert_eq!(*s, 11);
+
+        s.pop_levels(1);
+        assert_eq!(s.n_levels(), 0);
+        assert_eq!(*s, 1);
+
+    }
 }
