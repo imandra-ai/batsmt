@@ -41,12 +41,19 @@ pub enum View<'a, S : SymbolView<'a>> {
     }
 }
 
+/// Temporary view of a mapped term
+pub enum MapView<'a, R> {
+    Const, // the AST itself contains the symbol
+    App{f: &'a R, args: &'a [R]},
+}
+
+// FIXME: remove this, it's unsafe (gc would invalidate)
 /// The definition of an AST node, as seen from outside.
 ///
 /// This view gives access to the symbol itself.
 #[derive(Debug,Copy,Clone)]
 pub enum ViewSym<'a, S : Symbol> {
-    Const(S), // symbol tiself
+    Const(S), // symbol itself
     App {
         f: AST,
         args: &'a [AST],
@@ -623,19 +630,57 @@ mod manager {
             st.iter(t, f)
         }
 
-        /* TODO
+        /// Iterate over the given AST `t`,
+        /// calling `fexit` once on every subterm satisfying `fenter`, in suffix order.
+        ///
+        /// - this traverses subterms before superterms.
+        /// - if a term does not satisfy `fenter`, its subterms are not explored.
+        /// - `ctx` is carried around and passed to both `fexit` and `fenter`
+        ///
+        /// For more sophisticated use (iterating on several terms, etc.)
+        /// use `iter_suffix::State` directly.
+        pub fn iter_suffix<Ctx,F1,F2>(
+            &mut self, t: AST, ctx: &mut Ctx, fenter: F1, fexit: F2
+        )
+            where F1: FnMut(&mut Ctx, AST) -> bool, F2: FnMut(&mut Ctx, AST)
+        {
+            let mut st = iter_suffix::State::new(self);
+            st.iter(t, ctx, fenter, fexit)
+        }
+
         /// Iterate over the given AST `t`, mapping every subterm using `f`.
         ///
         /// Allocates a `map_dag::State` and uses it to iterate.
         /// For more sophisticated use (mapping several terms, etc.)
         /// use `map_dag::State` directly.
-        pub fn map_dag<F>(&self, t: AST, f: F) -> AST
-            where F: FnMut(&mut Self, AST) -> AST
+        pub fn map<F,R>(&self, t: AST, f: F) -> R
+            where R: Clone,
+                  F: for<'a> FnMut(&Manager<S>, AST, MapView<R>) -> R
         {
             let mut st = map_dag::State::new(self);
             st.map(t, f)
         }
-        */
+
+        /// Compute size of the term, seen as a DAG.
+        ///
+        /// Each unique subterm is counted only once.
+        pub fn size_dag(&self, t: AST) -> usize {
+            let mut n = 0;
+            self.iter_dag(t, |_| { n += 1 });
+            n
+        }
+
+        /// Compute size of the term, seen as a tree.
+        pub fn size_tree(&self, t: AST) -> usize {
+            self.map(t, |_m, _u, view| {
+                match view {
+                    MapView::Const => 1usize,
+                    MapView::App{f, args} => {
+                        args.iter().fold(1 + *f, |x,y| x+y) // 1+sum of sizes
+                    },
+                }
+            })
+        }
     }
 
     /// GC for a manager's internal nodes
@@ -937,6 +982,7 @@ mod dense_map {
 ///
 /// Iteration over sub-terms, without repetition (sharing means a common
 /// subterm will be traversed only once).
+/// The order in which terms are traversed is not specified.
 pub mod iter_dag {
     use super::*;
 
@@ -1007,18 +1053,20 @@ pub mod iter_dag {
             }
         }
     }
+
+    impl<S:Symbol> fmt::Debug for State<S> {
+        fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result {
+            write!(out, "iter_dag.state")
+        }
+    }
 }
 
-/* TODO: maybe have a visitor-like pattern, with the case for `app` taking the
- * slice of already mapped subterms?
- *
-/// Map sub-terms.
+/// Iterate over sub-terms, in suffix order.
 ///
-/// Iteration over sub-terms, without repetition (sharing means a common
-/// subterm will be traversed only once).
-pub mod map_dag {
+/// Each sub-term is touched once, and parent terms are processed *after*
+/// their subterms.
+pub mod iter_suffix {
     use super::*;
-    use smallvec::SmallVec;
 
     #[derive(Clone)]
     pub struct State<S:Symbol> {
@@ -1026,29 +1074,124 @@ pub mod map_dag {
         st: State0,
     }
 
-    // local small vector type
-    type SVec<T> = SmallVec<[T; 3]>;
+    // flag: are we entering the term, or exiting it?
+    #[repr(u8)]
+    #[derive(Copy,Clone,PartialEq,Eq,Debug)]
+    enum EE { Enter, Exit }
 
     // internal structure, separate from `m`
     #[derive(Clone)]
     struct State0 {
-        tasks: Vec<Task>,
-        res: Vec<Result>, // intermediate results
-        cache: HashMap<Result>, // cached values
+        st: Vec<(EE,AST)>,
+        seen: HashSet,
     }
 
-    type Result = AST; // an AST that is the *result* of a mapping
+    impl<S> State<S> where S: Symbol {
+        /// New state
+        pub fn new(m: &Manager<S>) -> Self {
+            let m = m.clone();
+            State { m, st: State0::new(), }
+        }
+
+        /// Iterate over the given AST `t`, calling a function on every subterm once.
+        ///
+        /// ## Params
+        /// - `self` is the set of already seen terms, and will be mutated.
+        /// - `t` is the term to recursively explore
+        /// - `fenter` is called _before_ processing a subterm.
+        ///    If it returns `true`, the term is explored.
+        /// - `fexit` is the function to call once on every subterm that `fenter` approved.
+        pub fn iter<Ctx,F1,F2>(
+            &mut self, t: AST, ctx: &mut Ctx, mut fenter: F1, mut fexit: F2
+        )
+            where F1: FnMut(&mut Ctx, AST)->bool, F2: FnMut(&mut Ctx, AST)
+        {
+            if self.st.seen.len() > 0 && self.st.seen.contains(&t) { return }
+
+            self.st.push_enter(t);
+            while let Some((ee,t)) = self.st.st.pop() {
+                if ee == EE::Exit {
+                    fexit(ctx, t); // process `t`
+                } else if self.st.seen.contains(&t) {
+                    continue
+                } else if !fenter(ctx, t) {
+                    self.st.seen.insert(t); // block it in the future
+                } else {
+                    debug_assert_eq!(ee, EE::Enter);
+                    self.st.seen.insert(t);
+
+                    // exit `t` after processing subterms
+                    self.st.push_exit(t);
+
+                    // explore subterms first
+                    match self.m.get().view(t) {
+                        View::Const(_) => (),
+                        View::App{f,args} => {
+                            self.st.push_enter(f);
+                            for a in args.iter() { self.st.push_enter(*a) }
+                        },
+                    }
+                }
+            }
+        }
+
+        /// Clear state, forgetting all the subterms seen so far.
+        pub fn clear(&mut self) {
+            self.st.st.clear();
+            self.st.seen.clear();
+        }
+    }
+
+    impl State0 {
+        fn new() -> Self {
+            Self {seen: HashSet::default(), st: Vec::new(), }
+        }
+
+        #[inline(always)]
+        fn push_enter(&mut self, t:AST) { self.st.push((EE::Enter,t)); }
+
+        #[inline(always)]
+        fn push_exit(&mut self, t: AST) { self.st.push((EE::Exit,t)) }
+    }
+
+    impl<S:Symbol> fmt::Debug for State<S> {
+        fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result {
+            write!(out, "iter_suffix.state")
+        }
+    }
+}
+
+/// Map sub-terms to arbitrary values.
+///
+/// Iteration over sub-terms, without repetition (sharing means a common
+/// subterm will be traversed only once).
+pub mod map_dag {
+    use super::*;
+
+    #[derive(Clone)]
+    pub struct State<S:Symbol, R: Clone> {
+        m: Manager<S>,
+        st: State0<R>,
+    }
+
+    // internal structure, separate from `m`
+    #[derive(Clone)]
+    struct State0<R> {
+        tasks: Vec<Task>,
+        res: Vec<R>, // intermediate results
+        cache: HashMap<R>, // cached values
+        args: Vec<R>, // for creating `MapView`
+    }
 
     #[derive(Clone)]
     enum Task {
         // must be an application of `n` arguments.
-        // Pops `n+1` from res, pushes one.
-        Exit(AST, usize),
-        Enter(AST), // will eventually push one onto `res`
-        Push(Result), // push onto `res`
+        // Pops `n+1` from `res`, pushes one value onto `res`.
+        Exit(AST),
+        Enter(AST), // will eventually push one value onto `res`
     }
 
-    impl<S> State<S> where S: Symbol {
+    impl<S,R> State<S,R> where S: Symbol, R: Clone {
         /// New state
         pub fn new(m: &Manager<S>) -> Self {
             let m = m.clone();
@@ -1056,49 +1199,77 @@ pub mod map_dag {
         }
 
         /// Iterate over the given AST `t`, calling `f` on every subterm once.
-        pub fn map<F>(&mut self, t: AST, mut f: F) -> AST
-            where F: FnMut(&mut Manager<S>, AST) -> AST
+        ///
+        /// `f` is passed:
+        /// - the manager itself
+        /// - the original subterm
+        /// - a view of the original subterm where its own immediate subterms
+        ///   have been transformed by `f` already
+        pub fn map<F>(&mut self, t: AST, mut f: F) -> R
+            where F: for<'a> FnMut(&Manager<S>, AST, MapView<R>) -> R
         {
-            self.st.push(Task::Enter(t));
+            self.st.tasks.push(Task::Enter(t));
+            let m2 = self.m.clone();
             while let Some(task) = self.st.tasks.pop() {
                 match task {
-                    Task::Push(u) => self.st.res.push(u),
                     Task::Enter(t) => {
-                        match self.st.cache.get(t) {
-                            Some(u) => self.st.res.push(*u), // cached
+                        match self.st.cache.get(&t) {
+                            Some(u) => self.st.res.push(u.clone()), // cached
                             None => {
                                 // explore subterms first, then schedule a call for `f`
-                            }
-
-                }
-                if self.st.seen.contains(&t) {
-                    continue
-                } else {
-                    self.st.seen.insert(t);
-                    (self.f)(t); // process `t`
-
-                    match self.m.get().view(t) {
-                        View::Const(_) => (),
-                        View::App{f,args} => {
-                            self.st.push(f);
-                            for a in args.iter() { self.st.push(*a) }
-                        },
-                    }
+                                match self.m.get().view(t) {
+                                    View::Const(_) => {
+                                        let view = MapView::Const;
+                                        let r = f(&m2, t, view);
+                                        // put into cache and return immediately
+                                        self.st.cache.insert(t, r.clone());
+                                        self.st.res.push(r);
+                                    }
+                                    View::App{f, args} => {
+                                        // process `f` and `args` before exiting `t`
+                                        self.st.tasks.push(Task::Exit(t));
+                                        self.st.tasks.push(Task::Enter(f));
+                                        for &u in args.iter() {
+                                            self.st.tasks.push(Task::Enter(u));
+                                        }
+                                    }
+                                }
+                            },
+                        }
+                    },
+                    Task::Exit(t) => {
+                        let n = match self.m.get().view(t) {
+                            View::Const(_) => unreachable!(),
+                            View::App{f:_, args} => args.len(),
+                        };
+                        // move arguments from stack to `st.args`
+                        self.st.args.clear();
+                        let head = self.st.res.pop().unwrap();
+                        for _i in 0..n {
+                            self.st.args.push(self.st.res.pop().unwrap());
+                        }
+                        let view = MapView::App{f: &head, args: &self.st.args};
+                        let r = f(&self.m, t, view);
+                        self.st.cache.insert(t, r.clone()); // save in cache
+                        self.st.res.push(r); // return result
+                    },
                 }
             }
 
-            debug_assert_eq!(st.res.len(), 1);
-            st.res.pop().unwrap()
+            debug_assert_eq!(self.st.res.len(), 1);
+            self.st.res.pop().unwrap()
         }
     }
 
-    impl State0 {
+    impl<R> State0<R> {
         fn new() -> Self {
-            Self {cache: HashMap::default(), tasks: Vec::new(), res: Vec::new(), }
+            Self {
+                cache: HashMap::default(), tasks: vec!(),
+                res: vec!(), args: vec!(),
+            }
         }
     }
 }
-*/
 
 /// A map backed by a vector
 ///

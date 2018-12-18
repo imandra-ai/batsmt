@@ -18,7 +18,7 @@ pub use crate::{
       BitSet as AstBitSet,
       HashMap as AstHashMap,
       DenseMap as AstDenseMap,
-      View as AstView
+      View as AstView,
   },
   gc::GC,
   util::{Shared,SharedRef,SharedRefMut},
