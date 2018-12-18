@@ -11,6 +11,7 @@ use {
     batsmt_core::{
         ast::{self,AST},
         symbol::Symbol,
+        backtrack,
     },
     crate::{
         lit_map::{LitMap},
@@ -46,6 +47,7 @@ struct CoreTheory<S:Symbol, Th: Theory<S>> {
     lit_map: LitMap<S>,
     acts: Actions,
     lits: Vec<BLit>,
+    trail_offset: backtrack::Ref<usize>, // current offset in the trail for the theory
     th_trail: Vec<(AST,bool,BLit)>, // temporary for trail slices
 }
 
@@ -85,6 +87,7 @@ mod solver {
                 lits: Vec::new(),
                 th,
                 acts: Actions::new(),
+                trail_offset: backtrack::Ref::new(0),
                 th_trail: Vec::new(),
             };
             let cb = Cb::new();
@@ -166,28 +169,34 @@ mod solver {
         fn map_lit(&self, lit: BLit) -> Option<(AST, bool)> {
             self.lit_map.map_lit(lit)
         }
-    }
 
-    // `CoreTheory` is a SAT theory
-    impl<S:Symbol, Th: Theory<S>> batsat::Theory for CoreTheory<S,Th> {
-        fn create_level(&mut self) { self.th.push_level() }
-        fn pop_levels(&mut self, n: usize) { self.th.pop_levels(n) }
-        fn n_levels(&self) -> usize { self.th.n_levels() }
-
-        // main check
-        fn final_check<A>(&mut self, a: &mut A) -> CheckRes<A::Conflict>
+        // internal checking
+        fn check<A>(&mut self, partial: bool, a: &mut A) -> CheckRes<A::Conflict>
             where A: batsat::theory::TheoryArgument
         {
-            // obtain theory literals from `a`
+            // obtain theory literals from `a`.
+            // do we use the full model, or just what's not been examined last?
+            let model = {
+                if partial {
+                    let offset = *self.trail_offset.get();
+                    let tr = a.model();
+                    &tr[offset..]
+                } else {
+                    a.model()
+                }
+            };
+
             self.th_trail.clear();
-            for &lit in a.model().iter() {
+            for &lit in model.iter() {
                 if let Some((t,sign)) = self.map_lit(lit) {
                     self.th_trail.push((t,sign,lit));
                 }
             }
 
-            trace!("solver.final-check ({} level(s), {} elt(s) in trail, among which {} from theory)",
-                self.n_levels(), a.model().len(), self.th_trail.len());
+            trace!("solver.{}-check ({} level(s), \
+                {} elt(s) in trail, among which {} from theory)",
+                if partial {"partial"} else {"final"},
+                self.th.n_levels(), a.model().len(), self.th_trail.len());
 
             if self.th_trail.len() == 0 {
                 // nothing to do
@@ -196,7 +205,17 @@ mod solver {
             }
 
             self.acts.clear(); // reset
-            self.th.final_check(&mut self.acts, &Trail(&self.th_trail));
+            if partial {
+                let did_sth =
+                    self.th.partial_check(&mut self.acts, &Trail(&self.th_trail));
+
+                // update which section of the trail we've checked so far
+                if did_sth {
+                    *self.trail_offset = a.model().len();
+                }
+            } else {
+                self.th.final_check(&mut self.acts, &Trail(&self.th_trail));
+            }
 
             // used to convert theory clauses into boolean clauses
             match self.acts.state() {
@@ -224,6 +243,36 @@ mod solver {
                     CheckRes::Conflict(confl)
                 }
             }
+        }
+    }
+
+    // `CoreTheory` is a SAT theory
+    impl<S:Symbol, Th: Theory<S>> batsat::Theory for CoreTheory<S,Th> {
+        fn create_level(&mut self) {
+            self.trail_offset.push_level();
+            self.th.push_level();
+        }
+        fn pop_levels(&mut self, n: usize) {
+            self.trail_offset.pop_levels(n);
+            self.th.pop_levels(n);
+        }
+        fn n_levels(&self) -> usize {
+            let n = self.th.n_levels();
+            debug_assert_eq!(n, self.trail_offset.n_levels());
+            n
+        }
+
+        // main check
+        fn final_check<A>(&mut self, a: &mut A) -> CheckRes<A::Conflict>
+            where A: batsat::theory::TheoryArgument
+        {
+            self.check(false, a)
+        }
+
+        fn partial_check<A>(&mut self, a: &mut A) -> CheckRes<A::Conflict>
+            where A: batsat::theory::TheoryArgument
+        {
+            self.check(true, a)
         }
     }
 

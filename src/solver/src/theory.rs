@@ -95,8 +95,12 @@ pub trait Theory<S:Symbol> : Backtrackable {
     /// only contains _new_ literals (since the last call to `partial_check`).
     /// It will be called more often than `final_check` so it should be efficient.
     ///
-    /// By default it does nothing.
-    fn partial_check(&mut self, _acts: &mut Actions, _trail: &Trail) {}
+    /// Returns: `true` if it did consider the trail, `false` otherwise.
+    /// If it returns `false` then the same literals will be passed again
+    /// later on (including for final check)
+    ///
+    /// By default it does nothing and returns `false`.
+    fn partial_check(&mut self, _acts: &mut Actions, _trail: &Trail) -> bool { false }
 }
 
 mod theory_lit {
