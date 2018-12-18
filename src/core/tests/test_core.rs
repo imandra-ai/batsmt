@@ -1,11 +1,48 @@
 
+#[macro_use] extern crate proptest;
 extern crate batsmt_core;
 
-mod ast {
-    use batsmt_core::*;
-    use batsmt_core::AstView as View;
+use {
+    std::{fmt, rc::Rc},
+    fxhash::FxHashMap,
+    batsmt_core::*,
+    batsmt_core::ast::View,
+    proptest::{prelude::*,test_runner::Config},
+};
 
-    type M = AstManager<StrSymbol>;
+type M = AstManager<StrSymbol>;
+
+/// Reference implementation for `ast::iter_dag`
+mod ast_iter_ref {
+    use super::*;
+
+    fn iter_dag_ref_rec<F>(seen: &mut ast::HashSet, m: &M, t: AST, f: &mut F) where F:FnMut(AST) {
+        if ! seen.contains(&t) {
+            seen.insert(t);
+            f(t);
+
+            let mr = m.get();
+            match mr.view(t) {
+                View::Const(_) => (),
+                View::App{f: f0,args} => {
+                    iter_dag_ref_rec(seen, m, f0, f);
+                    for a in args.iter() {
+                        iter_dag_ref_rec(seen, m, *a, f);
+                    }
+                }
+            }
+        }
+    }
+
+    // trivial implementation of `iter_dag`, as a reference
+    pub(super) fn iter_dag_ref<F>(m: &M, t: AST, mut f: F) where F: FnMut(AST) {
+        let mut seen = ast::HashSet::default();
+        iter_dag_ref_rec(&mut seen, m, t, &mut f);
+    }
+}
+
+mod test_ast {
+    use super::*;
 
     #[test]
     fn test_mk_str() {
@@ -282,32 +319,6 @@ mod ast {
         assert_eq!(m.len(), m.iter().count());
     }
 
-
-    fn iter_dag_ref_rec<F>(seen: &mut ast::HashSet, m: &M, t: AST, f: &mut F) where F:FnMut(AST) {
-        if ! seen.contains(&t) {
-            seen.insert(t);
-            f(t);
-
-            let mr = m.get();
-            match mr.view(t) {
-                View::Const(_) => (),
-                View::App{f: f0,args} => {
-                    iter_dag_ref_rec(seen, m, f0, f);
-                    for a in args.iter() {
-                        iter_dag_ref_rec(seen, m, *a, f);
-                    }
-                }
-            }
-        }
-    }
-
-    // trivial implementation of `iter_dag`, as a reference
-    fn iter_dag_ref<F>(m: &M, t: AST, mut f: F) where F: FnMut(AST) {
-        let mut seen = ast::HashSet::default();
-
-        iter_dag_ref_rec(&mut seen, m, t, &mut f);
-    }
-
     #[test]
     fn test_iter_dag() {
         // create a bunch of terms
@@ -321,7 +332,7 @@ mod ast {
             m.iter_dag(t, |_| n1 += 1);
 
             let mut n2 = 0;
-            iter_dag_ref(&m, t, |_| n2 += 1);
+            ast_iter_ref::iter_dag_ref(&m, t, |_| n2 += 1);
 
             assert_eq!(n1, n2);
         }
@@ -368,7 +379,120 @@ mod ast {
     */
 }
 
+mod ast_prop {
+    use super::*;
+
+    #[derive(Clone)]
+    struct AstGen(Rc<AstGenCell>);
+
+    struct AstGenCell {
+        m: M,
+        consts: std::cell::RefCell<FxHashMap<String, AST>>,
+    }
+
+    impl AstGen {
+        fn new(m: &M) -> Self {
+            AstGen(Rc::new(AstGenCell {
+                m: m.clone(),
+                consts: std::cell::RefCell::new(FxHashMap::default()),
+            }))
+        }
+        fn m(&self) -> &M { &self.0.m }
+        fn app(&self, f: AST, args: &[AST]) -> AST {
+            self.0.m.get_mut().mk_app(f, args)
+        }
+        fn string(&self, s: String) -> AST {
+            let c = self.0.consts.borrow();
+            match c.get(&s) {
+                Some(t) => *t,
+                None => {
+                    let t = self.0.m.get_mut().mk_string(s.clone());
+                    drop(c); // before the borrow
+                    self.0.consts.borrow_mut().insert(s, t);
+                    t
+                }
+            }
+        }
+        fn str(&self, s: &str) -> AST { self.string(s.to_string()) }
+    }
+
+    impl fmt::Debug for AstGen {
+        fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result { write!(out, "astgen") }
+    }
+
+    fn with_astgen<F,T>(mut f: F) -> BoxedStrategy<(AstGen,T)>
+        where F: FnMut(&AstGen) -> BoxedStrategy<T>, T: 'static+fmt::Debug
+    {
+        let m = AstGen::new(&ast::Manager::new());
+        f(&m)
+            .prop_map(move |t| (m.clone(), t))
+            .boxed()
+    }
+
+    /// Random generator of terms
+    fn gen_term(m: &AstGen) -> BoxedStrategy<AST> {
+        let m = m.clone();
+        let leaf = {
+            let m2 = m.clone();
+            "f|g|a|b|c|d".prop_map(move |s| m2.string(s))
+        };
+        // see https://docs.rs/proptest/*/proptest/#generating-recursive-data
+        leaf.prop_recursive(
+            8, 256, 10,
+            move |inner| {
+                let m2 = m.clone();
+                (inner.clone(),prop::collection::vec(inner.clone(), 0..6)).
+                    prop_map(move |(f,args)| m2.app(f,&args))
+            }).boxed()
+    }
+
+    fn gen_terms(m: &AstGen, len: usize) -> BoxedStrategy<Vec<AST>> {
+        prop::collection::vec(gen_term(&m), 0 .. len).boxed()
+    }
+
+    // TODO: map(id)(t) == t
+    // TODO: compare iter_dag_ref and iter_dag
+
+    // size_tree(t) >= size_dag(t)
+    proptest! {
+        #[test]
+        fn prop_term_size(ref tup in with_astgen(gen_term)) {
+            let (m,t) = tup;
+
+            let size_tree = m.m().size_tree(*t);
+            let size_dag = m.m().size_dag(*t);
+
+            prop_assert!(size_tree >= size_dag,
+                         "size tree {}, size dag {}, t: {:?}",
+                         size_tree,
+                         size_dag, m.m().dbg_ast(*t))
+        }
+    }
+
+    // map(t, id) == t
+    proptest! {
+        #[test]
+        fn prop_term_map_id_is_id(ref tup in with_astgen(gen_term)) {
+            let (m,t) = tup;
+
+            let u = m.m().map(*t, |m, u, view| {
+                match view {
+                    ast::MapView::Const => u,
+                    ast::MapView::App{f, args} => {
+                        m.get_mut().mk_app(*f, args)
+                    },
+                }
+            });
+
+            prop_assert_eq!(*t, u,
+                            "t: {:?}, t.map(id): {:?}",
+                            m.m().dbg_ast(*t), m.m().dbg_ast(u))
+        }
+    }
+}
+
 mod backtrack {
+    use super::*;
     use batsmt_core::backtrack::*;
 
     #[test]
@@ -461,6 +585,71 @@ mod backtrack {
         s.pop_levels(1);
         assert_eq!(s.n_levels(), 0);
         assert_eq!(*s, 1);
+    }
 
+    // ##### random tests #####
+
+    #[derive(Clone,Debug)]
+    enum Op {
+        PushLevel,
+        PopLevels(usize),
+        Push(u32), // push object
+    }
+
+    // generator of single ops.
+    // - `i` is range for elements
+    // - `n` is max number of levels to remove at once
+    fn stack_op() -> BoxedStrategy<Op> {
+        prop_oneof![
+            Just(Op::PushLevel),
+            (0..200u32).prop_map(Op::Push),
+            (1..5usize).prop_map(Op::PopLevels),
+        ].boxed()
+    }
+
+    // check the sequence of ops is valid (doesn't pop too many levels)
+    fn ops_valid(ops: &[Op]) -> bool {
+        let mut lvl = 0;
+        ops.iter().all(|op| match op {
+            Op::Push(_) => true,
+            Op::PushLevel => { lvl += 1; true },
+            Op::PopLevels(n) => { let ok = *n <= lvl; if ok{lvl -= *n}; ok },
+        })
+    }
+
+    // generates a vector of ops (size `i`)
+    fn stack_ops(len: usize) -> BoxedStrategy<Vec<Op>> {
+        prop::collection::vec(stack_op(), 0..len)
+            .prop_filter("stack-invalid sequence".to_string(), |v| ops_valid(&v))
+            .boxed()
+    }
+
+    // test that `ref` can be used to track the size of the `stack`
+    proptest! {
+        #![proptest_config(Config::with_cases(1000))]
+        #[test]
+        fn proptest_ref_stack(ref ops in stack_ops(100)) {
+            let mut st = Stack::new();
+            let mut r = Ref::new(0);
+
+            for o in ops.iter() {
+                match o {
+                    Op::PushLevel => {
+                        st.push_level();
+                        r.push_level();
+                    },
+                    Op::PopLevels(n) => {
+                        st.pop_levels(*n, |_| ());
+                        r.pop_levels(*n);
+                    },
+                    Op::Push(x) => {
+                        st.push(x);
+                        *r += 1; // increase size of stack
+                    }
+                };
+                // invariant to check
+                prop_assert_eq!(*r.get(), st.as_slice().len());
+            }
+        }
     }
 }
