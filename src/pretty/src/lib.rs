@@ -334,6 +334,10 @@ impl Pretty for String {
     fn pp(&self, ctx: &mut Ctx) { ctx.string(self.clone()); }
 }
 
+impl Pretty for std::rc::Rc<str> {
+    fn pp(&self, out: &mut Ctx) { out.string(self.to_string()); }
+}
+
 #[test]
 fn test_display() {
     #[derive(Copy,Clone)]

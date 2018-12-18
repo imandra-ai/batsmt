@@ -3,7 +3,7 @@
 
 use {
     std::{ops::Deref,rc::Rc, fmt, ptr},
-    crate::types::{self,Op},
+    crate::types::{self,Op,Atom},
     batsmt_pretty as pp,
 };
 
@@ -12,7 +12,7 @@ pub use batsmt_pretty::Pretty;
 
 #[derive(Eq,PartialEq,Hash)]
 struct SortCell {
-    name: String,
+    name: Atom,
     arity: u8,
 }
 
@@ -28,14 +28,14 @@ impl fmt::Debug for Sort {
 
 impl Sort {
     /// New sort
-    fn new(name: String, arity: u8) -> Self {
+    fn new(name: Atom, arity: u8) -> Self {
         Sort(Rc::new(SortCell{name, arity}))
     }
 }
 
 #[derive(Eq,PartialEq,Hash)]
 struct FunCell {
-    name: String,
+    name: Atom,
     args: Option<Vec<Sort>>,
     ret: Sort,
 }
@@ -46,7 +46,7 @@ pub struct Fun(Rc<FunCell>);
 
 impl Fun {
     /// New fun
-    fn new(name: String, args: Option<Vec<Sort>>, ret: Sort) -> Self {
+    fn new(name: Atom, args: Option<Vec<Sort>>, ret: Sort) -> Self {
         Fun(Rc::new(FunCell {name, args, ret}))
     }
     pub fn ret(&self) -> Sort { self.0.ret.clone() }
@@ -124,15 +124,15 @@ pub struct Builder {
 impl Builder {
     /// New builder
     pub fn new() -> Self {
-        let b = Sort::new("Bool".to_string(), 0);
+        let b = Sort::new("Bool".into(), 0);
         Builder {
             bool_: b.clone(),
-            and_: Fun::new("and".to_string(), None, b.clone()),
-            or_: Fun::new("or".to_string(), None, b.clone()),
-            imply_: Fun::new("=>".to_string(), None, b.clone()),
-            eq: Fun::new("=".to_string(), None, b.clone()),
-            distinct: Fun::new("distinct".to_string(), None, b.clone()),
-            not_: Fun::new("not".to_string(), Some(vec![b.clone()]), b.clone()),
+            and_: Fun::new("and".into(), None, b.clone()),
+            or_: Fun::new("or".into(), None, b.clone()),
+            imply_: Fun::new("=>".into(), None, b.clone()),
+            eq: Fun::new("=".into(), None, b.clone()),
+            distinct: Fun::new("distinct".into(), None, b.clone()),
+            not_: Fun::new("not".into(), Some(vec![b.clone()]), b.clone()),
         }
     }
 }
@@ -140,7 +140,7 @@ impl Builder {
 impl types::SortBuilder for Builder {
     type Sort = Sort;
     fn get_bool(&self) -> Sort { self.bool_.clone() }
-    fn declare_sort(&mut self, s: String, n: u8) -> Sort {
+    fn declare_sort(&mut self, s: Atom, n: u8) -> Sort {
         Sort::new(s,n)
     }
 }
@@ -161,7 +161,7 @@ impl types::TermBuilder for Builder {
         }
     }
 
-    fn declare_fun(&mut self, name: String, args: &[Sort], ret: Sort) -> Fun {
+    fn declare_fun(&mut self, name: Atom, args: &[Sort], ret: Sort) -> Fun {
         let args = Some(args.iter().map(|s| s.clone()).collect());
         Fun::new(name, args, ret)
     }
@@ -176,7 +176,7 @@ impl types::TermBuilder for Builder {
         Term::app_ref(f, args)
     }
 
-    fn bind(&mut self, _s: String, t: Term) -> Self::Var { t }
+    fn bind(&mut self, _s: Atom, t: Term) -> Self::Var { t }
 
     // ignore bindings, they've been expanded already
     fn let_(&mut self, _bs: &[(Self::Var,Term)], body: Self::Term) -> Self::Term { body }
@@ -184,13 +184,13 @@ impl types::TermBuilder for Builder {
 
 impl pp::Pretty for Sort {
     fn pp(&self, ctx: &mut pp::Ctx) {
-        ctx.text(&self.0.name);
+        ctx.string(self.0.name.to_string());
     }
 }
 
 impl pp::Pretty for Fun {
     fn pp(&self, ctx: &mut pp::Ctx) {
-        ctx.text(&self.0.name);
+        ctx.string(self.0.name.to_string());
     }
 }
 

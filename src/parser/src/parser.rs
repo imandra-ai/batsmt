@@ -31,7 +31,7 @@ const BUF_SIZE : usize = 1_024 * 16;
 
 #[derive(Debug)]
 struct LetBinding<Var, Term>{
-    name: String,
+    name: Atom,
     var: Var,
     t: Term,
     old_v: Option<Var>, // if shadowed
@@ -39,6 +39,15 @@ struct LetBinding<Var, Term>{
 
 // A basic SMT-LIB parser
 struct ParserState<'a, R : io::Read, B : TermBuilder + 'a> {
+    io: ParserIO<R>,
+    build: &'a mut B,
+    sorts: FxHashMap<Atom, B::Sort>,
+    funs: FxHashMap<Atom, B::Fun>,
+    vars: FxHashMap<Atom, B::Var>, // let-bindings
+    atom_buf: Vec<u8>,
+}
+
+struct ParserIO<R : io::Read> {
     r: R, // underlying reader
     eof: bool,
     buf: [u8; BUF_SIZE], // internal buffer
@@ -46,24 +55,9 @@ struct ParserState<'a, R : io::Read, B : TermBuilder + 'a> {
     len: usize, // current size of buf
     line: u32,
     col: u32,
-    build: &'a mut B,
-    sorts: FxHashMap<String, B::Sort>,
-    funs: FxHashMap<String, B::Fun>,
-    vars: FxHashMap<String, B::Var>, // let-bindings
 }
 
-impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
-    // allocate new parser
-    fn new(build: &'a mut B, r: R) -> Self {
-        ParserState {
-            r, build, eof: false, buf: [0; BUF_SIZE], len: 0,
-            i: 0, line: 1, col: 1,
-            funs: FxHashMap::default(),
-            sorts: FxHashMap::default(),
-            vars: FxHashMap::default(),
-        }
-    }
-
+impl<R : io::Read> ParserIO<R> {
     // refill internal buffer
     fn refill(&mut self) -> Result<()> {
         trace!("refill internal buffer (size {})", BUF_SIZE);
@@ -150,32 +144,51 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
         }
         Ok(())
     }
+}
+
+impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
+    // allocate new parser
+    fn new(build: &'a mut B, r: R) -> Self {
+        ParserState {
+            funs: FxHashMap::default(),
+            sorts: FxHashMap::default(),
+            vars: FxHashMap::default(),
+            atom_buf: vec!(),
+            build, 
+            io: ParserIO {
+                r, eof: false, buf: [0; BUF_SIZE], len: 0,
+                i: 0, line: 1, col: 1,
+            },
+        }
+    }
 
     // expect and consume `c`, or fail
     fn expect_char(&mut self, c: u8) -> Result<()> {
-        let c2 = self.get()?;
+        let c2 = self.io.get()?;
         if c2 != c {
-            self.err_with(format!("expected '{}', got '{}'", c as char, c2 as char))
+            self.io.err_with(format!("expected '{}', got '{}'", c as char, c2 as char))
         } else {
-            self.junk();
+            self.io.junk();
             Ok(())
         }
     }
 
     // parse an atom
-    fn atom(&mut self) -> Result<String> {
-        self.skip_spaces()?;
+    fn atom(&mut self) -> Result<Atom> {
+        self.io.skip_spaces()?;
 
-        let mut s = Vec::new();
+        // reuse buffer
+        let s = &mut self.atom_buf;
+        s.clear();
 
-        let c = self.get()?;
+        let c = self.io.get()?;
         if c == b'|' {
             // escaped atom
             loop {
-                self.junk();
-                let c = self.get()?;
+                self.io.junk();
+                let c = self.io.get()?;
                 if c == b'|' {
-                    self.junk();
+                    self.io.junk();
                     break
                 } else {
                     s.push(c);
@@ -184,8 +197,8 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
         } else {
             s.push(c);
             loop {
-                self.junk();
-                let c = self.get()?;
+                self.io.junk();
+                let c = self.io.get()?;
                 match c {
                     b' ' | b'(' | b')' | b'\t' | b'\n' => break,
                     _ => s.push(c),
@@ -193,7 +206,9 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
             }
         }
 
-        let s = String::from_utf8(s)?; // now convert to utf8
+        // convert to utf8 and onto the heap
+        let str = std::str::from_utf8(&s)?;
+        let s: Atom = str.into();; // now convert to utf8
         Ok(s)
     }
 
@@ -203,10 +218,10 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
     {
         let mut v = Vec::new();
         loop {
-            self.skip_spaces()?;
-            if self.get()? == b')' {
+            self.io.skip_spaces()?;
+            if self.io.get()? == b')' {
                 // done, exit
-                self.junk();
+                self.io.junk();
                 break;
             } else {
                 let a = f(self)?;
@@ -220,7 +235,7 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
     fn within_parens<A, F>(&mut self, f: F) -> Result<Vec<A>>
         where F: FnMut(&mut Self) -> Result<A>
     {
-        self.skip_spaces()?;
+        self.io.skip_spaces()?;
         self.expect_char(b'(')?;
         self.many_until_paren(f)
     }
@@ -228,10 +243,10 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
     // parse a sort
     fn sort(&mut self) -> Result<B::Sort> {
         let a = self.atom()?;
-        if a == "Bool" { return Ok(self.build.get_bool()) }; // builtin
+        if &*a == "Bool" { return Ok(self.build.get_bool()) }; // builtin
         match self.sorts.get(&a) {
             Some(s) => Ok(s.clone()),
-            None => self.err_with(format!("{} is not a known sort", &a).to_string()),
+            None => self.io.err_with(format!("{} is not a known sort", &a).to_string()),
         }
     }
 
@@ -253,12 +268,12 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
     }
 
     // parse one `(var term)` pair
-    fn parse_binding(&mut self) -> Result<(String,B::Term)> {
-        self.skip_spaces()?;
+    fn parse_binding(&mut self) -> Result<(Atom,B::Term)> {
+        self.io.skip_spaces()?;
         self.expect_char(b'(')?;
         let v = self.atom()?;
         let t = self.term()?;
-        self.skip_spaces()?;
+        self.io.skip_spaces()?;
         self.expect_char(b')')?;
         Ok((v,t))
     }
@@ -307,12 +322,12 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
 
     // parse a term
     fn term(&mut self) -> Result<B::Term> {
-        self.skip_spaces()?;
-        match self.get()? {
+        self.io.skip_spaces()?;
+        match self.io.get()? {
             b'(' => {
-                self.junk();
+                self.io.junk();
                 let a = self.atom()?;
-                match a.as_str() {
+                match &*a {
                     "ite" => {
                         let t1 = self.term()?;
                         let t2 = self.term()?;
@@ -348,14 +363,14 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
 
     // entry point for a toplevel statement, or None (for EOF)
     fn statement(&mut self) -> Result<Option<Statement<B::Term, B::Sort>>> {
-        self.skip_spaces()?;
+        self.io.skip_spaces()?;
 
-        if self.eof {
+        if self.io.eof {
             Ok(None)
         } else {
             self.expect_char(b'(')?;
             let dir = self.atom()?;
-            let st = match dir.as_str() {
+            let st = match &*dir {
                 "set-info" => {
                     let a = self.atom()?;
                     let b = self.atom()?;
@@ -389,7 +404,7 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
                 "check-sat" => Statement::CheckSat,
                 "exit" => Statement::Exit,
                 _ => {
-                    self.err_with(format!("unknown directive {:?}", dir))?
+                    self.io.err_with(format!("unknown directive {:?}", dir))?
                 }
             };
             self.expect_char(b')')?;

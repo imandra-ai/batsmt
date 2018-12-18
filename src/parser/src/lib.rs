@@ -1,12 +1,12 @@
 
-#[macro_use] extern crate batsmt_pretty;
-extern crate fxhash;
 #[macro_use] extern crate log;
 
 pub mod types;
 pub mod parser;
 pub mod simple_ast;
 
-pub use crate::types::{Statement,TermBuilder,SortBuilder,Op as BuiltinOp};
-pub use crate::parser::{parse,parse_stdin,parse_str,Error,Result};
+pub use crate::{
+    types::{Atom,Statement,TermBuilder,SortBuilder,Op as BuiltinOp},
+    parser::{parse,parse_stdin,parse_str,Error,Result},
+};
 

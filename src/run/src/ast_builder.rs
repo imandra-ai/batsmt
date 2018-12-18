@@ -8,6 +8,7 @@ use {
     fxhash::FxHashMap,
 };
 
+type Atom = parser::Atom;
 type M = ast::Manager<StrSymbol>;
 
 #[derive(Clone,Debug)]
@@ -27,8 +28,8 @@ pub struct Builtins {
 pub struct AstBuilder {
     m: M,
     b: Builtins,
-    sorts: FxHashMap<String, (AST, u8)>,
-    funs: FxHashMap<String, (AST, Vec<AST>, AST)>, // sort
+    sorts: FxHashMap<Atom, (AST, u8)>,
+    funs: FxHashMap<Atom, (AST, Vec<AST>, AST)>, // sort
 }
 
 mod ast_builder {
@@ -103,7 +104,7 @@ mod ast_builder {
 
         fn get_bool(&self) -> AST { self.b.bool_ }
 
-        fn declare_sort(&mut self, s: String, arity: u8) -> AST {
+        fn declare_sort(&mut self, s: Atom, arity: u8) -> AST {
             debug!("declare sort {:?} arity {}", &s, arity);
             if self.sorts.contains_key(&s) {
                 panic!("sort {:?} already declared", &s);
@@ -134,11 +135,11 @@ mod ast_builder {
             }
         }
 
-        fn declare_fun(&mut self, f: String, args: &[AST], ret: AST) -> Self::Fun {
+        fn declare_fun(&mut self, f: Atom, args: &[AST], ret: AST) -> Self::Fun {
             if self.funs.contains_key(&f) {
                 panic!("fun {:?} already declared", &f);
             } else {
-                let ast = self.m.get_mut().mk_string(f.clone());
+                let ast = self.m.get_mut().mk_str(&*f);
                 let args = args.iter().map(|t| t.clone()).collect();
                 self.funs.insert(f, (ast, args, ret));
                 ast
@@ -153,7 +154,7 @@ mod ast_builder {
             self.m.get_mut().mk_app(f, args)
         }
 
-        fn bind(&mut self, _v: String, t: AST) -> AST { t }
+        fn bind(&mut self, _v: Atom, t: AST) -> AST { t }
 
         fn let_(&mut self, _: &[(AST,AST)], body: AST) -> AST { body }
     }

@@ -1,7 +1,12 @@
 
-use std::fmt::{self,Debug};
-use batsmt_pretty as pp;
+use {
+    std::{fmt::{self,Debug}, rc::Rc},
+    batsmt_pretty as pp,
+};
 pub use self::pp::Pretty;
+
+/// An atom is a refcounted string
+pub type Atom = Rc<str>;
 
 pub trait SortBuilder {
     type Sort : Clone + Debug;
@@ -9,7 +14,7 @@ pub trait SortBuilder {
     fn get_bool(&self) -> Self::Sort;
 
     /// Declare a sort of the given arity
-    fn declare_sort(&mut self, name: String, arity: u8) -> Self::Sort;
+    fn declare_sort(&mut self, name: Atom, arity: u8) -> Self::Sort;
 }
 
 /// The builtins recognized by the parser
@@ -29,7 +34,7 @@ pub trait TermBuilder : SortBuilder {
     fn var(&mut self, v: Self::Var) -> Self::Term;
 
     /// Declare a function
-    fn declare_fun(&mut self, name: String, args: &[Self::Sort], ret: Self::Sort) -> Self::Fun;
+    fn declare_fun(&mut self, name: Atom, args: &[Self::Sort], ret: Self::Sort) -> Self::Fun;
 
     /// Build a term by function application
     fn app_fun(&mut self, f: Self::Fun, args: &[Self::Term]) -> Self::Term;
@@ -38,7 +43,7 @@ pub trait TermBuilder : SortBuilder {
     fn ite(&mut self, _: Self::Term, _: Self::Term, _: Self::Term) -> Self::Term;
 
     /// Make a variable bound to this term
-    fn bind(&mut self, name: String, t: Self::Term) -> Self::Var;
+    fn bind(&mut self, name: Atom, t: Self::Term) -> Self::Var;
 
     /// Build a let binding. The variables may be called from now on.
     fn let_(&mut self, bs: &[(Self::Var, Self::Term)], body: Self::Term) -> Self::Term;
@@ -48,10 +53,10 @@ pub trait TermBuilder : SortBuilder {
 /// A toplevel statement
 #[derive(Debug,Clone)]
 pub enum Statement<Term, Sort> {
-    SetInfo(String,String),
-    SetLogic(String),
-    DeclareSort(String,u8),
-    DeclareFun(String,Vec<Sort>,Sort),
+    SetInfo(Atom,Atom),
+    SetLogic(Atom),
+    DeclareSort(Atom,u8),
+    DeclareFun(Atom,Vec<Sort>,Sort),
     Assert(Term),
     CheckSat,
     Exit,
