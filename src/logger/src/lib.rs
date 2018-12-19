@@ -2,7 +2,8 @@
 extern crate log;
 
 use {
-    log::{Log, Record, LevelFilter, Metadata},
+    log::{Log, Record, Level, LevelFilter, Metadata},
+    colored::*,
 };
 
 /// Initialize the logging infrastructure.
@@ -21,14 +22,45 @@ pub fn init() {
                 return;
             },
         };
-        let logger = Logger(lvl);
+        let logger = Logger(lvl, PPLevels::new());
         log::set_max_level(lvl);
         log::set_boxed_logger(Box::new(logger)).unwrap();
     };
 }
 
+struct PPLevels {
+    info: ColoredString,
+    debug: ColoredString,
+    error: ColoredString,
+    trace: ColoredString,
+    warn: ColoredString,
+}
+
+impl PPLevels {
+    fn new() -> Self {
+        PPLevels{
+            info: "INFO ".purple().bold(),
+            debug: "DEBUG".green().dimmed(),
+            error: "ERROR".white().on_red().bold(),
+            trace: "TRACE".blue().dimmed(),
+            warn: "WARN ".yellow().bold(),
+        }
+    }
+
+    /// Get constant string for this level
+    fn get(&self, lvl: Level) -> &ColoredString {
+        match lvl {
+            Level::Trace => &self.trace,
+            Level::Info => &self.info,
+            Level::Debug => &self.debug,
+            Level::Warn => &self.warn,
+            Level::Error => &self.error,
+        }
+    }
+}
+
 /// Logger implementation.
-struct Logger(LevelFilter);
+struct Logger(LevelFilter, PPLevels);
 
 impl Log for Logger {
     #[inline(always)]
@@ -38,8 +70,10 @@ impl Log for Logger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
+            // TODO: colorize path as "dimmed", but without allocating a string
             let path = record.module_path().unwrap_or("<>");
-            eprintln!("[{} {}] {}", record.level(), path, record.args());
+            let lvl = self.1.get(record.level());
+            eprintln!("[{} {}] {}", lvl, path, record.args());
         }
     }
 
