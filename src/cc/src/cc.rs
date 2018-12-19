@@ -211,9 +211,16 @@ mod cc {
             // traverse in postfix order (shared context: `cc1`)
             traverse.iter(
                 t0, cc1,
-                |cc1,t| { !cc1.nodes.contains(t) },
                 |cc1,t| {
-                    debug_assert!(!cc1.nodes.contains(t));
+                    let enter = !cc1.nodes.contains(t);
+                    if enter {
+                        // avoid entering twice
+                        cc1.nodes.insert(t, Node::new(NodeID(t)));
+                    }
+                    enter
+                },
+                |cc1,t| {
+                    debug_assert!(cc1.nodes.contains(t));
                     trace!("add-term {:?}", m.dbg_ast(t));
                     cc1.nodes.insert(t, Node::new(NodeID(t)));
 
