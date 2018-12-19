@@ -112,6 +112,13 @@ pub trait Theory<S:Symbol, B:BoolLit> : Backtrackable {
     ///
     /// By default it does nothing and returns `false`.
     fn partial_check(&mut self, _acts: &mut Actions<B>, _trail: &Trail<B>) -> bool { false }
+
+    /// Add a binding term<=>literal to the theory.
+    ///
+    /// This is typically called before solving, so as to add terms once
+    /// and for all, and so that the theory can propagate
+    /// literals back to the SAT solver.
+    fn add_literal(&mut self, _t: AST, _lit: B) {}
 }
 
 mod theory_lit {
