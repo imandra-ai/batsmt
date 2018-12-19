@@ -9,8 +9,8 @@ use {
     },
     batsmt_pretty as pp,
     batsmt_theory::{
-        Theory,TheoryLit,TheoryClause,
-        TheoryClauseRef,Actions,ActState,Trail,
+        Theory, TheoryLit,
+        TheoryClauseRef, Actions, ActState, Trail,
     },
     batsmt_core::{
         ast::{self,AST},
@@ -77,6 +77,7 @@ mod solver {
     use super::*;
     use batsat::SolverInterface;
 
+    // public API
     impl<S:Symbol, Th: Theory<S, BLit>> Solver<S,Th> {
         /// New Solver, using the given theory `th` and AST manager
         pub fn new(m: &ast::Manager<S>, b: Builtins, th: Th) -> Self {
@@ -121,7 +122,7 @@ mod solver {
         }
 
         /// Add a clause made from signed terms
-        pub fn add_clause_slice(&mut self, c: TheoryClauseRef<BLit>) {
+        pub fn add_clause(&mut self, c: TheoryClauseRef<BLit>) {
             trace!("solver.add-clause\n{}", self.m.pp(c));
             // use `self.lits` as temporary storage
             self.lits.clear();
@@ -135,14 +136,25 @@ mod solver {
             self.s0.sat.add_clause_reuse(&mut self.lits);
         }
 
-        /// Add a clause made from signed terms
-        pub fn add_clause(&mut self, c: &TheoryClause<BLit>) {
-            self.add_clause_slice(c.as_ref())
+        // TODO: find how to avoid duplicating work if called in a (refinement) loop
+        // first, add theory literals to the theory
+        fn add_initial_literals(&mut self) {
+            debug!("solver.theory.add-lits");
+            let th = &mut self.s0.sat.theory_mut();
+            for (t,blit) in self.s0.lit_map.get().iter_theory_lits() {
+                th.th.add_literal(t,blit);
+            }
+            let acts = &mut th.acts;
+            th.th.final_check(acts, &Trail::empty());
+            assert!(acts.is_sat()); // no conflict by just addings lits
         }
 
         /// Solve the set of constraints added with `add_clause` until now
         pub fn solve_with(&mut self, assumptions: &[sat::Lit]) -> Res {
             info!("solver.sat.solve ({} assumptions)", assumptions.len());
+
+            self.add_initial_literals();
+
             trace!("assumptions: {:?}", assumptions);
             let sat = &mut self.s0.sat;
             let r = sat.solve_limited(assumptions);

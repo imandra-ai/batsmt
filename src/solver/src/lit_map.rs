@@ -23,10 +23,11 @@ pub struct Builtins {
 #[derive(Clone)]
 pub struct LitMap<S:Symbol>(Shared<LitMapCell<S>>);
 
-struct LitMapCell<S:Symbol> {
+pub struct LitMapCell<S:Symbol> {
     m: ast::Manager<S>,
     b: Builtins,
     term_to_lit: ast::HashMap<BLit>,
+    theory_lits: Vec<(AST,BLit)>, // only bidir terms
     lit_to_term: LMap<(AST,bool)>,
 }
 
@@ -46,10 +47,10 @@ impl<S:Symbol> LitMap<S> {
     }
 
     #[inline(always)]
-    fn get(&self) -> SharedRef<LitMapCell<S>> { self.0.borrow() }
+    pub fn get(&self) -> SharedRef<LitMapCell<S>> { self.0.borrow() }
 
     #[inline(always)]
-    fn get_mut(&self) -> SharedRefMut<LitMapCell<S>> { self.0.borrow_mut() }
+    pub fn get_mut(&self) -> SharedRefMut<LitMapCell<S>> { self.0.borrow_mut() }
 
     /// Add a mapping from `t` to `lit`
     ///
@@ -101,6 +102,7 @@ impl<S:Symbol> LitMapCell<S> {
             m: m,
             term_to_lit: ast::HashMap::default(),
             lit_to_term: LMap::new(),
+            theory_lits: vec!(),
         }
     }
 
@@ -165,7 +167,13 @@ impl<S:Symbol> LitMapCell<S> {
             let pad = (AST::SENTINEL, true); // used to fill the map
             self.lit_to_term.insert(lit.0, (t, true), pad);
             self.lit_to_term.insert(! lit.0, (t, false), pad);
+            self.theory_lits.push((t, lit));
         }
         self.term_to_lit.insert(t, lit);
+    }
+
+    /// Iterate over all know theory literals.
+    pub fn iter_theory_lits<'a>(&'a self) -> impl Iterator<Item=(AST,BLit)> + 'a {
+        self.theory_lits.iter().cloned()
     }
 }
