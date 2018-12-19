@@ -640,7 +640,7 @@ mod manager {
         /// For more sophisticated use (iterating on several terms, etc.)
         /// use `iter_suffix::State` directly.
         pub fn iter_suffix<Ctx,F1,F2>(
-            &mut self, t: AST, ctx: &mut Ctx, fenter: F1, fexit: F2
+            &self, t: AST, ctx: &mut Ctx, fenter: F1, fexit: F2
         )
             where F1: FnMut(&mut Ctx, AST) -> bool, F2: FnMut(&mut Ctx, AST)
         {
@@ -1114,11 +1114,13 @@ pub mod iter_suffix {
                     fexit(ctx, t); // process `t`
                 } else if self.st.seen.contains(&t) {
                     continue
-                } else if !fenter(ctx, t) {
-                    self.st.seen.insert(t); // block it in the future
                 } else {
                     debug_assert_eq!(ee, EE::Enter);
                     self.st.seen.insert(t);
+
+                    if !fenter(ctx, t) {
+                        continue // do not actually explore this
+                    }
 
                     // exit `t` after processing subterms
                     self.st.push_exit(t);
@@ -1128,7 +1130,7 @@ pub mod iter_suffix {
                         View::Const(_) => (),
                         View::App{f,args} => {
                             self.st.push_enter(f);
-                            for a in args.iter() { self.st.push_enter(*a) }
+                            for &a in args.iter() { self.st.push_enter(a) }
                         },
                     }
                 }

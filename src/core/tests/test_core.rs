@@ -4,7 +4,7 @@ extern crate batsmt_core;
 
 use {
     std::{fmt, rc::Rc},
-    fxhash::FxHashMap,
+    fxhash::{FxHashSet,FxHashMap},
     batsmt_core::*,
     batsmt_core::ast::View,
     proptest::{prelude::*,test_runner::Config},
@@ -438,7 +438,7 @@ mod ast_prop {
         };
         // see https://docs.rs/proptest/*/proptest/#generating-recursive-data
         leaf.prop_recursive(
-            8, 256, 10,
+            10, 512, 10,
             move |inner| {
                 let m2 = m.clone();
                 (inner.clone(),prop::collection::vec(inner.clone(), 0..6)).
@@ -449,9 +449,6 @@ mod ast_prop {
     fn gen_terms(m: &AstGen, len: usize) -> BoxedStrategy<Vec<AST>> {
         prop::collection::vec(gen_term(&m), 0 .. len).boxed()
     }
-
-    // TODO: map(id)(t) == t
-    // TODO: compare iter_dag_ref and iter_dag
 
     // size_tree(t) >= size_dag(t)
     proptest! {
@@ -487,6 +484,75 @@ mod ast_prop {
             prop_assert_eq!(*t, u,
                             "t: {:?}, t.map(id): {:?}",
                             m.m().dbg_ast(*t), m.m().dbg_ast(u))
+        }
+    }
+
+    // iter_dag_ref and iter_dag are the same
+    proptest! {
+        #[test]
+        fn prop_iter_dag_ref(ref tup in with_astgen(gen_term)) {
+            let (m,t) = tup;
+
+            let mut n1 = 0;
+            let mut n2 = 0;
+
+            m.m().iter_dag(*t, |_| { n1 += 1 });
+            ast_iter_ref::iter_dag_ref(m.m(), *t, |_| { n2 += 1 });
+
+            prop_assert!(n1 == n2, "same size, t: {:?}", m.m().dbg_ast(*t))
+        }
+    }
+
+    // iter_dag and iter_suffix traverse same set of terms
+    proptest! {
+        #[test]
+        fn prop_iter_dag_and_iter_suffix_same_set_of_subterms(ref tup in with_astgen(gen_term)) {
+            let (m,t) = tup;
+
+            let mut seen1 = vec!();
+            let mut seen2 = vec!();
+
+            m.m().iter_dag(*t, |u| { seen1.push(u) });
+            m.m().iter_suffix(*t, &mut(), |_,_| true, |_,u| { seen2.push(u) });
+
+            seen1.sort();
+            seen2.sort();
+
+            prop_assert!(&seen1 == &seen2,
+                         "same traversal, t: {:?}", m.m().dbg_ast(*t))
+        }
+    }
+
+    // iter_suffix traverses subterms before superterms
+    proptest! {
+        #[test]
+        fn prop_iter_suffix_subterms_first(ref tup in with_astgen(gen_term)) {
+            let (m,t) = tup;
+
+            let mut seen = FxHashSet::default();
+
+            let mut res = None; // for fast exit
+            m.m().iter_suffix(*t, &mut res, |r,_| r.is_some(), |r,u| {
+                // immediate subterms
+                let subs: Vec<_> = m.m().get().view(u).subterms().collect();
+                for &v in &subs {
+                    if ! seen.contains(&v) {
+                        *r = Some((*t, u, v));
+                    }
+                    if r.is_some() { break }
+                }
+                seen.insert(*t);
+            });
+
+            if let Some((t,u,v)) = res {
+                prop_assert!(false,
+                "traversing {:?}\nsubterm {:?}\nseen should contain {:?}\nseen: {:?}",
+                m.m().dbg_ast(t),
+                m.m().dbg_ast(u),
+                m.m().dbg_ast(v),
+                &seen);
+            }
+            prop_assert!(true)
         }
     }
 }
