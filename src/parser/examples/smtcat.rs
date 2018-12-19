@@ -1,7 +1,7 @@
 
 // A test binary that just parses smtlib and prints it
 
-extern crate env_logger;
+extern crate batsmt_logger;
 extern crate batsmt_parser;
 extern crate fxhash;
 #[macro_use] extern crate log;
@@ -12,7 +12,7 @@ use {
 };
 
 fn main() -> Result<(), Box<Error>> {
-    env_logger::init();
+    batsmt_logger::init();
 
     let mut b = simple_ast::Builder::new();
 

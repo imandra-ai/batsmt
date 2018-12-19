@@ -16,4 +16,4 @@ name = "smtcat"
 
 [dev-dependencies]
 
-env_logger = "0.5" # for the example
+batsmt-logger = {path = "../logger"} # for the example

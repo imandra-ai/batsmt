@@ -1,13 +1,13 @@
 
 // A test binary
 
-extern crate env_logger;
 extern crate batsmt_core;
 extern crate batsmt_cc;
 extern crate batsmt_parser;
 extern crate batsmt_pretty;
 extern crate batsmt_tseitin;
 extern crate batsmt_solver;
+extern crate batsmt_logger;
 extern crate fxhash;
 #[macro_use] extern crate log;
 
@@ -25,7 +25,7 @@ use {
 };
 
 fn main() -> Result<(), Box<Error>> {
-    env_logger::init();
+    batsmt_logger::init();
 
     let m : ast::Manager<StrSymbol> = ast::Manager::new();
 

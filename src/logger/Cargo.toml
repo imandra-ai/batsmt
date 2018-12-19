@@ -1,0 +1,10 @@
+[package]
+
+name = "batsmt-logger"
+version = "0.1.0"
+authors = ["Simon Cruanes <simon.cruanes.2007@m4x.org>"]
+edition = "2018"
+
+[dependencies]
+
+log = {version = "^0.4", features = ["std"] }
