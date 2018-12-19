@@ -9,23 +9,23 @@ use {
     },
     fxhash::{FxHashMap,FxHashSet},
     batsmt_core::{AST,ast,ast::View,Symbol,backtrack},
-    crate::{*,types::BLit},
+    crate::{*,types::BoolLit},
 };
 
 type M<S> = ast::Manager<S>;
 
 #[derive(Clone,Copy)]
-enum Op {
-    Merge(AST,AST,BLit),
+enum Op<B> {
+    Merge(AST,AST,B),
 }
 
 /// A naive implementation of the congruence closure
-pub struct NaiveCC<S:Symbol>{
+pub struct NaiveCC<S:Symbol,B>{
     m: ast::Manager<S>, // the AST manager
     b: Builtins, // builtin terms
-    props: PropagationSet,
-    confl: Vec<BLit>,
-    ops: backtrack::Stack<Op>, // just keep the set of operations to do here
+    props: PropagationSet<B>,
+    confl: Vec<B>,
+    ops: backtrack::Stack<Op<B>>, // just keep the set of operations to do here
     m_s: PhantomData<S>,
 }
 
@@ -37,10 +37,10 @@ struct Repr(AST);
 //
 // It returns highly-non-minimal conflicts, that basically involve all
 // literals used so far.
-struct Solve<'a, S:Symbol> {
-    _props: &'a mut PropagationSet,
-    confl: &'a mut Vec<BLit>,
-    all_lits: FxHashSet<BLit>, // all literals used in ops so far
+struct Solve<'a, S:Symbol, B> {
+    _props: &'a mut PropagationSet<B>,
+    confl: &'a mut Vec<B>,
+    all_lits: FxHashSet<B>, // all literals used in ops so far
     m_s: PhantomData<S>,
     m: ast::Manager<S>, // the AST manager
     b: Builtins, // builtin terms
@@ -55,16 +55,16 @@ enum Task {
     Merge(AST,AST), // merge the two classes
 }
 
-impl<S:Symbol> CCInterface for NaiveCC<S> {
-    fn merge(&mut self, t1: AST, t2: AST, lit: BLit) {
+impl<S:Symbol,B:BoolLit> CCInterface<B> for NaiveCC<S,B> {
+    fn merge(&mut self, t1: AST, t2: AST, lit: B) {
         self.ops.push(Op::Merge(t1,t2,lit))
     }
 
-    fn distinct(&mut self, _ts: &[AST], _lit: BLit) {
+    fn distinct(&mut self, _ts: &[AST], _lit: B) {
         unimplemented!("no handling of `distinct` in naiveCC")
     }
 
-    fn final_check(&mut self) -> Result<&PropagationSet, Conflict> {
+    fn final_check(&mut self) -> Result<&PropagationSet<B>, Conflict<B>> {
         debug!("cc.check()");
         // create local solver
         self.props.clear();
@@ -87,7 +87,7 @@ impl<S:Symbol> CCInterface for NaiveCC<S> {
     fn impl_descr(&self) -> &'static str { "naive congruence closure"}
 }
 
-impl<S:Symbol> NaiveCC<S> {
+impl<S:Symbol,B:BoolLit> NaiveCC<S,B> {
     /// Create a new congruence closure using the given `Manager`
     pub fn new(m: &ast::Manager<S>, b: Builtins) -> Self {
         NaiveCC {
@@ -101,7 +101,7 @@ impl<S:Symbol> NaiveCC<S> {
 }
 
 // just backtrack the set of operations we'll have to perform
-impl<S:Symbol> backtrack::Backtrackable for NaiveCC<S> {
+impl<S:Symbol,B> backtrack::Backtrackable for NaiveCC<S,B> {
     fn push_level(&mut self) { self.ops.push_level() }
     fn n_levels(&self) -> usize { self.ops.n_levels() }
     fn pop_levels(&mut self, n: usize) {
@@ -110,10 +110,10 @@ impl<S:Symbol> backtrack::Backtrackable for NaiveCC<S> {
 }
 
 // main algorithm
-impl<'a, S:Symbol> Solve<'a, S> {
+impl<'a, S:Symbol, B:BoolLit> Solve<'a, S, B> {
     fn new(m: &'a M<S>, b: Builtins,
-           props: &'a mut PropagationSet,
-           confl: &'a mut Vec<BLit>) -> Self
+           props: &'a mut PropagationSet<B>,
+           confl: &'a mut Vec<B>) -> Self
     {
         let mut s = Solve {
             m: m.clone(), b: b.clone(),
@@ -132,7 +132,7 @@ impl<'a, S:Symbol> Solve<'a, S> {
     }
 
     /// entry point
-    pub(super) fn check_internal(&mut self, ops: &[Op]) -> bool {
+    pub(super) fn check_internal(&mut self, ops: &[Op<B>]) -> bool {
         trace!("naive-cc.check (ops: {:?})", ops);
         for &op in ops.iter() {
             let ok = self.perform_op(op);
@@ -148,7 +148,7 @@ impl<'a, S:Symbol> Solve<'a, S> {
 
 
     // perform one operation to change the CC
-    fn perform_op(&mut self, op: Op) -> bool {
+    fn perform_op(&mut self, op: Op<B>) -> bool {
         match op {
             Op::Merge(a,b,lit) => {
                 // add terms, then merge
@@ -170,7 +170,7 @@ impl<'a, S:Symbol> Solve<'a, S> {
         }
     }
 
-    fn merge(&mut self, a: AST, b: AST, lit: BLit) -> bool {
+    fn merge(&mut self, a: AST, b: AST, lit: B) -> bool {
         self.add_term(a);
         self.add_term(b);
 
@@ -355,7 +355,7 @@ impl<'a, S:Symbol> Solve<'a, S> {
     }
 }
 
-impl fmt::Debug for Op {
+impl<B:BoolLit> fmt::Debug for Op<B> {
     fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Op::Merge(a,b,lit) => write!(out, "merge({:?},{:?},{:?})",a,b,lit),

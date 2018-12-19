@@ -5,6 +5,7 @@ extern crate batsmt_cc;
 mod cc {
     use batsmt_core::{ast,StrSymbol};
     use batsmt_cc::*;
+    use batsmt_theory::IntLit;
 
     type M = ast::Manager<StrSymbol>;
 
@@ -21,7 +22,9 @@ mod cc {
     #[test]
     fn test_new() {
         let m : ast::Manager<StrSymbol> = ast::Manager::new();
-        let mut cc = CC::new(&m, b(&m));
+        let mut cc: CC<_,IntLit> = CC::new(&m, b(&m));
+
+        // TODO: actual tests, using proptest, comparing to naivecc
 
         // access m
         m.mk_str("f");

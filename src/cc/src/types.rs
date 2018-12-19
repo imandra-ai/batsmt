@@ -2,11 +2,9 @@
 use {
     smallvec::SmallVec,
     batsmt_core::{AST,backtrack},
-    batsmt_solver::theory,
 };
 
-/// Boolean literal
-pub type BLit = theory::BLit;
+pub use batsmt_theory::BoolLit;
 
 /// a small vector of `T`
 pub type SVec<T> = SmallVec<[T; 3]>;
@@ -24,41 +22,41 @@ pub struct Builtins {
 ///
 /// Note that `guard` literals should all be true in current trail.
 #[derive(Clone,Copy)]
-pub struct Propagation<'a> {
-    pub concl: BLit,
-    pub guard: &'a [BLit],
+pub struct Propagation<'a,B:BoolLit> {
+    pub concl: B,
+    pub guard: &'a [B],
 }
 
 // A propagation is represented by a pair `(idx,len)` in `self.offsets`.
 // The conclusion is `self.lits[idx]` and the guard is `self.lits[idx+1 .. idx+1+len]`
 /// Set of Propagations
 #[derive(Clone)]
-pub struct PropagationSet {
-    lits: Vec<BLit>,
-    offsets: Vec<(usize, usize)>, 
+pub struct PropagationSet<B> {
+    lits: Vec<B>,
+    offsets: Vec<(usize, usize)>,
 }
 
 /// A conflict is a set of literals that forms a clause.
 #[derive(Clone,Copy)]
-pub struct Conflict<'a>(pub &'a [BLit]);
+pub struct Conflict<'a,B>(pub &'a [B]);
 
 /// Interface satisfied by implementations of the congruence closure.
-pub trait CCInterface : backtrack::Backtrackable {
+pub trait CCInterface<B:BoolLit> : backtrack::Backtrackable {
     /// `cc.merge(t1,t2,lit)` merges `t1` and `t2` with explanation `lit`.
-    fn merge(&mut self, t1: AST, t2: AST, lit: BLit);
+    fn merge(&mut self, t1: AST, t2: AST, lit: B);
 
     /// `cc.distinct(terms,lit)` asserts that all elements of `terms` are disjoint
-    fn distinct(&mut self, ts: &[AST], lit: BLit);
+    fn distinct(&mut self, ts: &[AST], lit: B);
 
     /// Check if the set of `merge` and `distinct` seen so far is consistent.
     ///
     /// Returns `Ok(props)` if the result is safisfiable with propagations `props`,
     /// and `Err(c)` if `c` is a valid conflict clause that contradicts
     /// the current trail.
-    fn final_check(&mut self) -> Result<&PropagationSet, Conflict>;
+    fn final_check(&mut self) -> Result<&PropagationSet<B>, Conflict<B>>;
 
     /// Same as `final_check` but can return `None` if it didn't do anything.
-    fn partial_check(&mut self) -> Option<Result<&PropagationSet, Conflict>> { None }
+    fn partial_check(&mut self) -> Option<Result<&PropagationSet<B>, Conflict<B>>> { None }
 
     /// Can it handle partial checks?
     fn has_partial_check() -> bool { false }
@@ -71,9 +69,9 @@ mod propagation {
     use super::*;
 
     // iterator
-    struct PropIter<'a>(&'a PropagationSet, usize);
+    struct PropIter<'a,B:BoolLit>(&'a PropagationSet<B>, usize);
 
-    impl PropagationSet {
+    impl<B:BoolLit> PropagationSet<B> {
         /// New propagation set.
         pub fn new() -> Self {
             PropagationSet { lits: vec!(), offsets: vec!(), }
@@ -89,7 +87,7 @@ mod propagation {
         }
 
         /// Add a propagation to the set.
-        pub fn add_propagation(&mut self, p: Propagation) {
+        pub fn add_propagation(&mut self, p: Propagation<B>) {
             let idx = self.lits.len();
             self.lits.push(p.concl);
             self.lits.extend_from_slice(p.guard);
@@ -97,13 +95,13 @@ mod propagation {
         }
 
         /// Iterate over propagations in this set.
-        pub fn iter<'a>(&'a self) -> impl Iterator<Item=Propagation<'a>> {
+        pub fn iter<'a>(&'a self) -> impl Iterator<Item=Propagation<'a,B>> {
             PropIter(&self, 0)
         }
     }
 
-    impl<'a> Iterator for PropIter<'a> {
-        type Item = Propagation<'a>;
+    impl<'a,B:BoolLit> Iterator for PropIter<'a,B> {
+        type Item = Propagation<'a,B>;
 
         fn next(&mut self) -> Option<Self::Item> {
             if self.1 >= self.0.offsets.len() {

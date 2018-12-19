@@ -32,7 +32,7 @@ version = "0.1.0"
 dependencies = [
  "batsmt-core 0.1.0",
  "batsmt-pretty 0.1.0",
- "batsmt-solver 0.1.0",
+ "batsmt-theory 0.1.0",
  "fxhash 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "smallvec 0.6.7 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -89,6 +89,16 @@ dependencies = [
  "batsat 0.2.0 (git+https://github.com/c-cube/batsat)",
  "batsmt-core 0.1.0",
  "batsmt-pretty 0.1.0",
+ "batsmt-theory 0.1.0",
+ "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "batsmt-theory"
+version = "0.1.0"
+dependencies = [
+ "batsmt-core 0.1.0",
+ "batsmt-pretty 0.1.0",
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "smallvec 0.6.7 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -99,6 +109,7 @@ version = "0.1.0"
 dependencies = [
  "batsmt-core 0.1.0",
  "batsmt-solver 0.1.0",
+ "batsmt-theory 0.1.0",
 ]
 
 [[package]]

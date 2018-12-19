@@ -6,7 +6,8 @@ use {
         symbol::Symbol, ast::{self,AST,View},
         util::{Shared,SharedRef,SharedRefMut},
     },
-    batsat::{Lit as BLit, Var as BVar, LMap},
+    batsat::{Var as BVar, LMap},
+    crate::blit::BLit,
 };
 
 /// Builtin symbols required for this basic interface
@@ -75,8 +76,8 @@ impl<S:Symbol> LitMap<S> {
     /// Map the given literal into a signed term
     pub fn map_lit(&self, lit: BLit) -> Option<(AST, bool)> {
         let r = self.get();
-        if r.lit_to_term.has(lit) {
-            let pair = r.lit_to_term[lit];
+        if r.lit_to_term.has(lit.0) {
+            let pair = r.lit_to_term[lit.0];
             // is it a real value?
             if pair.0 == AST::SENTINEL { None } else { Some(pair) }
         } else {
@@ -138,7 +139,7 @@ impl<S:Symbol> LitMapCell<S> {
         let lit =
             self.term_to_lit.get(&t).map(|lit| *lit)
             .unwrap_or_else(|| {
-                let lit = BLit::new(f(), true);
+                let lit = BLit::from_var(f(), true);
                 // remember mapping
                 self.add_term_normalized(t, lit, bidir);
                 lit
@@ -162,8 +163,8 @@ impl<S:Symbol> LitMapCell<S> {
         debug_assert!(! self.term_to_lit.contains_key(&t));
         if bidir {
             let pad = (AST::SENTINEL, true); // used to fill the map
-            self.lit_to_term.insert(lit, (t, true), pad);
-            self.lit_to_term.insert(! lit, (t, false), pad);
+            self.lit_to_term.insert(lit.0, (t, true), pad);
+            self.lit_to_term.insert(! lit.0, (t, false), pad);
         }
         self.term_to_lit.insert(t, lit);
     }

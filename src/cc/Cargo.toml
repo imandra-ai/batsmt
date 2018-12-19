@@ -8,13 +8,13 @@ edition = "2018"
 
 batsmt-core = { path="../core" }
 batsmt-pretty = { path="../pretty" }
-batsmt-solver = { path="../solver" }
+batsmt-theory = { path="../theory" }
 smallvec = "^0.6"
 fxhash = "^0.2"
 log = "0.4"
 
 [features]
 
-default = []
-#default = ["naive"]
+#default = []
+default = ["naive"]
 naive = []

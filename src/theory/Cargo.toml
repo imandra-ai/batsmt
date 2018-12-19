@@ -1,5 +1,5 @@
 [package]
-name = "batsmt-solver"
+name = "batsmt-theory"
 version = "0.1.0"
 authors = ["Simon Cruanes <simon.cruanes.2007@m4x.org>"]
 edition = "2018"
@@ -8,6 +8,6 @@ edition = "2018"
 
 batsmt-core = { path = "../core" }
 batsmt-pretty = { path = "../pretty" }
-batsmt-theory = { path = "../theory" }
-batsat = { git="https://github.com/c-cube/batsat", version = "^0.2", features=["logging"] }
+smallvec = "0.6"
 log = "0.4"
+

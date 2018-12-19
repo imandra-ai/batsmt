@@ -16,54 +16,47 @@ use {
     },
     batsmt_core::{ast::{self,AST},Symbol,backtrack},
     fxhash::FxHashMap,
-    crate::{types::BLit,PropagationSet,Conflict,Builtins,CCInterface,SVec},
+    crate::{types::BoolLit,PropagationSet,Conflict,Builtins,CCInterface,SVec},
 };
 
 type M<S> = ast::Manager<S>;
 
 /// The congruence closure
-pub struct CC<S:Symbol> {
+pub struct CC<S:Symbol,B:BoolLit> {
     m: ast::Manager<S>, // the AST manager
-    props: PropagationSet,
-    confl: Vec<BLit>, // tmp for conflict
+    props: PropagationSet<B>,
+    confl: Vec<B>, // tmp for conflict
     m_s: PhantomData<S>,
-    cc0: CC0<S>,
+    cc0: CC0<S,B>,
 }
 
 /// internal state of the congruence closure
-struct CC0<S:Symbol> {
+struct CC0<S:Symbol,B:BoolLit> {
     b: Builtins,
     m: ast::Manager<S>, // the AST manager
-    tasks: VecDeque<Task>, // operations to perform
+    tasks: VecDeque<Task<B>>, // operations to perform
     undo: backtrack::Stack<UndoOp>,
     tmp_parents: ParentList,
     traverse: ast::iter_suffix::State<S>, // for recursive traversal
-    cc1: CC1<S>,
+    cc1: CC1<S,B>,
 }
 
 /// internal state
-struct CC1<S:Symbol> {
+struct CC1<S:Symbol,B:BoolLit> {
     m: ast::Manager<S>, // the AST manager
     ok: bool, // no conflict?
-    nodes: ast::DenseMap<Node>,
-    expl: ast::DenseMap<(AST, Expl)>, // proof forest
+    nodes: ast::DenseMap<Node<B>>,
+    expl: ast::DenseMap<(AST, Expl<B>)>, // proof forest
     parents: FxHashMap<Repr, ParentList>, // parents of the given class
-}
-
-// For traversals
-#[derive(Clone)]
-enum Explore<T> {
-    Enter(T),
-    Exit(T),
 }
 
 /// One node in the congruence closure's E-graph
 #[derive(Debug,Clone)]
-struct Node {
+struct Node<B:BoolLit> {
     id: NodeID,
     cls_next: NodeID,
     cls_prev: NodeID,
-    expl: Option<(NodeID, Expl)>, // proof forest
+    expl: Option<(NodeID, Expl<B>)>, // proof forest
     root: Repr, // current representative (initially, itself)
 }
 
@@ -85,8 +78,8 @@ type Merges = SVec<Merge>;
 
 /// An explanation for a merge
 #[derive(Clone)]
-enum Expl {
-    Lit(BLit),
+enum Expl<B> {
+    Lit(B),
     Merges(Merges), // congruence, injectivity, etc.
 }
 
@@ -103,15 +96,15 @@ enum UndoOp {
 }
 
 /// Operation to perform in the main fixpoint
-enum Task {
+enum Task<B> {
     AddTerm(AST),
-    Merge(AST, AST, Expl),
-    Distinct(SVec<AST>, Expl),
+    Merge(AST, AST, Expl<B>),
+    Distinct(SVec<AST>, Expl<B>),
 }
 
 // implement main interface
-impl<S:Symbol> CCInterface for CC<S> {
-    fn merge(&mut self, t1: AST, t2: AST, lit: BLit) {
+impl<S:Symbol, B:BoolLit> CCInterface<B> for CC<S,B> {
+    fn merge(&mut self, t1: AST, t2: AST, lit: B) {
         let expl = Expl::Lit(lit);
         let tasks = &mut self.cc0.tasks;
         tasks.push_back(Task::AddTerm(t1));
@@ -119,19 +112,19 @@ impl<S:Symbol> CCInterface for CC<S> {
         tasks.push_back(Task::Merge(t1,t2,expl))
     }
 
-    fn distinct(&mut self, ts: &[AST], lit: BLit) {
+    fn distinct(&mut self, ts: &[AST], lit: B) {
         let mut v = SVec::with_capacity(ts.len());
         v.extend_from_slice(ts);
         let expl = Expl::Lit(lit);
         self.cc0.tasks.push_back(Task::Distinct(v,expl))
     }
 
-    fn final_check(&mut self) -> Result<&PropagationSet, Conflict> {
+    fn final_check(&mut self) -> Result<&PropagationSet<B>, Conflict<B>> {
         debug!("cc.final-check()");
         self.check_internal()
     }
 
-    fn partial_check(&mut self) -> Option<Result<&PropagationSet, Conflict>> {
+    fn partial_check(&mut self) -> Option<Result<&PropagationSet<B>, Conflict<B>>> {
         debug!("cc.partial-check()");
         Some(self.check_internal())
     }
@@ -146,7 +139,7 @@ mod cc {
     use super::*;
 
     // main API
-    impl<S> CC<S> where S: Symbol {
+    impl<S, B:BoolLit> CC<S, B> where S: Symbol {
         /// Create a new congruence closure using the given `Manager`
         pub fn new(m: &ast::Manager<S>, b: Builtins) -> Self {
             CC {
@@ -159,9 +152,9 @@ mod cc {
         }
     }
 
-    impl<S:Symbol> CC<S> {
+    impl<S:Symbol, B: BoolLit> CC<S, B> {
         // main `check` function, performs the fixpoint
-        pub(super) fn check_internal(&mut self) -> Result<&PropagationSet, Conflict> {
+        pub(super) fn check_internal(&mut self) -> Result<&PropagationSet<B>, Conflict<B>> {
             debug!("check-internal ({} tasks)", self.cc0.tasks.len());
             while let Some(task) = self.cc0.tasks.pop_front() {
                 if ! self.cc0.cc1.ok { break }
@@ -181,7 +174,7 @@ mod cc {
         }
     }
 
-    impl<S:Symbol> CC0<S> {
+    impl<S:Symbol, B: BoolLit> CC0<S,B> {
         /// Create a core congruence closure
         fn new(m: &M<S>, b: Builtins) -> Self {
             CC0{
@@ -235,7 +228,7 @@ mod cc {
         }
 
         // merge `a` and `b`, if they're not already equal
-        fn merge(&mut self, a: AST, b: AST, expl: Expl) {
+        fn merge(&mut self, a: AST, b: AST, expl: Expl<B>) {
             debug_assert!(self.cc1.contains_ast(a));
             debug_assert!(self.cc1.contains_ast(b));
 
@@ -281,12 +274,12 @@ mod cc {
         }
     }
 
-    impl<S:Symbol> CC1<S> {
+    impl<S:Symbol, B:BoolLit> CC1<S,B> {
         fn new(m: &M<S>) -> Self {
             CC1 {
                 m: m.clone(),
-                nodes: ast::DenseMap::new(node::SENTINEL),
-                expl: ast::DenseMap::new((AST::SENTINEL, expl::SENTINEL)),
+                nodes: ast::DenseMap::new(node::sentinel()),
+                expl: ast::DenseMap::new((AST::SENTINEL, expl::sentinel())),
                 parents: FxHashMap::default(),
                 ok: true,
             }
@@ -353,7 +346,7 @@ mod cc {
 
         /// Call `f` with a mutable ref on all nodes of the class of `r`
         fn iter_class<F>(&mut self, r: Repr, mut f: F)
-            where F: for<'b> FnMut(&'b mut Node)
+            where F: for<'b> FnMut(&'b mut Node<B>)
         {
             let mut t = r.0;
             loop {
@@ -394,22 +387,22 @@ mod cc {
         }
     }
 
-    impl<S:Symbol> std::ops::Index<NodeID> for CC1<S> {
-        type Output = Node;
+    impl<S:Symbol,B:BoolLit> std::ops::Index<NodeID> for CC1<S,B> {
+        type Output = Node<B>;
         #[inline(always)]
         fn index(&self, id: NodeID) -> &Self::Output {
             self.nodes.get(id.0).unwrap()
         }
     }
 
-    impl<S:Symbol> std::ops::IndexMut<NodeID> for CC1<S> {
+    impl<S:Symbol,B:BoolLit> std::ops::IndexMut<NodeID> for CC1<S,B> {
         #[inline(always)]
         fn index_mut(&mut self, id: NodeID) -> &mut Self::Output {
             self.nodes.get_mut(id.0).unwrap()
         }
     }
 
-    impl<S: Symbol> backtrack::Backtrackable for CC<S> {
+    impl<S: Symbol,B:BoolLit> backtrack::Backtrackable for CC<S,B> {
         fn push_level(&mut self) {
             self.cc0.undo.push_level();
         }
@@ -453,21 +446,20 @@ mod node {
     use super::*;
 
     /// The default `node` object
-    pub(super) const SENTINEL : Node = Node::new(NodeID::SENTINEL);
+    pub(super) fn sentinel<B:BoolLit>() -> Node<B> { Node::new(NodeID::SENTINEL) }
 
-    impl Eq for Node {}
-    impl PartialEq for Node {
-        fn eq(&self, other: &Node) -> bool { self.id == other.id }
+    impl<B:BoolLit> Eq for Node<B> {}
+    impl<B:BoolLit> PartialEq for Node<B> {
+        fn eq(&self, other: &Node<B>) -> bool { self.id == other.id }
     }
 
     impl From<AST> for NodeID {
         fn from(a: AST) -> Self { NodeID(a) }
     }
 
-    impl Node {
-
+    impl<B:BoolLit> Node<B> {
         /// Create a new node
-        pub const fn new(id: NodeID) -> Self {
+        pub fn new(id: NodeID) -> Self {
             Node {
                 id, cls_prev: id, cls_next: id, expl: None,
                 root: Repr(id),
@@ -490,14 +482,14 @@ mod expl {
     use super::*;
 
     /// Sentinel explanation, do not use except for filling arrays
-    pub(super) const SENTINEL : Expl = Expl::Lit(BLit::UNDEF);
+    pub(super) fn sentinel<B>() -> Expl<B> { Expl::Merges(SVec::new()) }
 
-    impl Expl {
-        fn lit(x: BLit) -> Self { Expl::Lit(x) }
+    impl<B> Expl<B> {
+        fn lit(x: B) -> Self { Expl::Lit(x) }
         fn merges(v: Merges) -> Self { Expl::Merges(v) }
     }
 
-    impl Debug for Expl {
+    impl<B:BoolLit> Debug for Expl<B> {
         fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result {
             match self {
                 Expl::Lit(lit) => {

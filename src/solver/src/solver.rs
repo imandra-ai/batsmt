@@ -8,6 +8,10 @@ use {
         theory::CheckRes,
     },
     batsmt_pretty as pp,
+    batsmt_theory::{
+        Theory,TheoryLit,TheoryClause,
+        TheoryClauseRef,Actions,ActState,Trail,
+    },
     batsmt_core::{
         ast::{self,AST},
         symbol::Symbol,
@@ -15,15 +19,11 @@ use {
     },
     crate::{
         lit_map::{LitMap},
-        theory::{Theory,TheoryLit,TheoryClause,TheoryClauseRef,Actions,ActState,Trail},
     },
 };
 
-/// A boolean literal
-pub use batsat::Lit as BLit;
-
-/// A boolean variable
-pub use batsat::Var as BVar;
+///A boolean literal
+pub use crate::blit::BLit;
 
 #[derive(Copy,Clone,Debug)]
 pub struct Builtins {
@@ -35,18 +35,18 @@ pub struct Builtins {
 
 /// used to build SAT clauses efficiently
 struct BClauseBuild<'a,S:Symbol,F:FnMut() -> sat::Var> {
-    lits: &'a mut Vec<BLit>,
+    lits: &'a mut Vec<sat::Lit>,
     lit_map: &'a mut LitMap<S>,
     f: F,
 }
 
 /// The theory given to the SAT solver
-struct CoreTheory<S:Symbol, Th: Theory<S>> {
+struct CoreTheory<S:Symbol, Th: Theory<S,BLit>> {
     m: ast::Manager<S>,
     th: Th,
     lit_map: LitMap<S>,
-    acts: Actions,
-    lits: Vec<BLit>,
+    acts: Actions<BLit>,
+    lits: Vec<sat::Lit>,
     trail_offset: backtrack::Ref<usize>, // current offset in the trail for the theory
     th_trail: Vec<(AST,bool,BLit)>, // temporary for trail slices
 }
@@ -55,13 +55,13 @@ struct CoreTheory<S:Symbol, Th: Theory<S>> {
 ///
 /// It is parametrized over the concrete type of symbols, and
 /// a theory to interpret boolean terms.
-pub struct Solver<S:Symbol, Th: Theory<S>> {
+pub struct Solver<S:Symbol, Th: Theory<S, BLit>> {
     s0: Solver0<S,Th>,
     m: ast::Manager<S>,
-    lits: Vec<BLit>, // temporary for clause
+    lits: Vec<sat::Lit>, // temporary for clause
 }
 
-struct Solver0<S:Symbol, Th: Theory<S>> {
+struct Solver0<S:Symbol, Th: Theory<S, BLit>> {
     sat: batsat::Solver<solver::Cb, CoreTheory<S, Th>>,
     lit_map: LitMap<S>,
 }
@@ -77,7 +77,7 @@ mod solver {
     use super::*;
     use batsat::SolverInterface;
 
-    impl<S:Symbol, Th: Theory<S>> Solver<S,Th> {
+    impl<S:Symbol, Th: Theory<S, BLit>> Solver<S,Th> {
         /// New Solver, using the given theory `th` and AST manager
         pub fn new(m: &ast::Manager<S>, b: Builtins, th: Th) -> Self {
             let lit_map = LitMap::new(m, b.into());
@@ -115,13 +115,13 @@ mod solver {
         pub fn lit_map(&self) -> & LitMap<S> { & self.s0.lit_map }
 
         /// Add a boolean clause
-        pub fn add_bool_clause_reuse(&mut self, c: &mut Vec<BLit>) {
+        pub fn add_bool_clause_reuse(&mut self, c: &mut Vec<sat::Lit>) {
             trace!("solver.add-bool-clause {:?}", c);
             self.s0.sat.add_clause_reuse(c);
         }
 
         /// Add a clause made from signed terms
-        pub fn add_clause_slice(&mut self, c: TheoryClauseRef) {
+        pub fn add_clause_slice(&mut self, c: TheoryClauseRef<BLit>) {
             trace!("solver.add-clause\n{}", self.m.display(c));
             // use `self.lits` as temporary storage
             self.lits.clear();
@@ -130,18 +130,18 @@ mod solver {
                 c.iter()
                 .map(|lit| {
                     let lit = s0.get_or_create_lit(lit);
-                    lit
+                    lit.0
                 }));
             self.s0.sat.add_clause_reuse(&mut self.lits);
         }
 
         /// Add a clause made from signed terms
-        pub fn add_clause(&mut self, c: &TheoryClause) {
+        pub fn add_clause(&mut self, c: &TheoryClause<BLit>) {
             self.add_clause_slice(c.as_ref())
         }
 
         /// Solve the set of constraints added with `add_clause` until now
-        pub fn solve_with(&mut self, assumptions: &[BLit]) -> Res {
+        pub fn solve_with(&mut self, assumptions: &[sat::Lit]) -> Res {
             info!("solver.sat.solve ({} assumptions)", assumptions.len());
             trace!("assumptions: {:?}", assumptions);
             let sat = &mut self.s0.sat;
@@ -164,7 +164,7 @@ mod solver {
         }
     }
 
-    impl<S:Symbol, Th: Theory<S>> CoreTheory<S, Th> {
+    impl<S:Symbol, Th: Theory<S, BLit>> CoreTheory<S, Th> {
         #[inline(always)]
         fn map_lit(&self, lit: BLit) -> Option<(AST, bool)> {
             self.lit_map.map_lit(lit)
@@ -188,6 +188,7 @@ mod solver {
 
             self.th_trail.clear();
             for &lit in model.iter() {
+                let lit = BLit::new(lit);
                 if let Some((t,sign)) = self.map_lit(lit) {
                     self.th_trail.push((t,sign,lit));
                 }
@@ -207,14 +208,14 @@ mod solver {
             self.acts.clear(); // reset
             if partial {
                 let did_sth =
-                    self.th.partial_check(&mut self.acts, &Trail(&self.th_trail));
+                    self.th.partial_check(&mut self.acts, &Trail::from_slice(&self.th_trail));
 
                 // update which section of the trail we've checked so far
                 if did_sth {
                     *self.trail_offset = a.model().len();
                 }
             } else {
-                self.th.final_check(&mut self.acts, &Trail(&self.th_trail));
+                self.th.final_check(&mut self.acts, &Trail::from_slice(&self.th_trail));
             }
 
             // used to convert theory clauses into boolean clauses
@@ -247,7 +248,7 @@ mod solver {
     }
 
     // `CoreTheory` is a SAT theory
-    impl<S:Symbol, Th: Theory<S>> batsat::Theory for CoreTheory<S,Th> {
+    impl<S:Symbol, Th: Theory<S, BLit>> batsat::Theory for CoreTheory<S,Th> {
         fn create_level(&mut self) {
             self.trail_offset.push_level();
             self.th.push_level();
@@ -276,9 +277,9 @@ mod solver {
         }
     }
 
-    impl<S:Symbol, Th: Theory<S>> Solver0<S,Th> {
+    impl<S:Symbol, Th: Theory<S, BLit>> Solver0<S,Th> {
         // find or make a literal for `t`
-        fn get_or_create_lit(&mut self, l: TheoryLit) -> BLit {
+        fn get_or_create_lit(&mut self, l: TheoryLit<BLit>) -> BLit {
             match l {
                 TheoryLit::B(l) => l,
                 TheoryLit::BLazy(t,sign) => {
@@ -298,12 +299,12 @@ mod solver {
     }
 
     impl<'a, S:Symbol, F:FnMut()->sat::Var> BClauseBuild<'a,S,F> {
-        fn new(lits: &'a mut Vec<BLit>, lit_map: &'a mut LitMap<S>, f: F) -> Self {
+        fn new(lits: &'a mut Vec<sat::Lit>, lit_map: &'a mut LitMap<S>, f: F) -> Self {
             Self { lits, lit_map, f }
         }
 
         /// Convert a theory literal into a boolean literal
-        fn convert_th_lit(&mut self, lit: TheoryLit) -> BLit {
+        fn convert_th_lit(&mut self, lit: TheoryLit<BLit>) -> BLit {
             let f = &mut self.f;
             match lit {
                 TheoryLit::B(l) => l,
@@ -321,11 +322,11 @@ mod solver {
         /// Convert the given theory clause into an array of boolean literals.
         ///
         /// The result is stored in `lits`
-        fn convert_th_clause(&mut self, c: TheoryClauseRef) {
+        fn convert_th_clause(&mut self, c: TheoryClauseRef<BLit>) {
             self.lits.clear();
             for lit in c.iter() {
                 let lit = self.convert_th_lit(lit);
-                self.lits.push(lit);
+                self.lits.push(lit.0);
             }
         }
     }

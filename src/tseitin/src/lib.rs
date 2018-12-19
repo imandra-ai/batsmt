@@ -6,9 +6,9 @@ use {
         ast::{self,AST,View,iter_dag::State as AstIter},
         Symbol,
     },
+    batsmt_theory::{TheoryLit,TheoryClauseSet,TheoryClauseRef},
     batsmt_solver::{
-        theory::{TheoryLit,TheoryClauseSet,TheoryClauseRef},
-        lit_map::LitMap,
+        lit_map::LitMap, BLit,
     },
 };
 
@@ -20,10 +20,10 @@ pub struct Tseitin<S:Symbol> {
     m: M<S>, // manager
     b: Builtins,
     iter: AstIter<S>, // to traverse subterms
-    tmp: Vec<TheoryLit>, // temp clause
-    tmp2: Vec<TheoryLit>, // temp clause
+    tmp: Vec<TheoryLit<BLit>>, // temp clause
+    tmp2: Vec<TheoryLit<BLit>>, // temp clause
     lit_map: LitMap<S>,
-    cs: TheoryClauseSet, // clauses
+    cs: TheoryClauseSet<BLit>, // clauses
 }
 
 #[derive(Clone,Debug)]
@@ -47,7 +47,7 @@ struct LitMapB<'a, S:Symbol> {
 
 impl<'a, S:Symbol> LitMapB<'a,S> {
     /// Map `t,sign` to either a theory literal, or a lazy pure boolean literal
-    fn term_to_lit(&self, t: AST) -> TheoryLit {
+    fn term_to_lit(&self, t: AST) -> TheoryLit<BLit> {
         let (t,sign) = self.lit_map.unfold_not(t, true);
         let b = &self.b;
         match self.m.get().view(t) {
@@ -92,7 +92,7 @@ impl<S:Symbol> Tseitin<S> {
     /// The clauses define boolean connectives occurring inside `t`.
     /// ## params
     /// - `t` is the formula to normalize
-    pub fn clauses(&mut self, t: AST) -> impl Iterator<Item=TheoryClauseRef> {
+    pub fn clauses(&mut self, t: AST) -> impl Iterator<Item=TheoryClauseRef<BLit>> {
         self.cs.clear();
 
         {
