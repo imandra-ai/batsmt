@@ -80,7 +80,7 @@ impl<S:Symbol,B:BoolLit> CCTheory<S,B> {
 
             do_sth = true;
 
-            trace!("process-op {:?} (blit {:?})", self.m.pp(&op), lit);
+            trace!("process-op {} (expl {:?})", self.m.pp(&op), lit);
             match op {
                 Op::Eq(a,b) => {
                     self.cc.merge(a,b,lit)
@@ -141,6 +141,10 @@ impl<S:Symbol, B:BoolLit> theory::Theory<S,B> for CCTheory<S,B> {
 
     fn partial_check(&mut self, acts: &mut theory::Actions<B>, trail: &theory::Trail<B>) -> bool {
         self.check(true, acts, trail)
+    }
+
+    fn add_literal(&mut self, t: AST, lit: B) {
+        self.cc.add_literal(t,lit);
     }
 }
 

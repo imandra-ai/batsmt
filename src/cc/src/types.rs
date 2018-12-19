@@ -61,6 +61,13 @@ pub trait CCInterface<B:BoolLit> : backtrack::Backtrackable {
     /// Can it handle partial checks?
     fn has_partial_check() -> bool { false }
 
+    /// Add a binding term<=>literal to the congruence closure.
+    ///
+    /// This is typically called before solving, so as to add terms once
+    /// and for all, and so that the congruence closure can propagate
+    /// literals back to the SAT solver.
+    fn add_literal(&mut self, _t: AST, _lit: B) {}
+
     /// Description of this particular implementation
     fn impl_descr(&self) -> &'static str;
 }
