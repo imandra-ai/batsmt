@@ -33,7 +33,7 @@ impl<T> Stack<T> {
         self.levels.push(cur_size as u32);
     }
 
-    /// `stack.push(ctx,x)` pushes `x` onto the stack.
+    /// `stack.push(x)` pushes `x` onto the stack.
     ///
     /// `x` will be pop'd upon backtracking, and some function called on it.
     ///
@@ -43,6 +43,21 @@ impl<T> Stack<T> {
     #[inline(always)]
     pub fn push(&mut self, x: T) {
         self.st.push(x);
+    }
+
+    /// `stack.push_if_nonzero(x)` pushes `x` onto the stack.
+    ///
+    /// `x` will be pop'd upon backtracking, and some function called on it.
+    /// If there are no backtracking levels (ie `self.n_levels() == 0`)
+    /// then `x` is not pushed at all.
+    ///
+    /// In general, when one wants to perform some invertible action,
+    /// it can be done by performing the action and immediately after
+    /// pushing its undoing `T` onto this stack.
+    pub fn push_if_nonzero(&mut self, x: T) {
+        if self.levels.len() > 0 {
+            self.st.push(x)
+        }
     }
 
     /// Pop `n` backtracking levels, performing "undo" actions with `f`.
