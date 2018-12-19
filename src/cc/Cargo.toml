@@ -15,6 +15,6 @@ log = "0.4"
 
 [features]
 
-#default = []
-default = ["naive"]
+default = []
+#default = ["naive"]
 naive = []

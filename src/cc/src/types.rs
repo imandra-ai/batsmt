@@ -14,6 +14,7 @@ pub type SVec<T> = SmallVec<[T; 3]>;
 pub struct Builtins {
     pub true_: AST,
     pub false_: AST,
+    pub not_: AST,
     pub eq: AST,
     pub distinct: AST,
 }
@@ -99,6 +100,11 @@ mod propagation {
             self.lits.push(p.concl);
             self.lits.extend_from_slice(p.guard);
             self.offsets.push((idx, p.guard.len()));
+        }
+
+        pub fn propagate(&mut self, concl: B, guard: &[B]) {
+            let prop = Propagation {concl, guard};
+            self.add_propagation(prop)
         }
 
         /// Iterate over propagations in this set.

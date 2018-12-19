@@ -104,8 +104,8 @@ impl<S:Symbol,B:BoolLit> CCTheory<S,B> {
                 Ok(props) if props.len() == 0 => (), // trivial!
                 Ok(props) => {
                     for _c in props.iter() {
-                        unimplemented!("cannot do propagation yet");
-                        // TODO: convert into clause? OR directly add this to batsat?
+                        break;
+                        // TODO: pass to the Actions directly
                         // TODO: `acts` should take `add_propagation(TheoryList, I: Iterator…)`
                         //       and make a lemma out of it, or use better API
                         // acts.add_bool_lemma(c);

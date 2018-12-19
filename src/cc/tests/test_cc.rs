@@ -14,6 +14,7 @@ mod cc {
         Builtins {
             true_: m.mk_str("true"),
             false_: m.mk_str("false"),
+            not_: m.mk_str("not"),
             eq: m.mk_str("="),
             distinct: m.mk_str("distinct"),
         }

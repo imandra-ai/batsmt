@@ -80,8 +80,8 @@ mod ast_builder {
 
     impl Into<cc::Builtins> for Builtins {
         fn into(self) -> cc::Builtins {
-            let Builtins {true_, false_, eq, distinct, ..} = self;
-            cc::Builtins {true_,false_,eq,distinct}
+            let Builtins {true_, false_, eq, distinct, not_, ..} = self;
+            cc::Builtins {true_,false_,eq,distinct,not_}
         }
     }
 

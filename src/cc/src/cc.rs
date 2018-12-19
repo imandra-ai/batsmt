@@ -7,10 +7,14 @@
 // TODO: signatures
 // TODO: parametrize by "micro theories" (which just work on merges + expl)
 
+// micro theories:
+// - rule for `not` (t == true |- not t == false, and conversely)
+// - rule for `ite` (t == true |- not t == false, and conversely)
+
 use {
     std::{
         //ops::{Deref,DerefMut},
-        marker::PhantomData,
+        u32, marker::PhantomData,
         collections::VecDeque,
     },
     batsmt_core::{ast::{self,AST,View},Symbol,backtrack},
@@ -23,7 +27,6 @@ type M<S> = ast::Manager<S>;
 
 /// The congruence closure
 pub struct CC<S:Symbol,B:BoolLit> {
-    props: PropagationSet<B>,
     m_s: PhantomData<S>,
     cc0: CC0<S,B>,
 }
@@ -36,8 +39,11 @@ struct CC0<S:Symbol,B:BoolLit> {
     undo: backtrack::Stack<UndoOp>,
     tmp_parents: ParentList,
     confl: Vec<B>, // local for conflict
+    props: PropagationSet<B>, // local for propagations
     traverse: ast::iter_suffix::State<S>, // for recursive traversal
     expl_st: Vec<Expl<B>>, // to expand explanations
+    tmp_sig: Signature, // for computing signatures
+    sig_tbl: backtrack::HashMap<Signature, AST>,
     cc1: CC1<S,B>,
 }
 
@@ -49,12 +55,20 @@ struct CC1<S:Symbol,B:BoolLit> {
     parents: FxHashMap<Repr, ParentList>, // parents of the given class
 }
 
-/// One node in the congruence closure's E-graph
+/// One node in the congruence closure's E-graph.
+///
+/// It contains:
+/// - the term itself
+/// - a direct pointer to the class' root
+/// - double-linked list pointers for iterating the class, along with the class' size
+/// - the proof forest pointer
+/// - an optional mapping from the term to a boolean literal (for propagation)
 #[derive(Clone)]
 struct Node<B:BoolLit> {
     id: NodeID,
-    cls_next: NodeID,
-    cls_prev: NodeID,
+    next: NodeID, // next elt in class
+    prev: NodeID, // previous elt in class
+    size: u32, // number of elements in class
     expl: Option<(NodeID, Expl<B>)>, // proof forest
     as_lit: Option<B>, // if this term corresponds to a boolean literal
     root: Repr, // current representative (initially, itself)
@@ -72,14 +86,12 @@ type NodeID = AST;
 #[derive(Debug,Clone,Copy,Eq,PartialEq,Hash,Ord,PartialOrd)]
 struct Repr(NodeID);
 
-type Merge = (Repr,Repr);
-type Merges = SVec<Merge>;
-
 /// An explanation for a merge
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 enum Expl<B> {
-    Lit(B),
-    Merges(Merges), // congruence, injectivity, etc.
+    Lit(B), // because literal was asserted
+    Congruence(AST,AST), // because terms are congruent
+    AreEq(AST,AST), // because terms are equal
 }
 
 /// Undo operations on the congruence closure
@@ -91,11 +103,11 @@ enum UndoOp {
     Unmerge {
         a: Repr, // the new repr
         b: Repr, // merged into `a`
-        a_len_parents: usize, // old length of `a.parents`
     }, // unmerge these two reprs
 }
 
 /// Operation to perform in the main fixpoint
+#[derive(Debug)]
 enum Task<B> {
     AddTerm(AST), // add term if not present
     MapToLit(AST,B), // map term to lit
@@ -104,14 +116,20 @@ enum Task<B> {
     Distinct(SVec<AST>, Expl<B>),
 }
 
+/// A signature for a term, obtained by replacing its subterms with their repr.
+///
+/// Signatures have the properties that if two terms are congruent,
+/// then their signatures are identical.
+#[derive(Eq,PartialEq,Hash,Clone,Debug)]
+struct Signature(SVec<Repr>);
+
 // implement main interface
 impl<S:Symbol, B:BoolLit> CCInterface<B> for CC<S,B> {
     fn merge(&mut self, t1: AST, t2: AST, lit: B) {
         let expl = Expl::Lit(lit);
-        let tasks = &mut self.cc0.tasks;
-        tasks.push_back(Task::AddTerm(t1));
-        tasks.push_back(Task::AddTerm(t2));
-        tasks.push_back(Task::Merge(t1,t2,expl))
+        self.cc0.tasks.push_back(Task::AddTerm(t1));
+        self.cc0.tasks.push_back(Task::AddTerm(t2));
+        self.cc0.tasks.push_back(Task::Merge(t1,t2,expl))
     }
 
     fn distinct(&mut self, ts: &[AST], lit: B) {
@@ -136,7 +154,8 @@ impl<S:Symbol, B:BoolLit> CCInterface<B> for CC<S,B> {
     fn has_partial_check() -> bool { false }
 
     fn add_literal(&mut self, t: AST, lit: B) {
-        self.cc0.tasks.push_back(Task::MapToLit(t, lit))
+        self.cc0.tasks.push_back(Task::AddTerm(t));
+        self.cc0.tasks.push_back(Task::MapToLit(t, lit));
     }
 
     fn impl_descr(&self) -> &'static str { "fast congruence closure"}
@@ -148,7 +167,6 @@ impl<S, B:BoolLit> CC<S, B> where S: Symbol {
     pub fn new(m: &ast::Manager<S>, b: Builtins) -> Self {
         CC {
             m_s: PhantomData::default(),
-            props: PropagationSet::new(),
             cc0: CC0::new(m, b),
         }
     }
@@ -160,6 +178,7 @@ impl<S:Symbol, B: BoolLit> CC<S, B> {
         debug!("check-internal ({} tasks)", self.cc0.tasks.len());
         while let Some(task) = self.cc0.tasks.pop_front() {
             if ! self.cc0.cc1.ok {
+                debug_assert!(self.cc0.confl.len() >= 1); // must have some conflict
                 return Err(Conflict(&self.cc0.confl))
             }
             match task {
@@ -172,7 +191,7 @@ impl<S:Symbol, B: BoolLit> CC<S, B> {
                 },
             }
         }
-        Ok(&self.props)
+        Ok(&self.cc0.props)
     }
 }
 
@@ -197,9 +216,12 @@ impl<S:Symbol, B: BoolLit> CC0<S,B> {
             b, m: m.clone(),
             tasks: VecDeque::new(),
             confl: vec!(),
+            props: PropagationSet::new(),
             undo: backtrack::Stack::new(),
             tmp_parents: ParentList::new(),
             traverse: ast::iter_suffix::State::new(m),
+            tmp_sig: Signature(SVec::new()),
+            sig_tbl: backtrack::HashMap::new(),
             expl_st: vec!(),
             cc1,
         }
@@ -248,7 +270,7 @@ impl<S:Symbol, B: BoolLit> CC0<S,B> {
                     parents.push(t);
                 }
                 // remove `t` before its children
-                undo.push(UndoOp::RemoveTerm(t));
+                undo.push_if_nonzero(UndoOp::RemoveTerm(t));
 
                 if needs_signature(m, t) {
                     tasks.push_back(Task::UpdateSig(t));
@@ -266,7 +288,7 @@ impl<S:Symbol, B: BoolLit> CC0<S,B> {
         if n.as_lit.is_none() {
             debug!("map term {} to literal {:?}", self.m.pp(t), lit);
             n.as_lit = Some(lit);
-            self.undo.push(UndoOp::UnmapLit(t));
+            self.undo.push_if_nonzero(UndoOp::UnmapLit(t));
         }
     }
 
@@ -277,100 +299,179 @@ impl<S:Symbol, B: BoolLit> CC0<S,B> {
 
         let mut ra = self.cc1.find(a);
         let mut rb = self.cc1.find(b);
-        debug_assert!(self.is_root(ra.0), "repr({:?}) = {:?}", a, ra);
-        debug_assert!(self.is_root(rb.0), "repr({:?}) = {:?}", b, rb);
+        debug_assert!(self.is_root(ra.0), "{}.repr = {}", self.m.pp(a), self.m.pp(ra.0));
+        debug_assert!(self.is_root(rb.0), "{}.repr = {}", self.m.pp(b), self.m.pp(rb.0));
 
-        if ra != rb {
-            let size_a = self.parents(ra).len();
-            let size_b = self.parents(rb).len();
+        if ra == rb {
+            return; // done already
+        }
 
-            // merge smaller one into bigger one, except that booleans are
-            // always representatives
-            if rb.0 == self.b.true_ || rb.0 == self.b.false_ {
-                // conflict: merge true with false (since they are distinct)
-                if ra.0 == self.b.true_ || ra.0 == self.b.false_ {
-                    // generate conflict from `expl`, `a == ra`, `b == rb`
-                    trace!("generate conflict from merge of true/false from {:?} and {:?}",
-                           self.m.pp(a), self.m.pp(b));
-                    self.cc1.ok = false;
-                    self.undo.push(UndoOp::SetOk);
-                    self.confl.clear();
-                    self.expand_expl_into_confl(expl);
-                    self.explain_eq(a, ra.0);
-                    self.explain_eq(b, rb.0);
-                    return;
-                }
-                std::mem::swap(&mut ra, &mut rb);
-            } else if ra.0 == self.b.true_ || ra.0 == self.b.false_ {
-                // `ra` must be repr
-            } else if size_a < size_b {
-                std::mem::swap(&mut ra, &mut rb);
+        let Node {prev: prev_a, next: next_a, size: size_a, ..} = self.cc1[ra.0];
+        let Node {prev: prev_b, next: next_b, size: size_b, ..} = self.cc1[rb.0];
+
+        if (size_a as usize) + (size_b as usize) > u32::MAX as usize {
+            panic!("too many terms in one class")
+        }
+
+        // merge smaller one into bigger one, except that booleans are
+        // always representatives
+        if rb.0 == self.b.true_ || rb.0 == self.b.false_ {
+            // conflict: merge true with false (since they are distinct)
+            if ra.0 == self.b.true_ || ra.0 == self.b.false_ {
+                // generate conflict from `expl`, `a == ra`, `b == rb`
+                trace!("generate conflict from merge of true/false from {} and {}",
+                       self.m.pp(a), self.m.pp(b));
+                self.cc1.ok = false;
+                self.undo.push_if_nonzero(UndoOp::SetOk);
+                self.confl.clear();
+                self.expand_expl_into_confl(expl);
+                self.explain_eq(a, ra.0);
+                self.explain_eq(b, rb.0);
+                return;
             }
+            std::mem::swap(&mut ra, &mut rb);
+        } else if ra.0 == self.b.true_ || ra.0 == self.b.false_ {
+            // `ra` must be repr
+        } else if size_a < size_b {
+            std::mem::swap(&mut ra, &mut rb);
+        }
 
-            trace!("merge {}.repr into {}", self.m.pp(rb.0), self.m.pp(ra.0));
+        trace!("merge {}.repr into {}", self.m.pp(rb.0), self.m.pp(ra.0));
 
-            // update explanation
-            self.cc1.reroot_forest(rb);
-            self.cc1[rb.0].expl = Some((ra.0, expl));
+        // update explanation
+        self.cc1.reroot_forest(rb.0);
+        self.cc1[rb.0].expl = Some((ra.0, expl));
 
-            // local copy of parents(b)
+        // local copy of parents(b).
+        // NOTE: we know they're not aliased, we could use a pointer?
+        {
             self.tmp_parents.clear();
-            self.tmp_parents.append(&self.cc1.parents(rb));
+            let parents_b = &self.cc1.parents(rb);
+            self.tmp_parents.append(parents_b);
 
-            let parents_a = self.cc1.parents_mut(ra);
-            let a_len_parents = parents_a.len(); // save `parents(a).len`
-
-            // undo this change on backtrack
-            self.undo.push(UndoOp::Unmerge {
-                a: ra, b: rb, a_len_parents,
-            });
-
-            // perform actual merge:
-            // - a.parents += b.parents
-            // - for x in b.class: x.root = a; update-sig(x)
-            parents_a.append(&self.tmp_parents);
-            let CC0 {tasks, cc1, m, ..} = self;
-            cc1.iter_class(rb, |n| {
-                debug_assert_eq!(n.root, rb);
-                n.root = ra;
-
-                // might need to check for congruence
-                if needs_signature(m, n.id) {
-                    tasks.push_back(Task::UpdateSig(n.id));
+            // might need to check for congruence again for parents of `b`,
+            // since one of their direct child (b) now has a different
+            // representative
+            for &p_b in parents_b.iter() {
+                if needs_signature(&self.m, p_b) {
+                    self.tasks.push_back(Task::UpdateSig(p_b));
                 }
-
-                // TODO: if a=true/false, and `n` has a literal, propagate the literal
-            });
-
-            // check that the merge went well
-            if cfg!(debug) {
-                let m = self.m.clone();
-                self.cc1.iter_class(ra, |n| {
-                    debug_assert_eq!(n.root, ra, "root of cls({:?})", m.pp(ra.0))
-                });
             }
+        }
+
+        let parents_a = self.cc1.parents_mut(ra);
+
+        // undo this change on backtrack
+        self.undo.push_if_nonzero(UndoOp::Unmerge {
+            a: ra, b: rb,
+        });
+
+        // perform actual merge:
+        // - a.parents += b.parents
+        // - for x in b.class: x.root = a
+        // - a.class += b.class
+        parents_a.append(&self.tmp_parents);
+
+        let CC0 {cc1, m, b, props, ..} = self;
+        cc1.iter_class(rb, |n| {
+            trace!("{}.iter_class: update {}", m.pp(rb.0), m.pp(n.id));
+            debug_assert_eq!(n.root, rb);
+            n.root = ra;
+
+            // if a=true/false, and `n` has a literal, propagate the literal
+            if ra.0 == b.true_ && n.as_lit.is_some() {
+                let lit = n.as_lit.unwrap();
+                trace!("propagate literal {:?} (for true≡{})", lit, m.pp(n.id));
+                props.propagate(lit, &[]);
+            } else if ra.0 == b.false_ && n.as_lit.is_some() {
+                let lit = ! n.as_lit.unwrap();
+                trace!("propagate literal {:?} (for false≡{})", lit, m.pp(n.id));
+                props.propagate(lit, &[]);
+            }
+        });
+
+        // ye ole' switcharoo
+        {
+            let n = &mut self.cc1[ra.0];
+            n.prev = prev_b;
+            n.next = next_b;
+
+            n.size += size_b;
+
+            let n = &mut self.cc1[rb.0];
+            n.prev = prev_a;
+            n.next = next_a;
+        }
+
+        // check that the merge went well
+        if cfg!(debug) {
+            let m = self.m.clone();
+            self.cc1.iter_class(ra, |n| {
+                debug_assert_eq!(n.root, ra, "root of cls({:?})", m.pp(ra.0))
+            });
         }
     }
 
     /// Check and update signature of `t`, possibly adding new merged by congruence.
     fn update_signature(&mut self, t: AST) {
-        // FIXME
-        unimplemented!("update signature {}", self.m.pp(t));
-
-        // TODO: also the place to check for `(= a b)` where a==b ----> merge with true
-        // TODO: do not do normal signatures for `(= a b)` otherwise
+        let CC0 {m, tmp_sig: ref mut sig, cc1, sig_tbl, tasks, ..} = self;
+        match m.get().view(t) {
+            View::Const(_) => (),
+            View::App {f, args} if f == self.b.eq => {
+                // do not compute a signature, but check if `args[0]==args[1]`
+                let a = args[0];
+                let b = args[1];
+                if self.cc1.is_eq(a,b) {
+                    trace!("merge {} with true by eq-rule", m.pp(t));
+                    let expl = Expl::AreEq(a,b);
+                    self.tasks.push_back(Task::Merge(t, self.b.true_, expl));
+                }
+            },
+            View::App {f, args} => {
+                // compute signature and look for collisions
+                sig.compute_app(&cc1, f, args);
+                match sig_tbl.get(sig) {
+                    None => {
+                        // insert into signature table
+                        sig_tbl.insert(sig.clone(), t);
+                    },
+                    Some(u) if t == *u => (),
+                    Some(u) => {
+                        // collision, merge `t` and `u` as they are congruent
+                        trace!("merge by congruence: {} and {}", m.pp(t), m.pp(*u));
+                        let expl = Expl::Congruence(t, *u);
+                        tasks.push_back(Task::Merge(t, *u, expl));
+                    }
+                }
+            },
+        }
     }
 
     /// Unfold `expl` into literals, push them into `self.confl`
     fn expand_expl_into_confl(&mut self, expl: Expl<B>) {
+        trace!("expand-expl-into-confl");
         self.expl_st.clear();
         self.expl_st.push(expl);
+        let m = self.m.clone();
         while let Some(e) = self.expl_st.pop() {
+            trace!("expand-expl {}", m.pp(&e));
             match e {
                 Expl::Lit(lit) => self.confl.push(lit),
-                Expl::Merges(v) => {
-                    for (ra,rb) in v.iter() {
-                        self.explain_eq(ra.0, rb.0);
+                Expl::AreEq(a,b) => {
+                    self.explain_eq(a, b);
+                },
+                Expl::Congruence(a,b) => {
+                    // explain why arguments are pairwise equal
+                    match (m.get().view(a), m.get().view(b)) {
+                        (View::App {f: f1, args: args1},
+                         View::App {f: f2, args: args2}) => {
+                            debug_assert_eq!(args1.len(), args2.len());
+                            self.explain_eq(f1, f2);
+                            for i in 0 .. args1.len() {
+                                self.explain_eq(args1[i], args2[i]);
+                            }
+                        },
+                        _ => unreachable!(),
                     }
                 }
             }
@@ -379,7 +480,9 @@ impl<S:Symbol, B: BoolLit> CC0<S,B> {
 
     /// Explain why `a` and `b` were merged, pushing explanations onto `self.expl_st`.
     fn explain_eq(&mut self, a: NodeID, b: NodeID)  {
-        unimplemented!("explain merge {} {}", self.m.pp(a), self.m.pp(b));
+        if a == b { return }
+        // FIXME
+        unimplemented!("explain merge of {} and {}", self.m.pp(a), self.m.pp(b));
     }
 }
 
@@ -415,30 +518,49 @@ impl<S:Symbol, B:BoolLit> CC1<S,B> {
                 debug_assert!(! self.ok);
                 self.ok = true;
             },
-            UndoOp::Unmerge {a, b, a_len_parents} => {
-                debug_assert!(self[a.0].is_root());
-                // unmerge b from a
-                let n = &mut self[b.0];
+            UndoOp::Unmerge {a, b} => {
+                let Node {prev: prev_a, next: next_a, root: root_a, ..} = self[a.0];
+                debug_assert!(root_a == a);
 
-                debug_assert!(! n.is_root());
-                n.root = b;
+                // unmerge b from a
+                let nb = &mut self[b.0];
+                debug_assert_ne!(nb.root, b);
+
+                // save this to restore `a.node` to its previous state
+                let prev_b = nb.prev;
+                let next_b = nb.next;
+                let size_b = nb.size;
+
+                nb.next = next_a;
+                nb.prev = prev_a;
+                nb.root = b;
 
                 // one of {ra,rb} points to the other, explanation wise.
                 // Be sure to remove this link from the proof forest.
-                match n.expl {
-                    Some((ra2,_)) if ra2 == a.0 => n.expl = None,
+                match nb.expl {
+                    Some((ra2,_)) if ra2 == a.0 => nb.expl = None,
                     _ => ()
                 }
                 {
                     let na = &mut self[a.0];
+                    na.prev = prev_b;
+                    na.next = next_b;
+                    debug_assert!(na.size > size_b);
+                    na.size -= size_b;
+
                     match na.expl {
                         Some((rb2,_)) if rb2 == b.0 => na.expl = None,
                         _ => ()
                     }
                 }
 
-                // truncate a's parent list to its previous len
-                self.parents_mut(a).truncate(a_len_parents);
+                // truncate a's parent list to its previous length
+                {
+                    let len_parents_b = self.parents(b).len();
+                    let p = self.parents_mut(a);
+                    debug_assert!(p.len() > len_parents_b);
+                    p.truncate(p.len() - len_parents_b);
+                }
             },
             UndoOp::RemoveTerm(t) => {
                 self.nodes.remove(t);
@@ -468,33 +590,34 @@ impl<S:Symbol, B:BoolLit> CC1<S,B> {
             let n = &mut self[t];
             f(n);
 
-            t = n.cls_next;
+            t = n.next;
             if t == r.0 { break } // done the full loop
         }
     }
 
     /// Reroot proof forest for the class of `r` so that `r` is the root.
-    fn reroot_forest(&mut self, r: Repr) {
-        let (mut cur, mut expl) = match &self[r.0].expl {
+    fn reroot_forest(&mut self, t: NodeID) {
+        trace!("reroot {}", self.m.pp(t));
+        let (mut cur_t, mut expl) = match &self[t].expl {
             None => {
                 return; // rooted in `t` already
             },
-            Some((u,e)) => (*u,e.clone()),
+            Some((u,e)) => (*u,e.clone()).clone(),
         };
 
-        let mut prev = r.0;
+        let mut prev_t = t;
         loop {
-            let cur_node = &mut self[cur];
-            let mut expl_tup = Some((prev,expl));
+            let cur_node = &mut self[cur_t];
+            let mut expl_tup = Some((prev_t,expl));
+            // set `cur_node.expl = (prev_t, expl)`
             std::mem::swap(&mut cur_node.expl, &mut expl_tup);
-
-            // `expl_tup` now points to `cur`'s former pointer.
+            // `expl_tup` now has `cur_node.expl`'s former value.
             match expl_tup {
                 None => break,
                 Some((next, expl_next)) => {
                     // follow pointer
-                    prev = cur;
-                    cur = next;
+                    prev_t = cur_t;
+                    cur_t = next;
                     expl = expl_next;
                 },
             }
@@ -504,13 +627,17 @@ impl<S:Symbol, B:BoolLit> CC1<S,B> {
 
 impl<S: Symbol,B:BoolLit> backtrack::Backtrackable for CC<S,B> {
     fn push_level(&mut self) {
+        trace!("push-level");
         self.cc0.undo.push_level();
+        self.cc0.sig_tbl.push_level();
     }
 
     fn pop_levels(&mut self, n: usize) {
         let cc1 = &mut self.cc0.cc1;
         self.cc0.undo.pop_levels(n, |op| cc1.perform_undo(op));
+        self.cc0.sig_tbl.pop_levels(n);
         if n > 0 {
+            trace!("pop-levels {}", n);
             self.cc0.tasks.clear(); // changes are invalidated
         }
     }
@@ -576,16 +703,13 @@ mod node {
         /// Create a new node
         pub fn new(id: NodeID) -> Self {
             Node {
-                id, cls_prev: id, cls_next: id, expl: None,
+                id, prev: id, next: id, expl: None, size: 1,
                 root: Repr(id), as_lit: None,
             }
         }
 
         /// Is this node a root?
         pub fn is_root(&self) -> bool { self.root.0 == self.id }
-
-        /// Representative of the class
-        pub fn repr(&self) -> Repr { self.root }
     }
 }
 
@@ -598,15 +722,40 @@ mod expl {
                 Expl::Lit(lit) => {
                     ctx.str("lit(").debug(lit).str(")");
                 },
-                Expl::Merges(vs) => {
-                    ctx.str("merges(");
-                    for (r1,r2) in vs.iter() {
-                        ctx.str("(= ").pp(&m.pp(r1.0)).str(" ").pp(&m.pp(r2.0)).str(")");
-                    }
-                    ctx.str(")");
+                Expl::AreEq(a,b) => {
+                    ctx.str("are-eq(").pp(&m.pp(a)).str(", ").pp(&m.pp(b)).str(")");
+                }
+                Expl::Congruence(a,b) => {
+                    ctx.str("congruence(").pp(&m.pp(a)).str(", ").pp(&m.pp(b)).str(")");
                 }
             }
         }
     }
+}
+
+impl Signature {
+    /// Create a new signature.
+    pub fn new() -> Self { Signature(SVec::new()) }
+
+    /// Clear the signature's content.
+    #[inline(always)]
+    pub fn clear(&mut self) { self.0.clear() }
+
+    /// Compute signature for `t`
+    fn compute<S:Symbol, B:BoolLit>(&mut self, cc1: &CC1<S,B>, t: AST) {
+        match cc1.m.get().view(t) {
+            View::Const(..) => unreachable!(),
+            View::App {f,args} => self.compute_app(cc1, f,args),
+        }
+    }
+
+    fn compute_app<S:Symbol,B:BoolLit>(&mut self, cc1: &CC1<S,B>, f: AST, args: &[AST]) {
+        self.clear();
+        self.0.push(cc1.find(f));
+        for &u in args {
+            self.0.push(cc1.find(u));
+        }
+    }
+
 }
 
