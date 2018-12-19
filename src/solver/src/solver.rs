@@ -122,7 +122,7 @@ mod solver {
 
         /// Add a clause made from signed terms
         pub fn add_clause_slice(&mut self, c: TheoryClauseRef<BLit>) {
-            trace!("solver.add-clause\n{}", self.m.display(c));
+            trace!("solver.add-clause\n{}", self.m.pp(c));
             // use `self.lits` as temporary storage
             self.lits.clear();
             let s0 = &mut self.s0;

@@ -220,7 +220,7 @@ macro_rules! pretty_display {
     ($t:ty) => {
         impl fmt::Display for $t {
             fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result
-                { Pretty::pp_fmt(&self,out) }
+                { Pretty::pp_fmt(&self,out,true) }
         }
     };
 }

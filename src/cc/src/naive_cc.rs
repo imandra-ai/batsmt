@@ -180,7 +180,7 @@ impl<'a, S:Symbol, B:BoolLit> Solve<'a, S, B> {
         if ra == rb {
             true
         } else {
-            trace!("merge {:?} and {:?}", self.m.dbg_ast(ra.0), self.m.dbg_ast(rb.0));
+            trace!("merge {:?} and {:?}", self.m.pp(ra.0), self.m.pp(rb.0));
             self.all_lits.insert(lit); // may be involved in conflict
 
             self.tasks.push_back(Task::Merge(a,b));
@@ -202,7 +202,7 @@ impl<'a, S:Symbol, B:BoolLit> Solve<'a, S, B> {
     // add subterms recursively
     fn add_term(&mut self, t: AST) {
         if ! self.root.contains_key(&t) {
-            trace!("add-term {:?}", self.m.dbg_ast(t));
+            trace!("add-term {:?}", self.m.pp(t));
             self.root.insert(t, Repr(t));
             self.parents.insert(Repr(t), SVec::new());
             self.tasks.push_back(Task::UpdateTerm(t));
@@ -278,7 +278,7 @@ impl<'a, S:Symbol, B:BoolLit> Solve<'a, S, B> {
             std::mem::swap(&mut ra, &mut rb);
         }
 
-        trace!("task::merge-repr {:?} into {:?}", self.m.dbg_ast(rb.0), self.m.dbg_ast(ra.0));
+        trace!("task::merge-repr {:?} into {:?}", self.m.pp(rb.0), self.m.pp(ra.0));
         self.root.insert(rb.0, ra); // rb --> ra now
 
         // move `parents_b` here
@@ -314,7 +314,7 @@ impl<'a, S:Symbol, B:BoolLit> Solve<'a, S, B> {
         }
 
         for (t,u) in new_congr {
-            trace!("merge congruent parents: {:?} and {:?}", self.m.dbg_ast(t), self.m.dbg_ast(u));
+            trace!("merge congruent parents: {:?} and {:?}", self.m.pp(t), self.m.pp(u));
             self.tasks.push_back(Task::Merge(t,u))
         }
     }
@@ -346,7 +346,7 @@ impl<'a, S:Symbol, B:BoolLit> Solve<'a, S, B> {
                 }
 
                 for (t,u) in new_congr {
-                    trace!("update-term({:?}): merge with {:?}", m.dbg_ast(t), m.dbg_ast(u));
+                    trace!("update-term({:?}): merge with {:?}", m.pp(t), m.pp(u));
                     self.tasks.push_back(Task::Merge(t,u))
                 }
             },

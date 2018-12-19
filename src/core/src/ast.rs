@@ -710,32 +710,26 @@ mod manager {
 
     impl<S:Symbol> Manager<S> {
         /// Pretty-printable version of the given object
-        pub fn pp<'a, T:PrettyM+'a>(&'a self, x:T) -> impl pp::Pretty+'a {
+        pub fn pp<'a, T:PrettyM+'a>(&'a self, x:T) -> impl pp::Pretty+fmt::Display+fmt::Debug+'a {
             WithManager(&self, x)
         }
-
-        /// Pretty-printable version of the given object
-        pub fn display<'a, T:PrettyM+'a>(&'a self, x: T) -> impl fmt::Display+'a {
-            pp::display(WithManager(&self, x))
-        }
-
-        /// Pretty-printable version of the given object
-        pub fn dbg<'a, T:PrettyM+'a>(&'a self, x: T) -> impl fmt::Debug+'a {
-            pp::debug(WithManager(&self, x))
-        }
-
-        /// Term with more debug info
-        pub fn dbg_ast<'a>(&'a self, t: AST) -> impl fmt::Debug+'a {
-            self.dbg(DbgAST(t))
-        }
     }
-
-    struct DbgAST(AST); // marker for "more debug"-y printing
 
     impl<'a, S:Symbol, T:PrettyM> pp::Pretty for WithManager<'a,S,T> {
         fn pp(&self, ctx: &mut pp::Ctx) {
             let WithManager(m,t) = self;
             t.pp_m(m, ctx)
+        }
+    }
+
+    impl<'a, S:Symbol, T:PrettyM> fmt::Display for WithManager<'a,S,T> {
+        fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result {
+            pp::Pretty::pp_fmt(&self,out, false)
+        }
+    }
+    impl<'a, S:Symbol, T:PrettyM> fmt::Debug for WithManager<'a,S,T> {
+        fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result {
+            pp::Pretty::pp_fmt(&self,out, true)
         }
     }
 
@@ -758,13 +752,9 @@ mod manager {
                     });
                 }
             }
-        }
-    }
-
-    impl PrettyM for DbgAST {
-        fn pp_m<S:Symbol>(&self, m: &Manager<S>, ctx: &mut pp::Ctx) {
-            self.0.pp_m(m,ctx);
-            ctx.string(format!("/{}", (self.0).0)); // print unique ID
+            if ctx.alternate() {
+                ctx.string(format!("/{}", self.0)); // print unique ID
+            }
         }
     }
 }

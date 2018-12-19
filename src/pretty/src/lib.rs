@@ -27,6 +27,7 @@ enum Op {
 
 /// The context used to print objects
 pub struct Ctx {
+    alternate: bool, // alternate (more verbose) mode
     ops: VecDeque<Op>,
 }
 
@@ -84,8 +85,14 @@ impl<'a> Stack<'a> {
 impl Ctx {
     // Allocate a new local printing context
     fn new() -> Self {
-        Ctx { ops: VecDeque::new(), }
+        Ctx { alternate: false, ops: VecDeque::new(), }
     }
+
+    /// Is the context in alternate mode?
+    ///
+    /// Alternate mode should be more verbose, typically used for debug.
+    pub fn alternate(&self) -> bool { self.alternate }
+    fn set_alternate(&mut self) { self.alternate = true }
 
     fn into_str(mut self, width: usize) -> String {
         let arena = Arena::new();
@@ -204,8 +211,9 @@ pub trait Pretty {
     fn width(&self) -> usize { WIDTH }
 
     /// Automatic display into a formatter. This can be used to implement `Debug` or `Display`.
-    fn pp_fmt(&self, out: &mut fmt::Formatter) -> fmt::Result {
+    fn pp_fmt(&self, out: &mut fmt::Formatter, alternate: bool) -> fmt::Result {
         let mut ctx = Ctx::new();
+        if alternate { ctx.set_alternate() }
         self.pp(&mut ctx);
         let s = ctx.into_str(self.width());
         write!(out, "{}", &s)
@@ -293,11 +301,11 @@ struct Tmp<T: Pretty>(T);
 
 impl<T:Pretty> fmt::Display for Tmp<T> {
     fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result
-    { Pretty::pp_fmt(&self.0,out) }
+    { Pretty::pp_fmt(&self.0,out,false) }
 }
 impl<T:Pretty> fmt::Debug for Tmp<T> {
     fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result
-    { Pretty::pp_fmt(&self.0,out) }
+    { Pretty::pp_fmt(&self.0,out,true) }
 }
 
 /// Turn a pretty-printable object into a display-able one

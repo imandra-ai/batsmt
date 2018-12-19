@@ -122,7 +122,7 @@ impl<T,S> pp::Pretty for Statement<T,S>
 }
 
 impl<T:Pretty,S:Pretty> fmt::Display for Statement<T,S> {
-    fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result { Pretty::pp_fmt(&self,out) }
+    fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result { Pretty::pp_fmt(&self,out,true) }
 }
 
 #[test]

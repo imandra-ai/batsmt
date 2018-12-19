@@ -53,6 +53,6 @@ impl Pretty for PP<StrSymbol, parser::Statement<AST,AST>> {
 
 impl<S:Symbol,T> fmt::Display for PP<S,T> where Self : Pretty {
     fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result {
-        self.pp_fmt(out)
+        self.pp_fmt(out,false)
     }
 }

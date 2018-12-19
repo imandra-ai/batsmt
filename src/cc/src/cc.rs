@@ -214,7 +214,7 @@ mod cc {
                 },
                 |cc1,t| {
                     debug_assert!(cc1.nodes.contains(t));
-                    trace!("add-term {:?}", m.dbg_ast(t));
+                    trace!("add-term {}", m.pp(t));
                     cc1.nodes.insert(t, Node::new(NodeID(t)));
 
                     // now add itself to its children's list of parents.

@@ -80,7 +80,7 @@ impl<S:Symbol,B:BoolLit> CCTheory<S,B> {
 
             do_sth = true;
 
-            trace!("process-op {:?} (blit {:?})", self.m.dbg(&op), lit);
+            trace!("process-op {:?} (blit {:?})", self.m.pp(&op), lit);
             match op {
                 Op::Eq(a,b) => {
                     self.cc.merge(a,b,lit)

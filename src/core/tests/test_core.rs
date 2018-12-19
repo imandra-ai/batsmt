@@ -462,7 +462,7 @@ mod ast_prop {
             prop_assert!(size_tree >= size_dag,
                          "size tree {}, size dag {}, t: {:?}",
                          size_tree,
-                         size_dag, m.m().dbg_ast(*t))
+                         size_dag, m.m().pp(*t))
         }
     }
 
@@ -483,7 +483,7 @@ mod ast_prop {
 
             prop_assert_eq!(*t, u,
                             "t: {:?}, t.map(id): {:?}",
-                            m.m().dbg_ast(*t), m.m().dbg_ast(u))
+                            m.m().pp(*t), m.m().pp(u))
         }
     }
 
@@ -499,7 +499,7 @@ mod ast_prop {
             m.m().iter_dag(*t, |_| { n1 += 1 });
             ast_iter_ref::iter_dag_ref(m.m(), *t, |_| { n2 += 1 });
 
-            prop_assert!(n1 == n2, "same size, t: {:?}", m.m().dbg_ast(*t))
+            prop_assert!(n1 == n2, "same size, t: {:?}", m.m().pp(*t))
         }
     }
 
@@ -519,7 +519,7 @@ mod ast_prop {
             seen2.sort();
 
             prop_assert!(&seen1 == &seen2,
-                         "same traversal, t: {:?}", m.m().dbg_ast(*t))
+                         "same traversal, t: {:?}", m.m().pp(*t))
         }
     }
 
@@ -547,9 +547,9 @@ mod ast_prop {
             if let Some((t,u,v)) = res {
                 prop_assert!(false,
                 "traversing {:?}\nsubterm {:?}\nseen should contain {:?}\nseen: {:?}",
-                m.m().dbg_ast(t),
-                m.m().dbg_ast(u),
-                m.m().dbg_ast(v),
+                m.m().pp(t),
+                m.m().pp(u),
+                m.m().pp(v),
                 &seen);
             }
             prop_assert!(true)
