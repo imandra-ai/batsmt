@@ -174,6 +174,16 @@ impl Ctx {
         where F: FnOnce(&mut Ctx) -> U
     { self.str("("); self.with_indent(1,f); self.str(")"); self }
 
+    /// Print `t` using its debug implementation.
+    pub fn debug<T>(&mut self, x: T) -> &mut Self where T: fmt::Debug {
+        self.string(format!("{:?}", x))
+    }
+
+    /// Print `t` using its display implementation.
+    pub fn display<T>(&mut self, x: T) -> &mut Self where T: fmt::Display {
+        self.string(format!("{}", x))
+    }
+
     /// `ctx.array(sep, arr)` prints elements of `arr` with `str` in between
     pub fn array<Sep: Pretty, U:Pretty>(&mut self, sep: Sep, arr: &[U]) -> &mut Self 
     {
