@@ -17,7 +17,6 @@ use {
     },
     batsmt_core::{ast::{self,AST,View},Symbol,backtrack},
     batsmt_pretty as pp,
-    fxhash::FxHashMap,
     crate::{types::BoolLit,PropagationSet,Conflict,Builtins,CCInterface,SVec},
 };
 
@@ -29,7 +28,6 @@ pub struct CC<S:Symbol,B:BoolLit> {
     m: ast::Manager<S>, // the AST manager
     tasks: VecDeque<Task<B>>, // operations to perform
     undo: backtrack::Stack<UndoOp>,
-    tmp_parents: ParentList,
     confl: Vec<B>, // local for conflict
     props: PropagationSet<B>, // local for propagations
     traverse: ast::iter_suffix::State<S>, // for recursive traversal
@@ -43,9 +41,11 @@ pub struct CC<S:Symbol,B:BoolLit> {
 struct CC1<S:Symbol,B:BoolLit> {
     m: ast::Manager<S>, // the AST manager
     ok: bool, // no conflict?
-    nodes: ast::DenseMap<Node<B>>,
-    parents: FxHashMap<Repr, ParentList>, // parents of the given class
+    nodes: Nodes<B>,
 }
+
+/// Map terms into the corresponding node.
+struct Nodes<B:BoolLit>(ast::DenseMap<Node<B>>);
 
 /// One node in the congruence closure's E-graph.
 ///
@@ -57,26 +57,21 @@ struct CC1<S:Symbol,B:BoolLit> {
 /// - an optional mapping from the term to a boolean literal (for propagation)
 #[derive(Clone)]
 struct Node<B:BoolLit> {
-    id: NodeID,
-    next: NodeID, // next elt in class
-    prev: NodeID, // previous elt in class
+    id: AST,
+    next: AST, // next elt in class
     size: u32, // number of elements in class
-    expl: Option<(NodeID, Expl<B>)>, // proof forest
+    expl: Option<(AST, Expl<B>)>, // proof forest
     as_lit: Option<B>, // if this term corresponds to a boolean literal
     root: Repr, // current representative (initially, itself)
+    parents: ParentList, // parents of the given term
 }
 
 #[derive(Clone)]
-struct ParentList(SVec<NodeID>);
-
-/// The name for a node.
-///
-/// For now it's just the AST this node corresponds to.
-type NodeID = AST;
+struct ParentList(SVec<AST>);
 
 /// A representative
 #[derive(Debug,Clone,Copy,Eq,PartialEq,Hash,Ord,PartialOrd)]
-struct Repr(NodeID);
+struct Repr(AST);
 
 /// An explanation for a merge
 #[derive(Clone,Debug)]
@@ -93,8 +88,8 @@ enum UndoOp {
     RemoveTerm(AST),
     UnmapLit(AST),
     Unmerge {
-        a: Repr, // the new repr
-        b: Repr, // merged into `a`
+        root: Repr, // the new repr
+        old_root: Repr, // merged into `a`
     }, // unmerge these two reprs
 }
 
@@ -136,9 +131,9 @@ impl<S:Symbol, B:BoolLit> CCInterface<B> for CC<S,B> {
         self.check_internal()
     }
 
-    fn partial_check(&mut self) -> Option<Result<&PropagationSet<B>, Conflict<B>>> {
+    fn partial_check(&mut self) -> Result<&PropagationSet<B>, Conflict<B>> {
         debug!("cc.partial-check()");
-        Some(self.check_internal())
+        self.check_internal()
     }
 
     // FIXME
@@ -195,16 +190,13 @@ impl<S:Symbol, B: BoolLit> CC<S,B> {
         let mut cc1 = CC1::new(m);
         // add builtins
         cc1.nodes.insert(b.true_, Node::new(b.true_));
-        cc1.parents.insert(Repr(b.true_), ParentList::new());
         cc1.nodes.insert(b.false_, Node::new(b.false_));
-        cc1.parents.insert(Repr(b.false_), ParentList::new());
         CC{
             b, m: m.clone(),
             tasks: VecDeque::new(),
             confl: vec!(),
             props: PropagationSet::new(),
             undo: backtrack::Stack::new(),
-            tmp_parents: ParentList::new(),
             traverse: ast::iter_suffix::State::new(m),
             tmp_sig: Signature::new(),
             sig_tbl: backtrack::HashMap::new(),
@@ -213,8 +205,11 @@ impl<S:Symbol, B: BoolLit> CC<S,B> {
         }
     }
 
-    fn find(&self, id: NodeID) -> Repr { self.cc1.find(id) }
-    fn is_root(&self, id: NodeID) -> bool { self.find(id).0 == id }
+    #[inline(always)]
+    fn find(&self, id: AST) -> Repr { self.cc1.find(id) }
+
+    #[inline(always)]
+    fn is_root(&self, id: AST) -> bool { self.find(id).0 == id }
 
     /// Add this term to the congruence closure, if not present already.
     fn add_term(&mut self, t0: AST) {
@@ -241,13 +236,11 @@ impl<S:Symbol, B: BoolLit> CC<S,B> {
                 debug_assert!(cc1.nodes.contains(t));
                 trace!("add-term {}", m.pp(t));
                 cc1.nodes.insert(t, Node::new(t));
-                let old_par = cc1.parents.insert(Repr(t), ParentList::new());
-                debug_assert!(old_par.is_none());
 
                 // now add itself to its children's list of parents.
                 for u in mr.view(t).subterms() {
                     debug_assert!(cc1.nodes.contains(u)); // postfix order
-                    let parents = cc1.parents_mut(cc1.find(u));
+                    let parents = cc1.nodes.parents_mut(u);
                     parents.push(t);
                 }
                 // remove `t` before its children
@@ -278,19 +271,22 @@ impl<S:Symbol, B: BoolLit> CC<S,B> {
         debug_assert!(self.cc1.contains_ast(a));
         debug_assert!(self.cc1.contains_ast(b));
 
-        let mut ra = self.cc1.find(a);
-        let mut rb = self.cc1.find(b);
+        let mut ra = self.cc1.nodes.find(a);
+        let mut rb = self.cc1.nodes.find(b);
         debug_assert!(self.is_root(ra.0), "{}.repr = {}", self.m.pp(a), self.m.pp(ra.0));
         debug_assert!(self.is_root(rb.0), "{}.repr = {}", self.m.pp(b), self.m.pp(rb.0));
+        drop(a);
+        drop(b);
 
         if ra == rb {
             return; // done already
         }
 
-        let Node {prev: prev_a, next: next_a, size: size_a, ..} = self.cc1[ra.0];
-        let Node {prev: prev_b, next: next_b, size: size_b, ..} = self.cc1[rb.0];
+        // access the two nodes
+        let (na, nb) = self.cc1.nodes.0.get2(ra.0, rb.0);
 
-        if (size_a as usize) + (size_b as usize) > u32::MAX as usize {
+        // NOTE: would be nice to put `unlikely` there once it stabilizes
+        if (na.size as usize) + (nb.size as usize) > u32::MAX as usize {
             panic!("too many terms in one class")
         }
 
@@ -314,48 +310,40 @@ impl<S:Symbol, B: BoolLit> CC<S,B> {
             std::mem::swap(&mut ra, &mut rb);
         } else if ra.0 == self.b.true_ || ra.0 == self.b.false_ {
             // `ra` must be repr
-        } else if size_a < size_b {
+        } else if na.size < nb.size {
+            // swap a and b
             std::mem::swap(&mut ra, &mut rb);
         }
+        drop(na);
+        drop(nb);
 
-        trace!("merge {}.repr into {}", self.m.pp(rb.0), self.m.pp(ra.0));
+        trace!("merge {} into {}", self.m.pp(rb.0), self.m.pp(ra.0));
+
+        // undo this change on backtrack
+        self.undo.push_if_nonzero(UndoOp::Unmerge {
+            root: ra, old_root: rb,
+        });
 
         // update explanation
         self.cc1.reroot_forest(rb.0);
         self.cc1[rb.0].expl = Some((ra.0, expl));
 
-        // local copy of parents(b).
-        // NOTE: we know they're not aliased, we could use a pointer?
+        // might need to check for congruence again for parents of `b`,
+        // since one of their direct child (b) now has a different
+        // representative
         {
-            self.tmp_parents.clear();
-            let parents_b = &self.cc1.parents(rb);
-            self.tmp_parents.append(parents_b);
-
-            // might need to check for congruence again for parents of `b`,
-            // since one of their direct child (b) now has a different
-            // representative
-            for &p_b in parents_b.iter() {
-                if needs_signature(&self.m, p_b) {
-                    self.tasks.push_back(Task::UpdateSig(p_b));
+            let CC {m, cc1, tasks, ..} = self;
+            cc1.nodes.iter_parents(rb, |p_b| {
+                if needs_signature(&m, p_b) {
+                    tasks.push_back(Task::UpdateSig(p_b));
                 }
-            }
+            });
         }
 
-        let parents_a = self.cc1.parents_mut(ra);
-
-        // undo this change on backtrack
-        self.undo.push_if_nonzero(UndoOp::Unmerge {
-            a: ra, b: rb,
-        });
-
-        // perform actual merge:
-        // - a.parents += b.parents
-        // - for x in b.class: x.root = a
-        // - a.class += b.class
-        parents_a.append(&self.tmp_parents);
-
+        // perform actual merge of classes
+        // for x in b.class: x.root = a
         let CC {cc1, m, b, props, ..} = self;
-        cc1.iter_class(rb, |n| {
+        cc1.nodes.iter_class(rb, |n| {
             trace!("{}.iter_class: update {}", m.pp(rb.0), m.pp(n.id));
             debug_assert_eq!(n.root, rb);
             n.root = ra;
@@ -372,26 +360,26 @@ impl<S:Symbol, B: BoolLit> CC<S,B> {
             }
         });
 
-        // ye ole' switcharoo
+        // ye ole' switcharoo (of doubly linked lists for the equiv class)
+        //
+        // instead of:  a --> next_a,  b --> next_b
+        // have:  a --> next_b, b --> next_a
+        //
         {
-            let n = &mut self.cc1[ra.0];
-            n.prev = prev_b;
-            n.next = next_b;
+            // access the two nodes
+            let (na, nb) = self.cc1.nodes.0.get2(ra.0, rb.0);
 
-            if n.size as usize + size_b as usize > u32::MAX as usize {
-                panic!("overflow when merging classes of size {} and {}", n.size, size_b);
-            }
-            n.size += size_b;
+            let next_a = na.next;
+            let next_b = nb.next;
 
-            let n = &mut self.cc1[rb.0];
-            n.prev = prev_a;
-            n.next = next_a;
+            na.size += nb.size;
+            na.next = next_b;
+            nb.next = next_a;
         }
 
         // check that the merge went well
         if cfg!(debug) {
-            let m = self.m.clone();
-            self.cc1.iter_class(ra, |n| {
+            self.cc1.nodes.iter_class(ra, |n| {
                 debug_assert_eq!(n.root, ra, "root of cls({:?})", m.pp(ra.0))
             });
         }
@@ -406,7 +394,7 @@ impl<S:Symbol, B: BoolLit> CC<S,B> {
                 // do not compute a signature, but check if `args[0]==args[1]`
                 let a = args[0];
                 let b = args[1];
-                if self.cc1.is_eq(a,b) {
+                if self.cc1.nodes.is_eq(a,b) {
                     trace!("merge {} with true by eq-rule", m.pp(t));
                     let expl = Expl::AreEq(a,b);
                     self.tasks.push_back(Task::Merge(t, self.b.true_, expl));
@@ -438,89 +426,75 @@ impl<S:Symbol, B:BoolLit> CC1<S,B> {
     fn new(m: &M<S>) -> Self {
         CC1 {
             m: m.clone(),
-            nodes: ast::DenseMap::new(node::sentinel()),
-            parents: FxHashMap::default(),
+            nodes: Nodes::new(),
             ok: true,
         }
     }
 
-    /// Find representative of the given node
     #[inline(always)]
-    fn find(&self, id: NodeID) -> Repr { self[id].root }
-
-    /// Are these two terms known to be equal?
-    #[inline(always)]
-    fn is_eq(&self, a: NodeID, b: NodeID) -> bool {
-        self.find(a) == self.find(b)
-    }
-
-    /// Is this term present?
     fn contains_ast(&self, t: AST) -> bool { self.nodes.contains(t) }
 
-    fn parents(&self, r: Repr) -> &ParentList { self.parents.get(&r).unwrap() }
-    fn parents_mut(&mut self, r: Repr) -> &mut ParentList { self.parents.get_mut(&r).unwrap() }
+    #[inline(always)]
+    fn find(&self, t: AST) -> Repr { self.nodes.find(t) }
 
+    /// Undo one change.
     fn perform_undo(&mut self, op: UndoOp) {
+        trace!("perform-undo {:?}", self.m.pp(&op));
         match op {
             UndoOp::SetOk => {
                 debug_assert!(! self.ok);
                 self.ok = true;
             },
-            UndoOp::Unmerge {a, b} => {
+            UndoOp::Unmerge {root: a, old_root: b} => {
                 assert_ne!(a.0,b.0); // crucial invariant
-                let Node {prev: prev_a, next: next_a, root: root_a, ..} = self[a.0];
-                debug_assert!(root_a == a);
 
-                // unmerge b from a
-                let nb = &mut self[b.0];
-                debug_assert_ne!(nb.root, b);
+                let (na, nb) = self.nodes.0.get2(a.0, b.0);
 
-                // save this to restore `a.node` to its previous state
-                let prev_b = nb.prev;
-                let next_b = nb.next;
-                let size_b = nb.size;
+                debug_assert_eq!(na.root, a, "root: {}, repr: {}",
+                                 self.m.pp(na.root.0), self.m.pp(a.0));
+                debug_assert_eq!(nb.root, a);
 
-                nb.next = next_a;
-                nb.prev = prev_a;
-                nb.root = b; // FIXME: do it for the whole class, now that pointers are ok
+                debug_assert!(na.size > nb.size);
+                na.size -= nb.size;
 
                 // one of {ra,rb} points to the other, explanation wise.
                 // Be sure to remove this link from the proof forest.
-                match nb.expl {
-                    Some((ra2,_)) if ra2 == a.0 => nb.expl = None,
-                    _ => ()
-                }
-                drop(nb);
-
                 {
-                    let na = &mut self[a.0];
-                    na.prev = prev_b;
-                    na.next = next_b;
-                    debug_assert!(na.size > size_b);
-                    na.size -= size_b;
-
+                    match nb.expl {
+                        Some((ra2,_)) if ra2 == a.0 => nb.expl = None,
+                        _ => ()
+                    }
                     match na.expl {
                         Some((rb2,_)) if rb2 == b.0 => na.expl = None,
                         _ => ()
                     }
                 }
 
-                // truncate a's parent list to its previous length
+                // inverse switcharoo
                 {
-                    let len_parents_b = self.parents(b).len();
-                    let p = self.parents_mut(a);
-                    debug_assert!(p.len() >= len_parents_b);
-                    p.truncate(p.len() - len_parents_b);
+                    let next_a = na.next;
+                    let next_b = nb.next;
+
+                    na.next = next_b;
+                    nb.next = next_a;
                 }
+                drop(na);
+                drop(nb);
+
+                // restore `root` pointer of all members of `b.class`
+                self.nodes.iter_class(b, |nb1| {
+                    debug_assert_eq!(nb1.root, a);
+                    nb1.root = b;
+                });
             },
             UndoOp::RemoveTerm(t) => {
+                debug_assert_eq!(0, self.nodes[t].parents.len(), "remove term with parents");
                 self.nodes.remove(t);
-                self.parents.remove(&Repr(t));
 
                 // remove from children's parents' lists
                 let mr = self.m.get();
                 for u in mr.view(t).subterms() {
-                    let parents = self.parents.get_mut(&self.find(u)).unwrap();
+                    let parents = self.nodes.parents_mut(u);
                     debug_assert_eq!(parents.last().cloned(), Some(t));
                     parents.pop();
                 }
@@ -533,22 +507,8 @@ impl<S:Symbol, B:BoolLit> CC1<S,B> {
         }
     }
 
-    /// Call `f` with a mutable ref on all nodes of the class of `r`
-    fn iter_class<F>(&mut self, r: Repr, mut f: F)
-        where F: for<'b> FnMut(&'b mut Node<B>)
-    {
-        let mut t = r.0;
-        loop {
-            let n = &mut self[t];
-            f(n);
-
-            t = n.next;
-            if t == r.0 { break } // done the full loop
-        }
-    }
-
     /// Reroot proof forest for the class of `r` so that `r` is the root.
-    fn reroot_forest(&mut self, t: NodeID) {
+    fn reroot_forest(&mut self, t: AST) {
         trace!("reroot {}", self.m.pp(t));
         let (mut cur_t, mut expl) = match &self[t].expl {
             None => {
@@ -591,7 +551,7 @@ impl<S:Symbol, B:BoolLit> CC1<S,B> {
     /// forest.
     /// Precond: `is_eq(a,b)`.
     fn find_expl_common_ancestor(&self, mut a: AST, mut b: AST) -> AST {
-        debug_assert!(self.is_eq(a,b));
+        debug_assert!(self.nodes.is_eq(a,b));
 
         let dist_a = self.dist_to_expl_root(a);
         let dist_b = self.dist_to_expl_root(b);
@@ -697,7 +657,7 @@ impl<'a,S:Symbol, B:BoolLit> ExplResolve<'a,S,B> {
 
     /// Explain why `a` and `b` were merged, pushing some sub-tasks
     /// onto `self.expl_st`, and leaf literals onto `self.confl`.
-    fn explain_eq(&mut self, a: NodeID, b: NodeID) {
+    fn explain_eq(&mut self, a: AST, b: AST) {
         if a == b { return }
         trace!("explain merge of {} and {}", self.m.pp(a), self.m.pp(b));
 
@@ -720,40 +680,105 @@ impl<'a,S:Symbol, B:BoolLit> ExplResolve<'a,S,B> {
     }
 }
 
+impl<B:BoolLit> Nodes<B> {
+    fn new() -> Self {
+        Nodes(ast::DenseMap::new(node::sentinel()))
+    }
+
+    #[inline(always)]
+    fn contains(&self, t: AST) -> bool { self.0.contains(t) }
+
+    #[inline(always)]
+    fn insert(&mut self, t: AST, n: Node<B>) {
+        self.0.insert(t, n)
+    }
+
+    /// Find representative of the given node
+    #[inline(always)]
+    fn find(&self, id: AST) -> Repr { self[id].root }
+
+    /// Are these two terms known to be equal?
+    #[inline(always)]
+    fn is_eq(&self, a: AST, b: AST) -> bool {
+        self.find(a) == self.find(b)
+    }
+
+    #[inline(always)]
+    fn parents_mut(&mut self, t: AST) -> &mut ParentList { &mut self[t].parents }
+
+    #[inline(always)]
+    fn remove(&mut self, t: AST) {
+        self.0.remove(t)
+    }
+
+    /// Call `f` with a mutable ref on all nodes of the class of `r`
+    fn iter_class<F>(&mut self, r: Repr, mut f: F)
+        where F: for<'b> FnMut(&'b mut Node<B>)
+    {
+        let mut t = r.0;
+        loop {
+            let n = &mut self[t];
+            f(n);
+
+            t = n.next;
+            if t == r.0 { break } // done the full loop
+        }
+    }
+
+    /// Call `f` on all parents of all nodes of the class of `r`
+    fn iter_parents<F>(&mut self, r: Repr, mut f: F)
+        where F: FnMut(AST)
+    {
+        self.iter_class(r, |n| {
+            for &p_b in n.parents.iter() {
+                f(p_b)
+            }
+        });
+    }
+}
+
 impl ParentList {
     fn new() -> Self { ParentList(SVec::new()) }
 
     #[inline(always)]
     fn len(&self) -> usize { self.0.len() }
-
-    // truncate to old len
-    fn truncate(&mut self, n: usize) { self.0.resize(n, NodeID::SENTINEL) }
-
-    fn append(&mut self, other: &ParentList) {
-        self.0.extend_from_slice(&other.0);
-    }
 }
 
 mod cc {
     use super::*;
 
-    impl<S:Symbol,B:BoolLit> std::ops::Index<NodeID> for CC1<S,B> {
+    impl<B:BoolLit> std::ops::Index<AST> for Nodes<B> {
         type Output = Node<B>;
         #[inline(always)]
-        fn index(&self, id: NodeID) -> &Self::Output {
-            self.nodes.get(id).unwrap()
+        fn index(&self, id: AST) -> &Self::Output {
+            self.0.get(id).unwrap()
         }
     }
 
-    impl<S:Symbol,B:BoolLit> std::ops::IndexMut<NodeID> for CC1<S,B> {
+    impl<B:BoolLit> std::ops::IndexMut<AST> for Nodes<B> {
         #[inline(always)]
-        fn index_mut(&mut self, id: NodeID) -> &mut Self::Output {
-            self.nodes.get_mut(id).unwrap()
+        fn index_mut(&mut self, id: AST) -> &mut Self::Output {
+            self.0.get_mut(id).unwrap()
+        }
+    }
+
+    impl<S:Symbol,B:BoolLit> std::ops::Index<AST> for CC1<S,B> {
+        type Output = Node<B>;
+        #[inline(always)]
+        fn index(&self, id: AST) -> &Self::Output {
+            &self.nodes[id]
+        }
+    }
+
+    impl<S:Symbol,B:BoolLit> std::ops::IndexMut<AST> for CC1<S,B> {
+        #[inline(always)]
+        fn index_mut(&mut self, id: AST) -> &mut Self::Output {
+            &mut self.nodes[id]
         }
     }
 
     impl std::ops::Deref for ParentList {
-        type Target = SVec<NodeID>;
+        type Target = SVec<AST>;
         fn deref(&self) -> &Self::Target { &self.0 }
     }
     impl std::ops::DerefMut for ParentList {
@@ -766,7 +791,7 @@ mod node {
     use super::*;
 
     /// The default `node` object
-    pub(super) fn sentinel<B:BoolLit>() -> Node<B> { Node::new(NodeID::SENTINEL) }
+    pub(super) fn sentinel<B:BoolLit>() -> Node<B> { Node::new(AST::SENTINEL) }
 
     impl<B:BoolLit> Eq for Node<B> {}
     impl<B:BoolLit> PartialEq for Node<B> {
@@ -775,10 +800,11 @@ mod node {
 
     impl<B:BoolLit> Node<B> {
         /// Create a new node
-        pub fn new(id: NodeID) -> Self {
+        pub fn new(id: AST) -> Self {
+            let parents = ParentList::new();
             Node {
-                id, prev: id, next: id, expl: None, size: 1,
-                root: Repr(id), as_lit: None,
+                id, next: id, expl: None, size: 1,
+                root: Repr(id), as_lit: None, parents,
             }
         }
     }
@@ -798,6 +824,23 @@ mod expl {
                 }
                 Expl::Congruence(a,b) => {
                     ctx.str("congruence(").pp(&m.pp(a)).str(", ").pp(&m.pp(b)).str(")");
+                }
+            }
+        }
+    }
+
+    impl ast::PrettyM for UndoOp {
+        fn pp_m<S:Symbol>(&self, m: &M<S>, ctx: &mut pp::Ctx) {
+            match self {
+                UndoOp::SetOk => { ctx.str("set-ok"); },
+                UndoOp::Unmerge{root:a,old_root:b} => {
+                    ctx.str("unmerge(").pp(&m.pp(a.0)).str(", ").pp(&m.pp(b.0)).str(")");
+                },
+                UndoOp::UnmapLit(t) => {
+                    ctx.str("unmap(").pp(&m.pp(t)).str(")");
+                },
+                UndoOp::RemoveTerm(t) => {
+                    ctx.str("remove-term(").pp(&m.pp(t)).str(")");
                 }
             }
         }
