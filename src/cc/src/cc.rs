@@ -328,6 +328,9 @@ impl<S:Symbol, B: BoolLit> CC0<S,B> {
                 self.explain_eq(a, ra.0);
                 self.explain_eq(b, rb.0);
                 self.expl_fixpoint();
+                // cleanup conflict
+                self.confl.sort_unstable();
+                self.confl.dedup();
                 trace!("computed conflict: {:?}", &self.confl);
                 return;
             }
@@ -678,7 +681,7 @@ impl<S:Symbol, B:BoolLit> CC1<S,B> {
         }
     }
 
-    /// Skip `n` links in the explanation forest, return 
+    /// Skip `n` links in the explanation forest.
     fn skip_expl_links(&self, mut t: AST, mut n: usize) -> AST {
         while n > 0 {
             if let Some((t2,_)) = self[t].expl { t = t2 } else { panic!() };
