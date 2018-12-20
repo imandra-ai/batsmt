@@ -737,6 +737,14 @@ mod manager {
         fn pp_m<S:Symbol>(&self, m: &Manager<S>, ctx: &mut pp::Ctx) { (*self).pp_m(m,ctx) }
     }
 
+    // render array in a S-expr
+    impl<'a, T:PrettyM> PrettyM for &'a [T] {
+        fn pp_m<S:Symbol>(&self, m: &Manager<S>, ctx: &mut pp::Ctx) {
+            let v: Vec<_> = self.iter().map(|x| m.pp(x)).collect();
+            ctx.sexp(|ctx| { ctx.array(pp::space(), &v); });
+        }
+    }
+
     /// An AST can be printed, given a manager, if the symbols are pretty
     impl PrettyM for AST {
         fn pp_m<S:Symbol>(&self, m: &Manager<S>, ctx: &mut pp::Ctx) {
