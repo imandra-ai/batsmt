@@ -45,7 +45,7 @@ impl<S:Symbol,B:BoolLit> CCTheory<S,B> {
         }
 
         debug!("cc.{}-check", if partial { "partial" } else { "final" });
-        let mut do_sth = false;
+        let mut do_sth = !partial;
 
         // local borrow of AST manager
         let m = self.m.get();
