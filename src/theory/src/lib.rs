@@ -23,7 +23,7 @@ use {
 /// and have a notion of negation.
 ///
 /// It must be the case that `!!b` is the same as `b`.
-pub trait BoolLit : fmt::Debug + Eq + PartialEq + Hash + Copy + Not<Output=Self> {}
+pub trait BoolLit : fmt::Debug + Eq + Ord + Hash + Copy + Not<Output=Self> {}
 
 type M<S> = ast::Manager<S>;
 
@@ -420,7 +420,7 @@ pub mod int_lit {
     /// A very simple representation of literals using signed integers.
     ///
     /// It doesn't correspond to any solver, but can be useful for testing.
-    #[derive(Copy,Clone,Eq,PartialEq,Hash,Debug)]
+    #[derive(Copy,Clone,Eq,PartialEq,Ord,PartialOrd,Hash,Debug)]
     pub struct Lit(i32);
 
     impl std::ops::Not for Lit {

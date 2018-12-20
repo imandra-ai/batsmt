@@ -5,7 +5,7 @@ use {
 };
 
 /// A boolean literal
-#[derive(Debug,Clone,Copy,Eq,PartialEq,Hash)]
+#[derive(Debug,Clone,Copy,Eq,PartialEq,Ord,PartialOrd,Hash)]
 pub struct BLit(pub sat::Lit);
 
 impl std::ops::Not for BLit {
