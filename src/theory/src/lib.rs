@@ -103,17 +103,21 @@ pub trait Theory<S:Symbol, B:BoolLit> : Backtrackable {
 
     /// Check a partial model.
     ///
+    /// This is only called if `self.has_partial_check()` is `true`.
+    ///
     /// The parameters are similar to those of `final_check`, but
     /// this function is allowed to not fully check the model, and `trail`
     /// only contains _new_ literals (since the last call to `partial_check`).
     /// It will be called more often than `final_check` so it should be efficient.
+    fn partial_check(&mut self, _acts: &mut Actions<B>, _trail: &Trail<B>) {}
+
+    /// Does the theory handle partial checks?
     ///
-    /// Returns: `true` if it did consider the trail, `false` otherwise.
-    /// If it returns `false` then the same literals will be passed again
-    /// later on (including for final check)
-    ///
-    /// By default it does nothing and returns `false`.
-    fn partial_check(&mut self, _acts: &mut Actions<B>, _trail: &Trail<B>) -> bool { false }
+    /// If `false`, the method `partial_check` will never be called,
+    /// and `final_check` will get the whole trail;
+    /// If `true`, the method `partial_check` will be called often,
+    /// and `final_check` will have an empty trail.
+    fn has_partial_check() -> bool { false }
 
     /// Add a binding term<=>literal to the theory.
     ///

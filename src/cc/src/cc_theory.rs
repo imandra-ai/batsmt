@@ -39,9 +39,9 @@ impl<S:Symbol,B:BoolLit> CCTheory<S,B> {
     fn check(
         &mut self, partial: bool, acts: &mut theory::Actions<B>,
         trail: &theory::Trail<B>
-    ) -> bool {
+    ) {
         if partial && ! CCI::<S,B>::has_partial_check() {
-            return false; // doesn't handle partial checks
+            return; // doesn't handle partial checks
         }
 
         debug!("cc.{}-check", if partial { "partial" } else { "final" });
@@ -95,7 +95,7 @@ impl<S:Symbol,B:BoolLit> CCTheory<S,B> {
                 if let Some(r) = self.cc.partial_check() {
                     r
                 } else {
-                    return false // didn't do anything
+                    return; // didn't do anything
                 }
             } else {
                 self.cc.final_check()
@@ -118,7 +118,6 @@ impl<S:Symbol,B:BoolLit> CCTheory<S,B> {
                 }
             };
         }
-        true
     }
 }
 
@@ -139,8 +138,12 @@ impl<S:Symbol, B:BoolLit> theory::Theory<S,B> for CCTheory<S,B> {
         self.check(false, acts, trail);
     }
 
-    fn partial_check(&mut self, acts: &mut theory::Actions<B>, trail: &theory::Trail<B>) -> bool {
-        self.check(true, acts, trail)
+    fn partial_check(&mut self, acts: &mut theory::Actions<B>, trail: &theory::Trail<B>) {
+        self.check(true, acts, trail);
+    }
+
+    fn has_partial_check() -> bool {
+        CCI::<S,B>::has_partial_check()
     }
 
     fn add_literal(&mut self, t: AST, lit: B) {

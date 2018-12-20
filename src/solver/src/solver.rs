@@ -186,6 +186,12 @@ mod solver {
         fn check<A>(&mut self, partial: bool, a: &mut A) -> CheckRes<A::Conflict>
             where A: batsat::theory::TheoryArgument
         {
+            // no need to parse the trail or do anything, if the theory doesn't support partial
+            // checks
+            if partial && ! Th::has_partial_check() {
+                return CheckRes::Done;
+            }
+
             // obtain theory literals from `a`.
             // do we use the full model, or just what's not been examined last?
             let model = {
@@ -193,6 +199,8 @@ mod solver {
                     let offset = *self.trail_offset.get();
                     let tr = a.model();
                     &tr[offset..]
+                } else if Th::has_partial_check() {
+                    &[] // already got the whole trail
                 } else {
                     a.model()
                 }
@@ -219,13 +227,11 @@ mod solver {
 
             self.acts.clear(); // reset
             if partial {
-                let did_sth =
-                    self.th.partial_check(&mut self.acts, &Trail::from_slice(&self.th_trail));
+                self.th.partial_check(&mut self.acts, &Trail::from_slice(&self.th_trail));
 
-                // update which section of the trail we've checked so far
-                if did_sth {
-                    *self.trail_offset = a.model().len();
-                }
+                // update which section of the trail we've checked so far, so
+                // that the theory won't see this section again in `final_check`
+                *self.trail_offset = a.model().len();
             } else {
                 self.th.final_check(&mut self.acts, &Trail::from_slice(&self.th_trail));
             }
