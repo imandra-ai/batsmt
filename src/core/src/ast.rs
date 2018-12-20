@@ -891,6 +891,23 @@ mod dense_map {
             }
         }
 
+        /// Access two disjoint locations, mutably.
+        ///
+        /// Precondition: the ASTs are distinct and in the map (panics otherwise).
+        pub fn get2(&mut self, t1: AST, t2: AST) -> (&mut V, &mut V) {
+            let t1 = t1.0 as usize;
+            let t2 = t2.0 as usize;
+
+            if t1 == t2 || !self.mem.contains(t1) || !self.mem.contains(t2) {
+                panic!("dense_map.get2: invalid access");
+            }
+
+            let ref1 = (&mut self.vec[t1]) as *mut V;
+            let ref2 = (&mut self.vec[t2]) as *mut V;
+            // this is correct because t1 != t2, so the pointers are disjoint.
+            unsafe { (&mut* ref1, &mut *ref2) }
+        }
+
         /// Access the given key, return a mutable reference to its value
         pub fn get_mut(&mut self, ast: AST) -> Option<&mut V> {
             let i = ast.0 as usize;
