@@ -220,7 +220,7 @@ impl<S:Symbol, B: BoolLit> CC0<S,B> {
             undo: backtrack::Stack::new(),
             tmp_parents: ParentList::new(),
             traverse: ast::iter_suffix::State::new(m),
-            tmp_sig: Signature(SVec::new()),
+            tmp_sig: Signature::new(),
             sig_tbl: backtrack::HashMap::new(),
             expl_st: vec!(),
             cc1,
@@ -229,11 +229,6 @@ impl<S:Symbol, B: BoolLit> CC0<S,B> {
 
     fn find(&self, id: NodeID) -> Repr { self.cc1.find(id) }
     fn is_root(&self, id: NodeID) -> bool { self.find(id).0 == id }
-
-    /// Return list of parents for `r`.
-    fn parents(&self, r: Repr) -> &ParentList {
-        self.cc1.parents(r)
-    }
 
     /// Add this term to the congruence closure, if not present already.
     fn add_term(&mut self, t0: AST) {
@@ -707,9 +702,6 @@ mod node {
                 root: Repr(id), as_lit: None,
             }
         }
-
-        /// Is this node a root?
-        pub fn is_root(&self) -> bool { self.root.0 == self.id }
     }
 }
 
@@ -740,14 +732,6 @@ impl Signature {
     /// Clear the signature's content.
     #[inline(always)]
     pub fn clear(&mut self) { self.0.clear() }
-
-    /// Compute signature for `t`
-    fn compute<S:Symbol, B:BoolLit>(&mut self, cc1: &CC1<S,B>, t: AST) {
-        match cc1.m.get().view(t) {
-            View::Const(..) => unreachable!(),
-            View::App {f,args} => self.compute_app(cc1, f,args),
-        }
-    }
 
     fn compute_app<S:Symbol,B:BoolLit>(&mut self, cc1: &CC1<S,B>, f: AST, args: &[AST]) {
         self.clear();
