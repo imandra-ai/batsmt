@@ -7,7 +7,7 @@ pub mod ast;
 pub mod gc;
 pub mod symbol;
 pub mod backtrack;
-pub mod util;
+pub mod shared;
 
 pub use crate::{
   symbol::{Symbol,SymbolView,str::Sym as StrSymbol},
@@ -21,6 +21,6 @@ pub use crate::{
       View as AstView,
   },
   gc::GC,
-  util::{Shared,SharedRef,SharedRefMut},
+  shared::{Shared,SharedRef,SharedRefMut},
 };
 

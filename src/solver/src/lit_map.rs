@@ -4,7 +4,7 @@
 use {
     batsmt_core::{
         symbol::Symbol, ast::{self,AST,View},
-        util::{Shared,SharedRef,SharedRefMut},
+        Shared,SharedRef,SharedRefMut,
     },
     batsat::{Var as BVar, LMap},
     crate::blit::BLit,

@@ -14,7 +14,7 @@ use {
     },
     crate::{
         Symbol,SymbolView,GC,
-        util::{Shared,SharedRef,SharedRefMut},
+        Shared,SharedRef,SharedRefMut,
     },
     fxhash::{FxHashMap,FxHashSet},
     batsmt_pretty as pp,
