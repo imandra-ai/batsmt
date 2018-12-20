@@ -4,7 +4,6 @@
 //! The `CC` type is responsible for enforcing congruence and transitivity
 //! of equality.
 
-// TODO: signatures
 // TODO: parametrize by "micro theories" (which just work on merges + expl)
 
 // micro theories:
@@ -191,7 +190,11 @@ impl<S:Symbol, B: BoolLit> CC<S, B> {
                 },
             }
         }
-        Ok(&self.cc0.props)
+        if self.cc0.cc1.ok {
+            Ok(&self.cc0.props)
+        } else {
+            Err(Conflict(&self.cc0.confl))
+        }
     }
 }
 
@@ -203,6 +206,7 @@ fn needs_signature<S:Symbol>(m: &M<S>, t: AST) -> bool {
     }
 }
 
+// main congruence closure operations
 impl<S:Symbol, B: BoolLit> CC0<S,B> {
     /// Create a core congruence closure
     fn new(m: &M<S>, b: Builtins) -> Self {
@@ -319,9 +323,12 @@ impl<S:Symbol, B: BoolLit> CC0<S,B> {
                 self.cc1.ok = false;
                 self.undo.push_if_nonzero(UndoOp::SetOk);
                 self.confl.clear();
-                self.expand_expl_into_confl(expl);
+                self.expl_st.clear();
+                self.expl_st.push(expl);
                 self.explain_eq(a, ra.0);
                 self.explain_eq(b, rb.0);
+                self.expl_fixpoint();
+                trace!("computed conflict: {:?}", &self.confl);
                 return;
             }
             std::mem::swap(&mut ra, &mut rb);
@@ -442,16 +449,15 @@ impl<S:Symbol, B: BoolLit> CC0<S,B> {
         }
     }
 
-    /// Unfold `expl` into literals, push them into `self.confl`
-    fn expand_expl_into_confl(&mut self, expl: Expl<B>) {
-        trace!("expand-expl-into-confl");
-        self.expl_st.clear();
-        self.expl_st.push(expl);
+    /// Main loop for turning explanations into a conflict
+    fn expl_fixpoint(&mut self) {
         let m = self.m.clone();
         while let Some(e) = self.expl_st.pop() {
-            trace!("expand-expl {}", m.pp(&e));
+            trace!("expand-expl: {}", m.pp(&e));
             match e {
-                Expl::Lit(lit) => self.confl.push(lit),
+                Expl::Lit(lit) => {
+                    self.confl.push(!lit); // conflict needs negation
+                },
                 Expl::AreEq(a,b) => {
                     self.explain_eq(a, b);
                 },
@@ -473,11 +479,28 @@ impl<S:Symbol, B: BoolLit> CC0<S,B> {
         }
     }
 
-    /// Explain why `a` and `b` were merged, pushing explanations onto `self.expl_st`.
+    /// Explain why `a` and `b` were merged, pushing some sub-tasks
+    /// onto `self.expl_st`, and leaf literals onto `self.confl`.
     fn explain_eq(&mut self, a: NodeID, b: NodeID)  {
         if a == b { return }
-        // FIXME
-        unimplemented!("explain merge of {} and {}", self.m.pp(a), self.m.pp(b));
+        trace!("explain merge of {} and {}", self.m.pp(a), self.m.pp(b));
+
+        let common_ancestor = self.cc1.find_expl_common_ancestor(a, b);
+        trace!("common ancestor: {}", self.m.pp(common_ancestor));
+        self.explain_along_path(a, common_ancestor);
+        self.explain_along_path(b, common_ancestor);
+    }
+
+    /// Explain why `cur =_E ancestor`, where `ancestor` is reachable from `cur`
+    fn explain_along_path(&mut self, mut cur: AST, ancestor: AST) {
+        while cur != ancestor {
+            if let Some((next, expl)) = &self.cc1[cur].expl {
+                self.expl_st.push(expl.clone()); // need to explain this link
+                cur = *next;
+            } else {
+                panic!()
+            }
+        }
     }
 }
 
@@ -618,6 +641,51 @@ impl<S:Symbol, B:BoolLit> CC1<S,B> {
             }
         }
     }
+
+    /// Distance separating `t` from the root of its explanation forest.
+    fn dist_to_expl_root(&self, mut t: AST) -> usize {
+        let mut dist = 0;
+
+        while let Node {expl: Some((next_t,_)), ..} = self[t] {
+            dist += 1;
+            t = next_t;
+        }
+        dist
+    }
+
+    /// Find the closest common ancestor of `a` and `b` in the proof
+    /// forest.
+    /// Precond: `is_eq(a,b)`.
+    fn find_expl_common_ancestor(&self, mut a: AST, mut b: AST) -> AST {
+        debug_assert!(self.is_eq(a,b));
+
+        let dist_a = self.dist_to_expl_root(a);
+        let dist_b = self.dist_to_expl_root(b);
+        if dist_a > dist_b {
+            a = self.skip_expl_links(a, dist_a - dist_b);
+        } else if dist_a < dist_b {
+            b = self.skip_expl_links(b, dist_b - dist_a);
+        };
+
+        // now walk in lock-step until we find the ancestor
+        loop {
+            if a == b {
+                return a;
+            }
+
+            if let Some((a2,_)) = self[a].expl { a = a2 } else { panic!() };
+            if let Some((b2,_)) = self[b].expl { b = b2 } else { panic!() };
+        }
+    }
+
+    /// Skip `n` links in the explanation forest, return 
+    fn skip_expl_links(&self, mut t: AST, mut n: usize) -> AST {
+        while n > 0 {
+            if let Some((t2,_)) = self[t].expl { t = t2 } else { panic!() };
+            n -= 1
+        };
+        t
+    }
 }
 
 impl<S: Symbol,B:BoolLit> backtrack::Backtrackable for CC<S,B> {
@@ -628,6 +696,7 @@ impl<S: Symbol,B:BoolLit> backtrack::Backtrackable for CC<S,B> {
     }
 
     fn pop_levels(&mut self, n: usize) {
+        debug_assert_eq!(self.cc0.undo.n_levels(), self.cc0.sig_tbl.n_levels());
         let cc1 = &mut self.cc0.cc1;
         self.cc0.undo.pop_levels(n, |op| cc1.perform_undo(op));
         self.cc0.sig_tbl.pop_levels(n);
@@ -654,7 +723,6 @@ impl ParentList {
     }
 }
 
-// main congruence closure operations
 mod cc {
     use super::*;
 
@@ -727,11 +795,11 @@ mod expl {
 
 impl Signature {
     /// Create a new signature.
-    pub fn new() -> Self { Signature(SVec::new()) }
+    fn new() -> Self { Signature(SVec::new()) }
 
     /// Clear the signature's content.
     #[inline(always)]
-    pub fn clear(&mut self) { self.0.clear() }
+    fn clear(&mut self) { self.0.clear() }
 
     fn compute_app<S:Symbol,B:BoolLit>(&mut self, cc1: &CC1<S,B>, f: AST, args: &[AST]) {
         self.clear();
