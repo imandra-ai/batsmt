@@ -5,7 +5,7 @@ use {
     batsmt_core::{self as core,ast::{self,AST},symbol::Symbol},
     batsmt_theory::{self as theory, BoolLit},
     batsmt_pretty as pp,
-    crate::{Builtins,CCInterface},
+    crate::{Builtins,CCInterface,PropagationSet,Conflict},
 };
 
 #[allow(unused_imports)]
@@ -36,21 +36,11 @@ impl<S:Symbol,B:BoolLit> CCTheory<S,B> {
         Self { builtins: b, m: m.clone(), cc }
     }
 
-    fn check(
-        &mut self, partial: bool, acts: &mut theory::Actions<B>,
-        trail: &theory::Trail<B>
-    ) {
-        if partial && ! CCI::<S,B>::has_partial_check() {
-            return; // doesn't handle partial checks
-        }
-
-        debug!("cc.{}-check", if partial { "partial" } else { "final" });
-        let mut do_sth = !partial;
-
-        // local borrow of AST manager
-        let m = self.m.get();
+    fn add_trail_to_cc(&mut self, trail: &theory::Trail<B>) -> bool {
+        let mut done_sth = false;
 
         // update congruence closure
+        let m = self.m.get();
         for (ast,sign,lit) in trail.iter() {
             // convert `ast is {true,false}` into
             let op = {
@@ -78,7 +68,7 @@ impl<S:Symbol,B:BoolLit> CCTheory<S,B> {
                 }
             };
 
-            do_sth = true;
+            done_sth = true;
 
             trace!("process-op {} (expl {:?})", self.m.pp(&op), lit);
             match op {
@@ -88,36 +78,7 @@ impl<S:Symbol,B:BoolLit> CCTheory<S,B> {
                 Op::Distinct(_) => unimplemented!("`distinct` is not supported"),
             }
         }
-
-        // check CC's satisfiability
-        if do_sth {
-            let res = if partial {
-                if let Some(r) = self.cc.partial_check() {
-                    r
-                } else {
-                    return; // didn't do anything
-                }
-            } else {
-                self.cc.final_check()
-            };
-            match res {
-                Ok(props) if props.len() == 0 => (), // trivial!
-                Ok(props) => {
-                    for _c in props.iter() {
-                        break;
-                        // TODO: pass to the Actions directly
-                        // TODO: `acts` should take `add_propagation(TheoryList, I: Iterator…)`
-                        //       and make a lemma out of it, or use better API
-                        // acts.add_bool_lemma(c);
-                    }
-                },
-                Err(c) => {
-                    let costly = true;
-                    let iter = c.0.iter().map(|b| theory::TheoryLit::B(*b));
-                    acts.raise_conflict_iter(iter, costly)
-                }
-            };
-        }
+        done_sth
     }
 }
 
@@ -133,13 +94,53 @@ enum Op<'a> {
     Distinct(&'a [AST]), // more than 2 elements
 }
 
+
+fn act_propagate<B:BoolLit>(acts: &mut theory::Actions<B>, props: &PropagationSet<B>) {
+    if props.len() > 0 {
+        for _c in props.iter() {
+            break;
+            // TODO: pass to the Actions directly
+            // TODO: `acts` should take `add_propagation(TheoryList, I: Iterator…)`
+            //       and make a lemma out of it, or use better API
+            // acts.add_bool_lemma(c);
+        }
+    }
+}
+
+fn act_conflict<B:BoolLit>(acts: &mut theory::Actions<B>, c: Conflict<B>) {
+    let costly = true;
+    let iter = c.0.iter().map(|b| theory::TheoryLit::B(*b));
+    acts.raise_conflict_iter(iter, costly)
+}
+
 impl<S:Symbol, B:BoolLit> theory::Theory<S,B> for CCTheory<S,B> {
     fn final_check(&mut self, acts: &mut theory::Actions<B>, trail: &theory::Trail<B>) {
-        self.check(false, acts, trail);
+        debug!("cc.final-check");
+        self.add_trail_to_cc(trail);
+        let res = self.cc.final_check();
+
+        match res {
+            Ok(props) => act_propagate(acts, props),
+            Err(c) => act_conflict(acts, c),
+        };
     }
 
     fn partial_check(&mut self, acts: &mut theory::Actions<B>, trail: &theory::Trail<B>) {
-        self.check(true, acts, trail);
+        if ! CCI::<S,B>::has_partial_check() {
+            return; // doesn't handle partial checks
+        }
+        debug!("cc.partial-check");
+
+        let do_sth = self.add_trail_to_cc(trail);
+        if !do_sth {
+            return; // nothing new
+        }
+        let res = self.cc.partial_check();
+
+        match res {
+            Ok(props) => act_propagate(acts, props),
+            Err(c) => act_conflict(acts, c),
+        };
     }
 
     fn has_partial_check() -> bool {

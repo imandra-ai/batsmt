@@ -56,8 +56,10 @@ pub trait CCInterface<B:BoolLit> : backtrack::Backtrackable {
     /// the current trail.
     fn final_check(&mut self) -> Result<&PropagationSet<B>, Conflict<B>>;
 
-    /// Same as `final_check` but can return `None` if it didn't do anything.
-    fn partial_check(&mut self) -> Option<Result<&PropagationSet<B>, Conflict<B>>> { None }
+    /// Same as `final_check`, but never called if `has_partial_check() == false`.
+    fn partial_check(&mut self) -> Result<&PropagationSet<B>, Conflict<B>> {
+        unimplemented!("partial check")  // FIXME: instead, return empty propagations
+    }
 
     /// Can it handle partial checks?
     fn has_partial_check() -> bool { false }
