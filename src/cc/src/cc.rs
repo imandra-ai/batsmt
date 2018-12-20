@@ -13,8 +13,7 @@
 use {
     std::{
         //ops::{Deref,DerefMut},
-        u32, marker::PhantomData,
-        collections::VecDeque,
+        u32, collections::VecDeque,
     },
     batsmt_core::{ast::{self,AST,View},Symbol,backtrack},
     batsmt_pretty as pp,
@@ -24,14 +23,8 @@ use {
 
 type M<S> = ast::Manager<S>;
 
-/// The congruence closure
+/// The congruence closure.
 pub struct CC<S:Symbol,B:BoolLit> {
-    m_s: PhantomData<S>,
-    cc0: CC0<S,B>,
-}
-
-/// internal state of the congruence closure
-struct CC0<S:Symbol,B:BoolLit> {
     b: Builtins,
     m: ast::Manager<S>, // the AST manager
     tasks: VecDeque<Task<B>>, // operations to perform
@@ -46,7 +39,7 @@ struct CC0<S:Symbol,B:BoolLit> {
     cc1: CC1<S,B>,
 }
 
-/// internal state
+/// internal state, with just the core structure for nodes and parent sets
 struct CC1<S:Symbol,B:BoolLit> {
     m: ast::Manager<S>, // the AST manager
     ok: bool, // no conflict?
@@ -126,16 +119,16 @@ struct Signature(SVec<Repr>);
 impl<S:Symbol, B:BoolLit> CCInterface<B> for CC<S,B> {
     fn merge(&mut self, t1: AST, t2: AST, lit: B) {
         let expl = Expl::Lit(lit);
-        self.cc0.tasks.push_back(Task::AddTerm(t1));
-        self.cc0.tasks.push_back(Task::AddTerm(t2));
-        self.cc0.tasks.push_back(Task::Merge(t1,t2,expl))
+        self.tasks.push_back(Task::AddTerm(t1));
+        self.tasks.push_back(Task::AddTerm(t2));
+        self.tasks.push_back(Task::Merge(t1,t2,expl))
     }
 
     fn distinct(&mut self, ts: &[AST], lit: B) {
         let mut v = SVec::with_capacity(ts.len());
         v.extend_from_slice(ts);
         let expl = Expl::Lit(lit);
-        self.cc0.tasks.push_back(Task::Distinct(v,expl))
+        self.tasks.push_back(Task::Distinct(v,expl))
     }
 
     fn final_check(&mut self) -> Result<&PropagationSet<B>, Conflict<B>> {
@@ -153,47 +146,36 @@ impl<S:Symbol, B:BoolLit> CCInterface<B> for CC<S,B> {
     fn has_partial_check() -> bool { false }
 
     fn add_literal(&mut self, t: AST, lit: B) {
-        self.cc0.tasks.push_back(Task::AddTerm(t));
-        self.cc0.tasks.push_back(Task::MapToLit(t, lit));
+        self.tasks.push_back(Task::AddTerm(t));
+        self.tasks.push_back(Task::MapToLit(t, lit));
     }
 
     fn impl_descr(&self) -> &'static str { "fast congruence closure"}
 }
 
-// main API
-impl<S, B:BoolLit> CC<S, B> where S: Symbol {
-    /// Create a new congruence closure using the given `Manager`
-    pub fn new(m: &ast::Manager<S>, b: Builtins) -> Self {
-        CC {
-            m_s: PhantomData::default(),
-            cc0: CC0::new(m, b),
-        }
-    }
-}
-
 impl<S:Symbol, B: BoolLit> CC<S, B> {
     // main `check` function, performs the fixpoint
     fn check_internal(&mut self) -> Result<&PropagationSet<B>, Conflict<B>> {
-        debug!("check-internal ({} tasks)", self.cc0.tasks.len());
-        while let Some(task) = self.cc0.tasks.pop_front() {
-            if ! self.cc0.cc1.ok {
-                debug_assert!(self.cc0.confl.len() >= 1); // must have some conflict
-                return Err(Conflict(&self.cc0.confl))
+        debug!("check-internal ({} tasks)", self.tasks.len());
+        while let Some(task) = self.tasks.pop_front() {
+            if ! self.cc1.ok {
+                debug_assert!(self.confl.len() >= 1); // must have some conflict
+                return Err(Conflict(&self.confl))
             }
             match task {
-                Task::AddTerm(t) => self.cc0.add_term(t),
-                Task::UpdateSig(t) => self.cc0.update_signature(t),
-                Task::Merge(a,b,expl) => self.cc0.merge(a, b, expl),
-                Task::MapToLit(t,lit) => self.cc0.map_to_lit(t, lit),
+                Task::AddTerm(t) => self.add_term(t),
+                Task::UpdateSig(t) => self.update_signature(t),
+                Task::Merge(a,b,expl) => self.merge(a, b, expl),
+                Task::MapToLit(t,lit) => self.map_to_lit(t, lit),
                 Task::Distinct(..) => {
                     unimplemented!("cannot handle distinct yet")
                 },
             }
         }
-        if self.cc0.cc1.ok {
-            Ok(&self.cc0.props)
+        if self.cc1.ok {
+            Ok(&self.props)
         } else {
-            Err(Conflict(&self.cc0.confl))
+            Err(Conflict(&self.confl))
         }
     }
 }
@@ -207,16 +189,16 @@ fn needs_signature<S:Symbol>(m: &M<S>, t: AST) -> bool {
 }
 
 // main congruence closure operations
-impl<S:Symbol, B: BoolLit> CC0<S,B> {
-    /// Create a core congruence closure
-    fn new(m: &M<S>, b: Builtins) -> Self {
+impl<S:Symbol, B: BoolLit> CC<S,B> {
+    /// Create a new congruence closure.
+    pub fn new(m: &M<S>, b: Builtins) -> Self {
         let mut cc1 = CC1::new(m);
         // add builtins
         cc1.nodes.insert(b.true_, Node::new(b.true_));
         cc1.parents.insert(Repr(b.true_), ParentList::new());
         cc1.nodes.insert(b.false_, Node::new(b.false_));
         cc1.parents.insert(Repr(b.false_), ParentList::new());
-        CC0{
+        CC{
             b, m: m.clone(),
             tasks: VecDeque::new(),
             confl: vec!(),
@@ -242,7 +224,7 @@ impl<S:Symbol, B: BoolLit> CC0<S,B> {
 
         self.traverse.clear();
 
-        let CC0 {traverse, undo, m, cc1, tasks, ..} = self;
+        let CC {traverse, undo, m, cc1, tasks, ..} = self;
         let mr = m.get();
         // traverse in postfix order (shared context: `cc1`)
         traverse.iter(
@@ -322,15 +304,10 @@ impl<S:Symbol, B: BoolLit> CC0<S,B> {
                        self.m.pp(a), self.m.pp(b));
                 self.cc1.ok = false;
                 self.undo.push_if_nonzero(UndoOp::SetOk);
-                self.confl.clear();
-                self.expl_st.clear();
-                self.expl_st.push(expl);
-                self.explain_eq(a, ra.0);
-                self.explain_eq(b, rb.0);
-                self.expl_fixpoint();
-                // cleanup conflict
-                self.confl.sort_unstable();
-                self.confl.dedup();
+                let mut expl = ExplResolve::new(self, expl);
+                expl.explain_eq(a, ra.0);
+                expl.explain_eq(b, rb.0);
+                expl.fixpoint();
                 trace!("computed conflict: {:?}", &self.confl);
                 return;
             }
@@ -377,7 +354,7 @@ impl<S:Symbol, B: BoolLit> CC0<S,B> {
         // - a.class += b.class
         parents_a.append(&self.tmp_parents);
 
-        let CC0 {cc1, m, b, props, ..} = self;
+        let CC {cc1, m, b, props, ..} = self;
         cc1.iter_class(rb, |n| {
             trace!("{}.iter_class: update {}", m.pp(rb.0), m.pp(n.id));
             debug_assert_eq!(n.root, rb);
@@ -401,6 +378,9 @@ impl<S:Symbol, B: BoolLit> CC0<S,B> {
             n.prev = prev_b;
             n.next = next_b;
 
+            if n.size as usize + size_b as usize > u32::MAX as usize {
+                panic!("overflow when merging classes of size {} and {}", n.size, size_b);
+            }
             n.size += size_b;
 
             let n = &mut self.cc1[rb.0];
@@ -419,7 +399,7 @@ impl<S:Symbol, B: BoolLit> CC0<S,B> {
 
     /// Check and update signature of `t`, possibly adding new merged by congruence.
     fn update_signature(&mut self, t: AST) {
-        let CC0 {m, tmp_sig: ref mut sig, cc1, sig_tbl, tasks, ..} = self;
+        let CC {m, tmp_sig: ref mut sig, cc1, sig_tbl, tasks, ..} = self;
         match m.get().view(t) {
             View::Const(_) => (),
             View::App {f, args} if f == self.b.eq => {
@@ -451,62 +431,9 @@ impl<S:Symbol, B: BoolLit> CC0<S,B> {
             },
         }
     }
-
-    /// Main loop for turning explanations into a conflict
-    fn expl_fixpoint(&mut self) {
-        let m = self.m.clone();
-        while let Some(e) = self.expl_st.pop() {
-            trace!("expand-expl: {}", m.pp(&e));
-            match e {
-                Expl::Lit(lit) => {
-                    self.confl.push(!lit); // conflict needs negation
-                },
-                Expl::AreEq(a,b) => {
-                    self.explain_eq(a, b);
-                },
-                Expl::Congruence(a,b) => {
-                    // explain why arguments are pairwise equal
-                    match (m.get().view(a), m.get().view(b)) {
-                        (View::App {f: f1, args: args1},
-                         View::App {f: f2, args: args2}) => {
-                            debug_assert_eq!(args1.len(), args2.len());
-                            self.explain_eq(f1, f2);
-                            for i in 0 .. args1.len() {
-                                self.explain_eq(args1[i], args2[i]);
-                            }
-                        },
-                        _ => unreachable!(),
-                    }
-                }
-            }
-        }
-    }
-
-    /// Explain why `a` and `b` were merged, pushing some sub-tasks
-    /// onto `self.expl_st`, and leaf literals onto `self.confl`.
-    fn explain_eq(&mut self, a: NodeID, b: NodeID)  {
-        if a == b { return }
-        trace!("explain merge of {} and {}", self.m.pp(a), self.m.pp(b));
-
-        let common_ancestor = self.cc1.find_expl_common_ancestor(a, b);
-        trace!("common ancestor: {}", self.m.pp(common_ancestor));
-        self.explain_along_path(a, common_ancestor);
-        self.explain_along_path(b, common_ancestor);
-    }
-
-    /// Explain why `cur =_E ancestor`, where `ancestor` is reachable from `cur`
-    fn explain_along_path(&mut self, mut cur: AST, ancestor: AST) {
-        while cur != ancestor {
-            if let Some((next, expl)) = &self.cc1[cur].expl {
-                self.expl_st.push(expl.clone()); // need to explain this link
-                cur = *next;
-            } else {
-                panic!()
-            }
-        }
-    }
 }
 
+// query the graph
 impl<S:Symbol, B:BoolLit> CC1<S,B> {
     fn new(m: &M<S>) -> Self {
         CC1 {
@@ -540,6 +467,7 @@ impl<S:Symbol, B:BoolLit> CC1<S,B> {
                 self.ok = true;
             },
             UndoOp::Unmerge {a, b} => {
+                assert_ne!(a.0,b.0); // crucial invariant
                 let Node {prev: prev_a, next: next_a, root: root_a, ..} = self[a.0];
                 debug_assert!(root_a == a);
 
@@ -554,7 +482,7 @@ impl<S:Symbol, B:BoolLit> CC1<S,B> {
 
                 nb.next = next_a;
                 nb.prev = prev_a;
-                nb.root = b;
+                nb.root = b; // FIXME: do it for the whole class, now that pointers are ok
 
                 // one of {ra,rb} points to the other, explanation wise.
                 // Be sure to remove this link from the proof forest.
@@ -562,6 +490,8 @@ impl<S:Symbol, B:BoolLit> CC1<S,B> {
                     Some((ra2,_)) if ra2 == a.0 => nb.expl = None,
                     _ => ()
                 }
+                drop(nb);
+
                 {
                     let na = &mut self[a.0];
                     na.prev = prev_b;
@@ -579,12 +509,13 @@ impl<S:Symbol, B:BoolLit> CC1<S,B> {
                 {
                     let len_parents_b = self.parents(b).len();
                     let p = self.parents_mut(a);
-                    debug_assert!(p.len() > len_parents_b);
+                    debug_assert!(p.len() >= len_parents_b);
                     p.truncate(p.len() - len_parents_b);
                 }
             },
             UndoOp::RemoveTerm(t) => {
                 self.nodes.remove(t);
+                self.parents.remove(&Repr(t));
 
                 // remove from children's parents' lists
                 let mr = self.m.get();
@@ -694,22 +625,99 @@ impl<S:Symbol, B:BoolLit> CC1<S,B> {
 impl<S: Symbol,B:BoolLit> backtrack::Backtrackable for CC<S,B> {
     fn push_level(&mut self) {
         trace!("push-level");
-        self.cc0.undo.push_level();
-        self.cc0.sig_tbl.push_level();
+        self.undo.push_level();
+        self.sig_tbl.push_level();
     }
 
     fn pop_levels(&mut self, n: usize) {
-        debug_assert_eq!(self.cc0.undo.n_levels(), self.cc0.sig_tbl.n_levels());
-        let cc1 = &mut self.cc0.cc1;
-        self.cc0.undo.pop_levels(n, |op| cc1.perform_undo(op));
-        self.cc0.sig_tbl.pop_levels(n);
+        debug_assert_eq!(self.undo.n_levels(), self.sig_tbl.n_levels());
+        let cc1 = &mut self.cc1;
+        self.undo.pop_levels(n, |op| cc1.perform_undo(op));
+        self.sig_tbl.pop_levels(n);
         if n > 0 {
             trace!("pop-levels {}", n);
-            self.cc0.tasks.clear(); // changes are invalidated
+            self.tasks.clear(); // changes are invalidated
         }
     }
 
-    fn n_levels(&self) -> usize { self.cc0.undo.n_levels() }
+    fn n_levels(&self) -> usize { self.undo.n_levels() }
+}
+
+/// Temporary structure to resolve explanations.
+struct ExplResolve<'a,S:Symbol, B:BoolLit> {
+    m: &'a M<S>,
+    cc1: &'a CC1<S,B>,
+    confl: &'a mut Vec<B>, // conflict clause to produce
+    expl_st: &'a mut Vec<Expl<B>>,
+}
+
+impl<'a,S:Symbol, B:BoolLit> ExplResolve<'a,S,B> {
+    /// Create the temporary structure
+    fn new(cc: &'a mut CC<S,B>, e: Expl<B>) -> Self {
+        let CC { m, cc1, confl, expl_st, ..} = cc;
+        confl.clear();
+        expl_st.clear();
+        expl_st.push(e); // start from there
+        ExplResolve { m, confl, cc1, expl_st }
+    }
+
+    /// Main loop for turning explanations into a conflict
+    fn fixpoint(mut self) -> &'a Vec<B> {
+        let m = self.m.clone();
+        while let Some(e) = self.expl_st.pop() {
+            trace!("expand-expl: {}", m.pp(&e));
+            match e {
+                Expl::Lit(lit) => {
+                    self.confl.push(!lit); // conflict needs negation
+                },
+                Expl::AreEq(a,b) => {
+                    self.explain_eq(a, b);
+                },
+                Expl::Congruence(a,b) => {
+                    // explain why arguments are pairwise equal
+                    match (m.get().view(a), m.get().view(b)) {
+                        (View::App {f: f1, args: args1},
+                         View::App {f: f2, args: args2}) => {
+                            debug_assert_eq!(args1.len(), args2.len());
+                            self.explain_eq(f1, f2);
+                            for i in 0 .. args1.len() {
+                                self.explain_eq(args1[i], args2[i]);
+                            }
+                        },
+                        _ => unreachable!(),
+                    }
+                }
+            }
+        }
+        // cleanup conflict
+        self.confl.sort_unstable();
+        self.confl.dedup();
+        self.confl
+    }
+
+    /// Explain why `a` and `b` were merged, pushing some sub-tasks
+    /// onto `self.expl_st`, and leaf literals onto `self.confl`.
+    fn explain_eq(&mut self, a: NodeID, b: NodeID) {
+        if a == b { return }
+        trace!("explain merge of {} and {}", self.m.pp(a), self.m.pp(b));
+
+        let common_ancestor = self.cc1.find_expl_common_ancestor(a, b);
+        trace!("common ancestor: {}", self.m.pp(common_ancestor));
+        self.explain_along_path(a, common_ancestor);
+        self.explain_along_path(b, common_ancestor);
+    }
+
+    /// Explain why `cur =_E ancestor`, where `ancestor` is reachable from `cur`
+    fn explain_along_path(&mut self, mut cur: AST, ancestor: AST) {
+        while cur != ancestor {
+            if let Some((next, expl)) = &self.cc1[cur].expl {
+                self.expl_st.push(expl.clone()); // need to explain this link
+                cur = *next;
+            } else {
+                panic!()
+            }
+        }
+    }
 }
 
 impl ParentList {
