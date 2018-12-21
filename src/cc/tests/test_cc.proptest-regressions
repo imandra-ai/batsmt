@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 xs 719704829 2274256562 4032051777 3388503857 # shrinks to ref tup = (astgen, [AssertNeq(AST(7), AST(7)), PushLevel, PushLevel, PopLevels(1), FinalCheck])
+xs 185213926 175564579 3510326437 1427448471 # shrinks to ref tup = (astgen, [PushLevel, PushLevel, PushLevel, PushLevel, PushLevel, PushLevel, PushLevel, AssertNeq(AST(6), AST(6)), AssertNeq(AST(6), AST(5)), PushLevel])

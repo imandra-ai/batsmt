@@ -88,6 +88,7 @@ enum UndoOp {
         root: Repr, // the new repr
         old_root: Repr, // merged into `a`
     }, // unmerge these two reprs
+    RemoveExplLink(AST,AST), // remove explanation link connecting these
 }
 
 /// Operation to perform in the main fixpoint
@@ -330,14 +331,21 @@ impl<S:Symbol, B: BoolLit> CC<S,B> {
 
         trace!("merge {} into {}", self.m.pp(rb.0), self.m.pp(ra.0));
 
-        // undo this change on backtrack
+        // update forest tree so that `b --[expl]--> a`.
+        // Note that here we link `a` and `b`, not their representatives.
+        {
+            self.undo.push_if_nonzero(UndoOp::RemoveExplLink(a,b));
+
+            self.cc1.reroot_forest(b);
+            let nb = &mut self.cc1[b];
+            debug_assert!(nb.expl.is_none());
+            nb.expl = Some((a, expl));
+        }
+
+        // undo the merge on backtrack
         self.undo.push_if_nonzero(UndoOp::Unmerge {
             root: ra, old_root: rb,
         });
-
-        // update forest tree so that `b --[expl]--> a`
-        self.cc1.reroot_forest(rb.0);
-        self.cc1[rb.0].expl = Some((ra.0, expl));
 
         // might need to check for congruence again for parents of `b`,
         // since one of their direct child (b) now has a different
@@ -468,19 +476,6 @@ impl<S:Symbol, B:BoolLit> CC1<S,B> {
                 debug_assert!(na.size > nb.size);
                 na.size -= nb.size;
 
-                // one of {ra,rb} points to the other, explanation wise.
-                // Be sure to remove this link from the proof forest.
-                {
-                    match nb.expl {
-                        Some((ra2,_)) if ra2 == a.0 => nb.expl = None,
-                        _ => ()
-                    }
-                    match na.expl {
-                        Some((rb2,_)) if rb2 == b.0 => na.expl = None,
-                        _ => ()
-                    }
-                }
-
                 // inverse switcharoo
                 {
                     let next_a = na.next;
@@ -497,6 +492,22 @@ impl<S:Symbol, B:BoolLit> CC1<S,B> {
                     debug_assert_eq!(nb1.root, a);
                     nb1.root = b;
                 });
+            },
+            UndoOp::RemoveExplLink(a,b) => {
+                // one of {a,b} points to the other, explanation wise.
+                // Be sure to remove this link from the proof forest.
+                {
+                    assert_ne!(a,b);
+                    let (na, nb) = self.nodes.0.get2(a,b);
+                    match nb.expl {
+                        Some((ra2,_)) if ra2 == a => nb.expl = None,
+                        _ => ()
+                    }
+                    match na.expl {
+                        Some((rb2,_)) if rb2 == b => na.expl = None,
+                        _ => ()
+                    }
+                }
             },
             UndoOp::RemoveTerm(t) => {
                 debug_assert_eq!(0, self.nodes[t].parents.len(), "remove term with parents");
@@ -521,11 +532,18 @@ impl<S:Symbol, B:BoolLit> CC1<S,B> {
     /// Reroot proof forest for the class of `r` so that `r` is the root.
     fn reroot_forest(&mut self, t: AST) {
         trace!("reroot {}", self.m.pp(t));
-        let (mut cur_t, mut expl) = match &self[t].expl {
-            None => {
-                return; // rooted in `t` already
-            },
-            Some((u,e)) => (*u,e.clone()).clone(),
+        let (mut cur_t, mut expl) = {
+            let n = &mut self[t];
+            match &n.expl {
+                None => {
+                    return; // rooted in `t` already
+                },
+                Some((u,e)) => {
+                    let tup = (*u,e.clone()).clone();
+                    n.expl = None;
+                    tup
+                }
+            }
         };
 
         let mut prev_t = t;
@@ -847,6 +865,9 @@ mod expl {
                 UndoOp::SetOk => { ctx.str("set-ok"); },
                 UndoOp::Unmerge{root:a,old_root:b} => {
                     ctx.str("unmerge(").pp(&m.pp(a.0)).str(", ").pp(&m.pp(b.0)).str(")");
+                },
+                UndoOp::RemoveExplLink(a,b) => {
+                    ctx.str("remove-expl-link(").pp(&m.pp(a)).str(", ").pp(&m.pp(b)).str(")");
                 },
                 UndoOp::UnmapLit(t) => {
                     ctx.str("unmap(").pp(&m.pp(t)).str(")");
