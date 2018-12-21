@@ -11,10 +11,7 @@
 // - rule for `ite` (t == true |- not t == false, and conversely)
 
 use {
-    std::{
-        //ops::{Deref,DerefMut},
-        u32, collections::VecDeque,
-    },
+    std::{ u32, collections::VecDeque, },
     batsmt_core::{ast::{self,AST,View},Symbol,backtrack},
     batsmt_pretty as pp,
     crate::{types::BoolLit,PropagationSet,Conflict,Builtins,CCInterface,SVec},
@@ -110,8 +107,7 @@ enum Task<B> {
 #[derive(Eq,PartialEq,Hash,Clone,Debug)]
 struct Signature(SVec<Repr>);
 
-// implement main interface
-impl<S:Symbol, B:BoolLit> CCInterface<B> for CC<S,B> {
+impl<S:Symbol,B:BoolLit> crate::Check<B> for CC<S,B> {
     fn merge(&mut self, t1: AST, t2: AST, lit: B) {
         let expl = Expl::Lit(lit);
         self.tasks.push_back(Task::AddTerm(t1));
@@ -126,6 +122,11 @@ impl<S:Symbol, B:BoolLit> CCInterface<B> for CC<S,B> {
         self.tasks.push_back(Task::Distinct(v,expl))
     }
 
+    fn add_literal(&mut self, t: AST, lit: B) {
+        self.tasks.push_back(Task::AddTerm(t));
+        self.tasks.push_back(Task::MapToLit(t, lit));
+    }
+
     fn final_check(&mut self) -> Result<&PropagationSet<B>, Conflict<B>> {
         debug!("cc.final-check()");
         self.check_internal()
@@ -135,15 +136,17 @@ impl<S:Symbol, B:BoolLit> CCInterface<B> for CC<S,B> {
         debug!("cc.partial-check()");
         self.check_internal()
     }
+}
+
+// implement main interface
+impl<S:Symbol, B:BoolLit> CCInterface<B> for CC<S,B> {
+    type Checker = CC<S,B>;
+
+    fn checker(&mut self) -> &mut Self::Checker { self }
 
     // FIXME
     // fn has_partial_check() -> bool { true }
     fn has_partial_check() -> bool { false }
-
-    fn add_literal(&mut self, t: AST, lit: B) {
-        self.tasks.push_back(Task::AddTerm(t));
-        self.tasks.push_back(Task::MapToLit(t, lit));
-    }
 
     fn impl_descr(&self) -> &'static str { "fast congruence closure"}
 }
@@ -154,8 +157,8 @@ impl<S:Symbol, B: BoolLit> CC<S, B> {
         debug!("check-internal ({} tasks)", self.tasks.len());
         while let Some(task) = self.tasks.pop_front() {
             if ! self.cc1.ok {
-                debug_assert!(self.confl.len() >= 1); // must have some conflict
-                return Err(Conflict(&self.confl))
+                self.tasks.clear();
+                break; // conflict detected, no need to continue
             }
             match task {
                 Task::AddTerm(t) => self.add_term(t),
@@ -170,6 +173,7 @@ impl<S:Symbol, B: BoolLit> CC<S, B> {
         if self.cc1.ok {
             Ok(&self.props)
         } else {
+            debug_assert!(self.confl.len() >= 1); // must have some conflict
             Err(Conflict(&self.confl))
         }
     }
@@ -585,12 +589,14 @@ impl<S:Symbol, B:BoolLit> CC1<S,B> {
 impl<S: Symbol,B:BoolLit> backtrack::Backtrackable for CC<S,B> {
     fn push_level(&mut self) {
         trace!("push-level");
+        self.tasks.clear(); // invalidated
         self.undo.push_level();
         self.sig_tbl.push_level();
     }
 
     fn pop_levels(&mut self, n: usize) {
         debug_assert_eq!(self.undo.n_levels(), self.sig_tbl.n_levels());
+        self.tasks.clear(); // invalidated
         let cc1 = &mut self.cc1;
         self.undo.pop_levels(n, |op| cc1.perform_undo(op));
         self.sig_tbl.pop_levels(n);

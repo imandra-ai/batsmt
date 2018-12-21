@@ -4,8 +4,7 @@
 use {
     batsmt_core::{self as core,ast::{self,AST},symbol::Symbol},
     batsmt_theory::{self as theory, BoolLit},
-    batsmt_pretty as pp,
-    crate::{Builtins,CCInterface,PropagationSet,Conflict},
+    crate::{Builtins,CCInterface,Check,PropagationSet,Conflict},
 };
 
 #[allow(unused_imports)]
@@ -20,6 +19,8 @@ type CCI<S,B> = NaiveCC<S,B>;
 
 #[cfg(not(feature="naive"))]
 type CCI<S,B> = CC<S,B>;
+
+type CCICheck<S,B> = <CCI<S,B> as CCInterface<B>>::Checker;
 
 /// A theory built on top of a congruence closure.
 pub struct CCTheory<S:Symbol,B: BoolLit>{
@@ -36,49 +37,42 @@ impl<S:Symbol,B:BoolLit> CCTheory<S,B> {
         Self { builtins: b, m: m.clone(), cc }
     }
 
-    fn add_trail_to_cc(&mut self, trail: &theory::Trail<B>) -> bool {
+    /// Get checker, add trail to it
+    fn checker_with_trail(&mut self, trail: &theory::Trail<B>) -> (bool, &mut CCICheck<S,B>)  {
         let mut done_sth = false;
+        let checker = self.cc.checker();
 
         // update congruence closure
         let m = self.m.get();
         for (ast,sign,lit) in trail.iter() {
-            // convert `ast is {true,false}` into
-            let op = {
-                match m.view(ast) {
-                    ast::View::App {f, args} if f == self.builtins.eq => {
-                        assert_eq!(2,args.len());
-                        if sign {
-                            Op::Eq(args[0], args[1])
-                        } else {
-                            Op::Eq(ast, self.builtins.false_) // `(a=b)=false`
-                        }
-                    },
-                    ast::View::App {f, args} if f == self.builtins.distinct => {
-                        if !sign {
-                            panic!("cannot handle negative `distinct`")
-                        };
-                        Op::Distinct(args)
-                    },
-                    _ if sign => {
-                        Op::Eq(ast, self.builtins.true_)
-                    },
-                    _ => {
-                        Op::Eq(ast, self.builtins.false_)
+            // convert `ast is {true,false}` into a merge/distinct op
+            match m.view(ast) {
+                ast::View::App {f, args} if f == self.builtins.eq => {
+                    assert_eq!(2,args.len());
+                    if sign {
+                        checker.merge(args[0], args[1], lit);
+                    } else {
+                        // `(a=b)=false`
+                        checker.merge(ast, self.builtins.false_, lit);
                     }
+                },
+                ast::View::App {f, args} if f == self.builtins.distinct => {
+                    if !sign {
+                        panic!("cannot handle negative `distinct`")
+                    };
+                    checker.distinct(args, lit)
+                },
+                _ if sign => {
+                    checker.merge(ast, self.builtins.true_, lit)
+                },
+                _ => {
+                    checker.merge(ast, self.builtins.false_, lit)
                 }
-            };
+            }
 
             done_sth = true;
-
-            trace!("process-op {} (expl {:?})", self.m.pp(&op), lit);
-            match op {
-                Op::Eq(a,b) => {
-                    self.cc.merge(a,b,lit)
-                },
-                Op::Distinct(_) => unimplemented!("`distinct` is not supported"),
-            }
         }
-        done_sth
+        (done_sth,checker)
     }
 }
 
@@ -86,12 +80,6 @@ impl<S:Symbol,B:BoolLit> core::backtrack::Backtrackable for CCTheory<S,B> {
     fn push_level(&mut self) { self.cc.push_level() }
     fn pop_levels(&mut self, n:usize) { self.cc.pop_levels(n) }
     fn n_levels(&self) -> usize { self.cc.n_levels() }
-}
-
-// what do to from a tuple
-enum Op<'a> {
-    Eq(AST,AST),
-    Distinct(&'a [AST]), // more than 2 elements
 }
 
 
@@ -116,8 +104,8 @@ fn act_conflict<B:BoolLit>(acts: &mut theory::Actions<B>, c: Conflict<B>) {
 impl<S:Symbol, B:BoolLit> theory::Theory<S,B> for CCTheory<S,B> {
     fn final_check(&mut self, acts: &mut theory::Actions<B>, trail: &theory::Trail<B>) {
         debug!("cc.final-check");
-        self.add_trail_to_cc(trail);
-        let res = self.cc.final_check();
+        let (_,checker) = self.checker_with_trail(trail);
+        let res = checker.final_check();
 
         match res {
             Ok(props) => act_propagate(acts, props),
@@ -131,11 +119,11 @@ impl<S:Symbol, B:BoolLit> theory::Theory<S,B> for CCTheory<S,B> {
         }
         debug!("cc.partial-check");
 
-        let do_sth = self.add_trail_to_cc(trail);
+        let (do_sth,checker) = self.checker_with_trail(trail);
         if !do_sth {
             return; // nothing new
         }
-        let res = self.cc.partial_check();
+        let res = checker.partial_check();
 
         match res {
             Ok(props) => act_propagate(acts, props),
@@ -151,26 +139,3 @@ impl<S:Symbol, B:BoolLit> theory::Theory<S,B> for CCTheory<S,B> {
         self.cc.add_literal(t,lit);
     }
 }
-
-mod op {
-    use super::*;
-
-    impl<'a> ast::PrettyM for Op<'a> {
-        fn pp_m<S:Symbol>(&self, m: &M<S>, ctx: &mut pp::Ctx) {
-            match self {
-                Op::Eq(a,b) => {
-                    ctx.sexp(|ctx| {
-                        ctx.str("=").space().array(pp::space(),&[m.pp(a), m.pp(b)]);
-                    });
-                },
-                Op::Distinct(args) => {
-                    ctx.sexp(|ctx| {
-                        ctx.str("distinct").space().iter(pp::space(), args.iter().map(|t| m.pp(t)));
-                    });
-                },
-            }
-        }
-    }
-}
-
-
