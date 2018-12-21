@@ -44,9 +44,17 @@ struct Solve<'a, S:Symbol, B> {
     m_s: PhantomData<S>,
     m: ast::Manager<S>, // the AST manager
     b: Builtins, // builtin terms
-    root: FxHashMap<AST, Repr>, // term -> its root
+    root: FxHashMap<AST, Repr>, // term -> its root + expl
+    //root: FxHashMap<AST, (Repr,Option<Expl<B>>)>, // term -> its root + expl
     parents: FxHashMap<Repr, SVec<AST>>, // term -> its direct superterms
     tasks: VecDeque<Task>, // tasks to perform
+}
+
+#[derive(Clone,Copy,Debug)]
+enum Expl<B> {
+    Lit(B),
+    Congruent(AST,AST),
+    AreEq(AST,AST),
 }
 
 #[derive(Clone,Copy,Debug)]
@@ -85,6 +93,10 @@ impl<S:Symbol,B:BoolLit> CCInterface<B> for NaiveCC<S,B> {
     // NOTE: do not implement partial check at all.
 
     fn impl_descr(&self) -> &'static str { "naive congruence closure"}
+
+    fn explain_propagation(&mut self, _p: B) -> &[B] {
+        unreachable!() // never propagated anything
+    }
 }
 
 impl<S:Symbol,B:BoolLit> NaiveCC<S,B> {

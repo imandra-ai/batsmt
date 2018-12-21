@@ -61,6 +61,7 @@ pub struct TheoryClauseSet<B:BoolLit> {
 /// is T-inconsistent.
 pub struct Actions<B:BoolLit> {
     cs: TheoryClauseSet<B>,
+    propagations: Vec<B>,
     conflict: bool,
     costly_conflict: bool,
 }
@@ -72,8 +73,11 @@ pub struct Actions<B:BoolLit> {
 /// structure will contain
 #[derive(Clone,Debug)]
 pub enum ActState<'a, B:BoolLit> {
-    /// propagations (new lemmas)
-    Props(&'a TheoryClauseSet<B>),
+    /// propagations and new lemmas
+    Props {
+        props: &'a [B],
+        lemmas: &'a TheoryClauseSet<B>
+    },
     /// conflict reached
     Conflict {
         c: TheoryClauseRef<'a, B>,
@@ -125,6 +129,12 @@ pub trait Theory<S:Symbol, B:BoolLit> : Backtrackable {
     /// and for all, and so that the theory can propagate
     /// literals back to the SAT solver.
     fn add_literal(&mut self, _t: AST, _lit: B) {}
+
+    /// Ask the theory to explain why it propagated literal `p`.
+    ///
+    /// The result must be a set `g` of literals which are true in the current
+    /// trail, and such that `g => p` is a T-tautology.
+    fn explain_propagation(&mut self, p: B) -> &[B];
 }
 
 mod theory_lit {
@@ -338,6 +348,7 @@ impl<B:BoolLit> Actions<B> {
         Self {
             conflict: false,
             costly_conflict: false,
+            propagations: vec!(),
             cs: TheoryClauseSet::new(),
         }
     }
@@ -357,12 +368,21 @@ impl<B:BoolLit> Actions<B> {
             let c = self.cs.iter().next().expect("conflict but no conflict clause");
             ActState::Conflict {c, costly: self.costly_conflict}
         } else {
-            ActState::Props(&self.cs)
+            ActState::Props{
+                props: &self.propagations,
+                lemmas: &self.cs
+            }
         }
     }
 
     pub fn is_sat(&self) -> bool { ! self.conflict }
     pub fn is_unsat(&self) -> bool { self.conflict }
+
+    /// Propagate the given boolean literal.
+    #[inline(always)]
+    pub fn propagate(&mut self, p: B) {
+        self.propagations.push(p)
+    }
 
     /// Instantiate the given lemma
     pub fn add_lemma(&mut self, c: &[TheoryLit<B>]) {
@@ -398,6 +418,7 @@ impl<B:BoolLit> Actions<B> {
             trace!("theory.raise-conflict {:?} (costly: {})", c, costly);
             self.conflict = true;
             self.costly_conflict = costly;
+            self.propagations.clear();
             self.cs.clear(); // remove propagated lemmas
             self.cs.push(c);
         }
@@ -413,6 +434,7 @@ impl<B:BoolLit> Actions<B> {
             trace!("theory.raise-conflict-iter (costly: {})", costly);
             self.conflict = true;
             self.costly_conflict = costly;
+            self.propagations.clear();
             self.cs.clear(); // remove propagated lemmas
             self.cs.push_iter(i);
         }

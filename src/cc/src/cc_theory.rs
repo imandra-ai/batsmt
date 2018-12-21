@@ -82,12 +82,8 @@ impl<S:Symbol,B:BoolLit> core::backtrack::Backtrackable for CCTheory<S,B> {
 
 fn act_propagate<B:BoolLit>(acts: &mut theory::Actions<B>, props: &PropagationSet<B>) {
     if props.len() > 0 {
-        for _c in props.iter() {
-            break;
-            // TODO: pass to the Actions directly
-            // TODO: `acts` should take `add_propagation(TheoryList, I: Iterator…)`
-            //       and make a lemma out of it, or use better API
-            // acts.add_bool_lemma(c);
+        for p in props.iter() {
+            acts.propagate(p)
         }
     }
 }
@@ -116,6 +112,7 @@ impl<S:Symbol, B:BoolLit> theory::Theory<S,B> for CCTheory<S,B> {
         }
         debug!("cc.partial-check");
 
+        // TODO: shouldn't this shortcut be done in main solver already?
         let do_sth = self.add_trail_to_cc(trail);
         if !do_sth {
             return; // nothing new
@@ -134,5 +131,10 @@ impl<S:Symbol, B:BoolLit> theory::Theory<S,B> for CCTheory<S,B> {
 
     fn add_literal(&mut self, t: AST, lit: B) {
         self.cc.add_literal(t,lit);
+    }
+
+    #[inline(always)]
+    fn explain_propagation(&mut self, p: B) -> &[B] {
+        self.cc.explain_propagation(p)
     }
 }

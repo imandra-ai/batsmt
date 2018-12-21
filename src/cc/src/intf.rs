@@ -36,4 +36,7 @@ pub trait CC<B:BoolLit> : backtrack::Backtrackable {
 
     /// Description of this particular implementation
     fn impl_descr(&self) -> &'static str;
+
+    /// Explain given propagation.
+    fn explain_propagation(&mut self, p: B) -> &[B];
 }

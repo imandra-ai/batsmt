@@ -1,7 +1,7 @@
 
 use {
     smallvec::SmallVec,
-    batsmt_core::{AST,backtrack},
+    batsmt_core::{AST, },
 };
 
 pub use batsmt_theory::BoolLit;
@@ -19,22 +19,10 @@ pub struct Builtins {
     pub distinct: AST,
 }
 
-/// Propagation: `guard => concl`
-///
-/// Note that `guard` literals should all be true in current trail.
-#[derive(Clone,Copy)]
-pub struct Propagation<'a,B:BoolLit> {
-    pub concl: B,
-    pub guard: &'a [B],
-}
-
-// A propagation is represented by a pair `(idx,len)` in `self.offsets`.
-// The conclusion is `self.lits[idx]` and the guard is `self.lits[idx+1 .. idx+1+len]`
-/// Set of Propagations
+/// Set of Propagations.
 #[derive(Clone)]
 pub struct PropagationSet<B> {
     lits: Vec<B>,
-    offsets: Vec<(usize, usize)>,
 }
 
 /// A conflict is a set of literals that forms a clause.
@@ -49,52 +37,27 @@ mod propagation {
 
     impl<B:BoolLit> PropagationSet<B> {
         /// New propagation set.
-        pub fn new() -> Self {
-            PropagationSet { lits: vec!(), offsets: vec!(), }
-        }
+        pub fn new() -> Self { PropagationSet { lits: vec!(), } }
 
         /// Number of elements in the set
-        pub fn len(&self) -> usize { self.offsets.len() }
+        #[inline(always)]
+        pub fn len(&self) -> usize { self.lits.len() }
 
         /// Clear internal content
+        #[inline(always)]
         pub fn clear(&mut self) {
             self.lits.clear();
-            self.offsets.clear();
         }
 
         /// Add a propagation to the set.
-        pub fn add_propagation(&mut self, p: Propagation<B>) {
-            let idx = self.lits.len();
-            self.lits.push(p.concl);
-            self.lits.extend_from_slice(p.guard);
-            self.offsets.push((idx, p.guard.len()));
-        }
-
-        pub fn propagate(&mut self, concl: B, guard: &[B]) {
-            let prop = Propagation {concl, guard};
-            self.add_propagation(prop)
+        #[inline(always)]
+        pub fn propagate(&mut self, p: B) {
+            self.lits.push(p);
         }
 
         /// Iterate over propagations in this set.
-        pub fn iter<'a>(&'a self) -> impl Iterator<Item=Propagation<'a,B>> {
-            PropIter(&self, 0)
+        pub fn iter<'a>(&'a self) -> impl Iterator<Item=B> + 'a {
+            self.lits.iter().cloned()
         }
     }
-
-    impl<'a,B:BoolLit> Iterator for PropIter<'a,B> {
-        type Item = Propagation<'a,B>;
-
-        fn next(&mut self) -> Option<Self::Item> {
-            if self.1 >= self.0.offsets.len() {
-                None
-            } else {
-                let (idx,len) = self.0.offsets[self.1];
-                self.1 += 1;
-                let concl = self.0.lits[idx];
-                let guard = &self.0.lits[idx+1 .. idx+1+len];
-                Some(Propagation {concl, guard})
-            }
-        }
-    }
-
 }

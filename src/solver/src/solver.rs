@@ -238,8 +238,12 @@ mod solver {
 
             // used to convert theory clauses into boolean clauses
             match self.acts.state() {
-                ActState::Props(cs) => {
-                    for c in cs.iter() {
+                ActState::Props {lemmas, props} => {
+                    for &p in props.iter() {
+                        trace!("propagate literal {:?}", p);
+                        a.propagate(p.0)
+                    }
+                    for c in lemmas.iter() {
                         trace!("add theory lemma {}", pp::display(self.m.pp(c)));
                         let mut cbuild =
                             BClauseBuild::new(&mut self.lits, &mut self.lit_map,
@@ -292,6 +296,14 @@ mod solver {
             where A: batsat::theory::TheoryArgument
         {
             self.check(true, a)
+        }
+
+        fn explain_propagation(&mut self, p: sat::Lit) -> &[sat::Lit] {
+            // copy explanation from theory
+            self.lits.clear();
+            let e = self.th.explain_propagation(BLit(p)).iter().map(|l| l.0);
+            self.lits.extend(e);
+            &self.lits
         }
     }
 

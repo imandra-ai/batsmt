@@ -138,6 +138,10 @@ impl<S:Symbol, B:BoolLit> CCInterface<B> for CC<S,B> {
         self.check_internal()
     }
 
+    fn explain_propagation(&mut self, _p: B) -> &[B] {
+        unimplemented!("explain propagation not implemented yet") // FIXME
+    }
+
     // FIXME
     // fn has_partial_check() -> bool { true }
     fn has_partial_check() -> bool { false }
@@ -359,11 +363,11 @@ impl<S:Symbol, B: BoolLit> CC<S,B> {
             if ra.0 == b.true_ && n.as_lit.is_some() {
                 let lit = n.as_lit.unwrap();
                 trace!("propagate literal {:?} (for true≡{})", lit, m.pp(n.id));
-                props.propagate(lit, &[]);
+                props.propagate(lit);
             } else if ra.0 == b.false_ && n.as_lit.is_some() {
                 let lit = ! n.as_lit.unwrap();
                 trace!("propagate literal {:?} (for false≡{})", lit, m.pp(n.id));
-                props.propagate(lit, &[]);
+                props.propagate(lit);
             }
         });
 
