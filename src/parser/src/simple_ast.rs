@@ -113,6 +113,8 @@ impl Term {
 /// The builder used for holding context and parsing
 pub struct Builder {
     bool_: Sort,
+    true_ : Fun,
+    false_ : Fun,
     and_ : Fun,
     or_ : Fun,
     distinct : Fun,
@@ -127,6 +129,8 @@ impl Builder {
         let b = Sort::new("Bool".into(), 0);
         Builder {
             bool_: b.clone(),
+            true_: Fun::new("true".into(), None, b.clone()),
+            false_: Fun::new("false".into(), None, b.clone()),
             and_: Fun::new("and".into(), None, b.clone()),
             or_: Fun::new("or".into(), None, b.clone()),
             imply_: Fun::new("=>".into(), None, b.clone()),
@@ -152,6 +156,8 @@ impl types::TermBuilder for Builder {
 
     fn get_builtin(&self, op: Op) -> Fun {
         match op {
+            Op::True => self.true_.clone(),
+            Op::False => self.false_.clone(),
             Op::And => self.and_.clone(),
             Op::Or => self.or_.clone(),
             Op::Imply => self.imply_.clone(),

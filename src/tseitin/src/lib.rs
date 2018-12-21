@@ -95,15 +95,16 @@ impl<S:Symbol> Tseitin<S> {
     pub fn clauses(&mut self, t: AST) -> impl Iterator<Item=TheoryClauseRef<BLit>> {
         self.cs.clear();
 
+        let Tseitin {
+            b, ref mut cs, m, lit_map,
+            ref mut tmp, ref mut tmp2, ..} = self;
+        let lmb = LitMapB{lit_map, b: b.clone(), m: m.clone()};
+
         {
-            let Tseitin {
-                b, ref mut cs, m, lit_map,
-                ref mut tmp, ref mut tmp2, ..} = self;
             let mr = m.get();
             // traverse `t` as a DAG
             self.iter.iter(t, |u| {
                 // `u` is a subterm that has never been processed.
-                let lmb = LitMapB{lit_map, b: b.clone(), m: m.clone()};
                 match mr.view(u) {
                     View::App {f, args} if f == b.not_ => {
                         debug_assert_eq!(1, args.len());
@@ -195,7 +196,6 @@ impl<S:Symbol> Tseitin<S> {
         }
 
         {
-            let lmb = LitMapB{lit_map: &mut self.lit_map, b: self.b.clone(), m: self.m.clone()};
             // unit clause asserting that `t` is true
             let top_lit = lmb.term_to_lit(t);
             self.cs.push(&[top_lit]);

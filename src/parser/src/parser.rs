@@ -253,6 +253,8 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
     // find function with this name
     fn find_fun(&self, s: &str) -> Result<B::Fun> {
         match s {
+            "true" => Ok(self.build.get_builtin(Op::True)),
+            "false" => Ok(self.build.get_builtin(Op::False)),
             "and" => Ok(self.build.get_builtin(Op::And)),
             "or" => Ok(self.build.get_builtin(Op::Or)),
             "not" => Ok(self.build.get_builtin(Op::Not)),

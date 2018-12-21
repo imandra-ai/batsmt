@@ -126,6 +126,8 @@ mod ast_builder {
         fn get_builtin(&self, op: parser::BuiltinOp) -> AST {
             use parser::BuiltinOp::*;
             match op {
+                True => self.b.true_,
+                False => self.b.false_,
                 Imply => self.b.imply_,
                 And => self.b.and_,
                 Or => self.b.or_,

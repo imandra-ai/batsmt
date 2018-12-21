@@ -19,7 +19,7 @@ pub trait SortBuilder {
 
 /// The builtins recognized by the parser
 #[derive(Copy,Debug,Clone)]
-pub enum Op { Or, And, Imply, Eq, Not, Distinct }
+pub enum Op { True, False, Or, And, Imply, Eq, Not, Distinct }
 
 pub trait TermBuilder : SortBuilder {
     type Fun : Clone + Debug;
