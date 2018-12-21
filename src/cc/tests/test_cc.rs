@@ -183,6 +183,29 @@ mod prop_cc {
             .boxed()
     }
 
+    // use a naive CC to check this set of lits
+    fn check_lits_sat<I,U>(m: &AstGen, b: Builtins, i: I) -> bool
+        where I: Iterator<Item=U>, U: Into<TermLit>
+    {
+        let mut ncc = NaiveCC0::new(m.m(), b.clone());
+
+        // conflict clause is a tautology,
+        // so assert its negation and check for "unsat"
+        for lit in i {
+            let lit = lit.into();
+            let TermLit(sign,t1,t2) = lit;
+            if sign {
+                ncc.merge(t1,t2,lit)
+            } else {
+                let eqn = m.app(b.eq, &[t1,t2]); // `t1=t2`
+                ncc.merge(eqn, b.false_, lit)
+            }
+        }
+
+        let r = ncc.final_check();
+        r.is_ok()
+    }
+
     // test that NaiveCC's backtracking behavior is consistent
     proptest! {
         #![proptest_config(Config::with_cases(100))]
@@ -220,20 +243,24 @@ mod prop_cc {
                     Op::FinalCheck => {
                         // here be the main check
                         let r_ncc = ncc.final_check();
+                        let sat1 = r_ncc.is_ok();
 
                         // check with a fresh ncc, without the push/pop stuff
-                        let mut ncc2 = NaiveCC0::new(agen.m(), b.clone());
-                        let r_ref = {
-                            for &(t1,t2,lit) in st.iter () {
-                                ncc2.merge(t1,t2,lit);
-                            }
-                            ncc2.final_check()
+                        let sat2 = {
+                            let lits = st.iter().map(|(_,_,lit)| lit).cloned();
+                            check_lits_sat(&agen, b.clone(), lits)
                         };
 
                         // must agree on satisfiability
-                        let sat1 = r_ncc.is_ok();
-                        let sat2 = r_ref.is_ok();
                         prop_assert_eq!(sat1, sat2, "ncc-incremental.sat: {}, ncc-fresh.sat: {}", sat1, sat2);
+
+                        // conflict returned by `ncc`, if any, must be valid
+                        if let Err(confl) = r_ncc {
+                            let lits = confl.0.iter().map(|lit| ! *lit);
+                            let confl_sat = check_lits_sat(&agen, b.clone(), lits);
+
+                            prop_assert!(! confl_sat, "ncc-incremental.conflict is sat");
+                        }
                     }
                 };
             }
@@ -243,7 +270,7 @@ mod prop_cc {
     // test that CC and NaiveCC behave the same, and check CC conflicts
     // using naiveCC
     proptest! {
-        #![proptest_config(Config::with_cases(300))]
+        #![proptest_config(Config::with_cases(80))]
         #[test]
         fn proptest_cc_is_correct(ref tup in with_astgen(|m| cc_ops(m, 120))) {
             let (agen, ops) = tup;
