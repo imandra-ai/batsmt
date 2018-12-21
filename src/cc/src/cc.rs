@@ -155,6 +155,17 @@ impl<S:Symbol, B: BoolLit> CC<S, B> {
     // main `check` function, performs the fixpoint
     fn check_internal(&mut self) -> Result<&PropagationSet<B>, Conflict<B>> {
         debug!("check-internal ({} tasks)", self.tasks.len());
+        self.run_tasks();
+        if self.cc1.ok {
+            Ok(&self.props)
+        } else {
+            debug_assert!(self.confl.len() >= 1); // must have some conflict
+            Err(Conflict(&self.confl))
+        }
+    }
+
+    /// Run tasks (add term, merges, etc.) until fixpoint.
+    fn run_tasks(&mut self) {
         while let Some(task) = self.tasks.pop_front() {
             if ! self.cc1.ok {
                 self.tasks.clear();
@@ -169,12 +180,6 @@ impl<S:Symbol, B: BoolLit> CC<S, B> {
                     unimplemented!("cannot handle distinct yet")
                 },
             }
-        }
-        if self.cc1.ok {
-            Ok(&self.props)
-        } else {
-            debug_assert!(self.confl.len() >= 1); // must have some conflict
-            Err(Conflict(&self.confl))
         }
     }
 }
@@ -589,14 +594,13 @@ impl<S:Symbol, B:BoolLit> CC1<S,B> {
 impl<S: Symbol,B:BoolLit> backtrack::Backtrackable for CC<S,B> {
     fn push_level(&mut self) {
         trace!("push-level");
-        self.tasks.clear(); // invalidated
+        self.run_tasks(); // be sure to commit changes before saving
         self.undo.push_level();
         self.sig_tbl.push_level();
     }
 
     fn pop_levels(&mut self, n: usize) {
         debug_assert_eq!(self.undo.n_levels(), self.sig_tbl.n_levels());
-        self.tasks.clear(); // invalidated
         let cc1 = &mut self.cc1;
         self.undo.pop_levels(n, |op| cc1.perform_undo(op));
         self.sig_tbl.pop_levels(n);
