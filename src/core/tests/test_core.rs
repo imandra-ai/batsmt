@@ -719,3 +719,40 @@ mod backtrack {
         }
     }
 }
+
+mod alloc {
+    use super::*;
+
+    proptest!{
+        // test that the allocator is faithful and doesn't crash
+        #[test]
+        fn test_append_only_array_alloc(
+            ref v in prop::collection::vec(prop::collection::vec(0..100i32, 40), 120)
+        ) {
+            use batsmt_core::alloc::append_only_array as aoa;
+            let mut alloc: aoa::Alloc<i32> = aoa::Alloc::new();
+
+            // small parameters, to exercize more code paths
+            {
+                let mut p = alloc.get_params();
+                p.slice_size = 512;
+                p.max_array_size = 20;
+                alloc.set_params(p);
+            }
+
+            let mut allocated: Vec<aoa::Array<_>> = vec!();
+
+            // allocate a copy of `a`
+            for a in v.iter() {
+                allocated.push(alloc.alloc_from_slice(&a));
+            }
+
+            // check that we have the same thing
+            for (a,a2) in v.iter().zip(allocated.iter()) {
+                prop_assert_eq!(a.as_slice(), a2.as_slice());
+            }
+        }
+
+
+    }
+}

@@ -8,6 +8,7 @@ pub mod gc;
 pub mod symbol;
 pub mod backtrack;
 pub mod shared;
+pub mod alloc;
 
 pub use crate::{
   symbol::{Symbol,SymbolView,str::Sym as StrSymbol},
