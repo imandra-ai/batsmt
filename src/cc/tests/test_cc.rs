@@ -132,7 +132,7 @@ mod prop_cc {
         };
         // see https://docs.rs/proptest/*/proptest/#generating-recursive-data
         leaf.prop_recursive(
-            10, 512, 10,
+            8, 512, 10,
             move |inner| {
                 let m2 = m.clone();
                 (inner.clone(),prop::collection::vec(inner.clone(), 0..6)).
@@ -243,9 +243,9 @@ mod prop_cc {
     // test that CC and NaiveCC behave the same, and check CC conflicts
     // using naiveCC
     proptest! {
-        #![proptest_config(Config::with_cases(1000))]
+        #![proptest_config(Config::with_cases(300))]
         #[test]
-        fn proptest_cc_is_correct(ref tup in with_astgen(|m| cc_ops(m, 150))) {
+        fn proptest_cc_is_correct(ref tup in with_astgen(|m| cc_ops(m, 120))) {
             let (agen, ops) = tup;
 
             //println!("ops: {:?}", ops);
