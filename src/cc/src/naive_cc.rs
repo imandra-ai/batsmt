@@ -56,14 +56,6 @@ enum Task {
 }
 
 impl<S:Symbol,B:BoolLit> CCInterface<B> for NaiveCC<S,B> {
-    type Checker = NaiveCC<S,B>;
-
-    fn checker(&mut self) -> &mut Self::Checker { self }
-
-    fn impl_descr(&self) -> &'static str { "naive congruence closure"}
-}
-
-impl<S:Symbol,B:BoolLit> crate::Check<B> for NaiveCC<S,B> {
     fn merge(&mut self, t1: AST, t2: AST, lit: B) {
         self.ops.push(Op::Merge(t1,t2,lit))
     }
@@ -91,6 +83,8 @@ impl<S:Symbol,B:BoolLit> crate::Check<B> for NaiveCC<S,B> {
     }
 
     // NOTE: do not implement partial check at all.
+
+    fn impl_descr(&self) -> &'static str { "naive congruence closure"}
 }
 
 impl<S:Symbol,B:BoolLit> NaiveCC<S,B> {

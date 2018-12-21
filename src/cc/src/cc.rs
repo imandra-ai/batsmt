@@ -107,7 +107,8 @@ enum Task<B> {
 #[derive(Eq,PartialEq,Hash,Clone,Debug)]
 struct Signature(SVec<Repr>);
 
-impl<S:Symbol,B:BoolLit> crate::Check<B> for CC<S,B> {
+// implement main interface
+impl<S:Symbol, B:BoolLit> CCInterface<B> for CC<S,B> {
     fn merge(&mut self, t1: AST, t2: AST, lit: B) {
         let expl = Expl::Lit(lit);
         self.tasks.push_back(Task::AddTerm(t1));
@@ -136,13 +137,6 @@ impl<S:Symbol,B:BoolLit> crate::Check<B> for CC<S,B> {
         debug!("cc.partial-check()");
         self.check_internal()
     }
-}
-
-// implement main interface
-impl<S:Symbol, B:BoolLit> CCInterface<B> for CC<S,B> {
-    type Checker = CC<S,B>;
-
-    fn checker(&mut self) -> &mut Self::Checker { self }
 
     // FIXME
     // fn has_partial_check() -> bool { true }
@@ -309,14 +303,18 @@ impl<S:Symbol, B: BoolLit> CC<S,B> {
                        self.m.pp(a), self.m.pp(b));
                 self.cc1.ok = false;
                 self.undo.push_if_nonzero(UndoOp::SetOk);
-                let mut expl = ExplResolve::new(self, expl);
-                expl.explain_eq(a, ra.0);
-                expl.explain_eq(b, rb.0);
-                expl.fixpoint();
+                {
+                    let mut expl = ExplResolve::new(self, expl);
+                    expl.explain_eq(a, ra.0);
+                    expl.explain_eq(b, rb.0);
+                    expl.fixpoint();
+                }
                 trace!("computed conflict: {:?}", &self.confl);
                 return;
+            } else {
+                // merge into true/false
+                std::mem::swap(&mut ra, &mut rb);
             }
-            std::mem::swap(&mut ra, &mut rb);
         } else if ra.0 == self.b.true_ || ra.0 == self.b.false_ {
             // `ra` must be repr
         } else if na.size < nb.size {
@@ -333,7 +331,7 @@ impl<S:Symbol, B: BoolLit> CC<S,B> {
             root: ra, old_root: rb,
         });
 
-        // update explanation
+        // update forest tree so that `b --[expl]--> a`
         self.cc1.reroot_forest(rb.0);
         self.cc1[rb.0].expl = Some((ra.0, expl));
 

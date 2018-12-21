@@ -4,8 +4,8 @@ use {
     crate::{types::*},
 };
 
-/// A local, temporary object one can add assumptions to before calling `check`.
-pub trait Check<B:BoolLit> {
+/// Interface satisfied by implementations of the congruence closure.
+pub trait CC<B:BoolLit> : backtrack::Backtrackable {
     /// `cc.merge(t1,t2,lit)` merges `t1` and `t2` with explanation `lit`.
     fn merge(&mut self, t1: AST, t2: AST, lit: B);
 
@@ -30,19 +30,6 @@ pub trait Check<B:BoolLit> {
     fn partial_check(&mut self) -> Result<&PropagationSet<B>, Conflict<B>> {
         unimplemented!("partial check")  // FIXME: instead, return empty propagations
     }
-}
-
-/// Interface satisfied by implementations of the congruence closure.
-pub trait CC<B:BoolLit> : backtrack::Backtrackable {
-    /// Local type used to add assumptions and solve.
-    type Checker : Check<B>;
-
-    /// Obtain a local solver instance.
-    ///
-    /// This solver instance can be used to append some (dis)equalities
-    /// to the conjunction, before it is consumed by calling `final_check`
-    /// or `partial_check`.
-    fn checker(&mut self) -> &mut Self::Checker;
 
     /// Can it handle partial checks?
     fn has_partial_check() -> bool { false }

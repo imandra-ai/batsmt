@@ -4,7 +4,7 @@
 use {
     batsmt_core::{self as core,ast::{self,AST},symbol::Symbol},
     batsmt_theory::{self as theory, BoolLit},
-    crate::{Builtins,CCInterface,Check,PropagationSet,Conflict},
+    crate::{Builtins,CCInterface,PropagationSet,Conflict},
 };
 
 #[allow(unused_imports)]
@@ -19,8 +19,6 @@ type CCI<S,B> = NaiveCC<S,B>;
 
 #[cfg(not(feature="naive"))]
 type CCI<S,B> = CC<S,B>;
-
-type CCICheck<S,B> = <CCI<S,B> as CCInterface<B>>::Checker;
 
 /// A theory built on top of a congruence closure.
 pub struct CCTheory<S:Symbol,B: BoolLit>{
@@ -37,10 +35,9 @@ impl<S:Symbol,B:BoolLit> CCTheory<S,B> {
         Self { builtins: b, m: m.clone(), cc }
     }
 
-    /// Get checker, add trail to it
-    fn checker_with_trail(&mut self, trail: &theory::Trail<B>) -> (bool, &mut CCICheck<S,B>)  {
+    /// Add trail to the congruence closure, returns `true` if anything was added
+    fn add_trail_to_cc(&mut self, trail: &theory::Trail<B>) -> bool {
         let mut done_sth = false;
-        let checker = self.cc.checker();
 
         // update congruence closure
         let m = self.m.get();
@@ -50,29 +47,29 @@ impl<S:Symbol,B:BoolLit> CCTheory<S,B> {
                 ast::View::App {f, args} if f == self.builtins.eq => {
                     assert_eq!(2,args.len());
                     if sign {
-                        checker.merge(args[0], args[1], lit);
+                        self.cc.merge(args[0], args[1], lit);
                     } else {
                         // `(a=b)=false`
-                        checker.merge(ast, self.builtins.false_, lit);
+                        self.cc.merge(ast, self.builtins.false_, lit);
                     }
                 },
                 ast::View::App {f, args} if f == self.builtins.distinct => {
                     if !sign {
                         panic!("cannot handle negative `distinct`")
                     };
-                    checker.distinct(args, lit)
+                    self.cc.distinct(args, lit)
                 },
                 _ if sign => {
-                    checker.merge(ast, self.builtins.true_, lit)
+                    self.cc.merge(ast, self.builtins.true_, lit)
                 },
                 _ => {
-                    checker.merge(ast, self.builtins.false_, lit)
+                    self.cc.merge(ast, self.builtins.false_, lit)
                 }
             }
 
             done_sth = true;
         }
-        (done_sth,checker)
+        done_sth
     }
 }
 
@@ -104,8 +101,8 @@ fn act_conflict<B:BoolLit>(acts: &mut theory::Actions<B>, c: Conflict<B>) {
 impl<S:Symbol, B:BoolLit> theory::Theory<S,B> for CCTheory<S,B> {
     fn final_check(&mut self, acts: &mut theory::Actions<B>, trail: &theory::Trail<B>) {
         debug!("cc.final-check");
-        let (_,checker) = self.checker_with_trail(trail);
-        let res = checker.final_check();
+        self.add_trail_to_cc(trail);
+        let res = self.cc.final_check();
 
         match res {
             Ok(props) => act_propagate(acts, props),
@@ -119,11 +116,11 @@ impl<S:Symbol, B:BoolLit> theory::Theory<S,B> for CCTheory<S,B> {
         }
         debug!("cc.partial-check");
 
-        let (do_sth,checker) = self.checker_with_trail(trail);
+        let do_sth = self.add_trail_to_cc(trail);
         if !do_sth {
             return; // nothing new
         }
-        let res = checker.partial_check();
+        let res = self.cc.partial_check();
 
         match res {
             Ok(props) => act_propagate(acts, props),
