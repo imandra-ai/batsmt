@@ -51,11 +51,21 @@ impl<'a, S:Symbol> LitMapB<'a,S> {
         let (t,sign) = self.lit_map.unfold_not(t, true);
         let b = &self.b;
         match self.m.get().view(t) {
-            View::App {f, args: _} => {
+            View::App {f, args} => {
                 if f == b.true_ || f == b.false_ {
                     TheoryLit::new_b(t, sign)
                 } else if f == b.and_ || f == b.or_ || f == b.imply_ {
                     TheoryLit::new_b(t, sign)
+                } else if f == b.distinct {
+                    if args.len() == 2 {
+                        // turn `distinct(a,b)` into `!(a=b)`
+                        let t0 = args[0];
+                        let t1 = args[1];
+                        let eqn = self.m.get_mut().mk_app(b.eq, &[t0, t1]);
+                        ! TheoryLit::new_t(eqn, sign)
+                    } else {
+                        TheoryLit::new_b(t,sign) // encoded away
+                    }
                 } else {
                     // theory literal
                     TheoryLit::new_t(t, sign)
@@ -101,11 +111,10 @@ impl<S:Symbol> Tseitin<S> {
         let lmb = LitMapB{lit_map, b: b.clone(), m: m.clone()};
 
         {
-            let mr = m.get();
             // traverse `t` as a DAG
-            self.iter.iter(t, |u| {
+            self.iter.iter(t, |m, u| {
                 // `u` is a subterm that has never been processed.
-                match mr.view(u) {
+                match m.get().view(u) {
                     View::App {f, args} if f == b.not_ => {
                         debug_assert_eq!(1, args.len());
                         () // nothing to do here
@@ -186,12 +195,41 @@ impl<S:Symbol> Tseitin<S> {
                         // TODO: is this needed? `u` maps to `not true` anyway?
                         cs.push(&[TheoryLit::new_b(u, false)]) // clause [¬false]
                     },
-                    View::App {f, args: _} if f == b.distinct => {
-                        // TODO: eliminate `distinct` into a n^2 conjunction of `=`
-                        unimplemented!("distinct is not supported yet");
+                    View::App {f, args} if f == b.distinct && args.len() <= 2 => {
+                        () // nop, encoded as equation
+                    },
+                    View::App {f, args} if f == b.distinct => {
+                        let args: Vec<AST> = args.into();
+                        let mut mr = m.get_mut();
+
+                        // eliminate `distinct` into a conjunction of O(n^2) dis-equations
+                        let lit_distinct = lmb.term_to_lit(u);
+
+                        // `∧i args[i]!=args[j] => distinct`
+                        tmp.clear();
+                        tmp.push(lit_distinct);
+
+                        for i in 0 .. args.len()-1 {
+                            let t_i = args[i];
+                            for j in i+1 .. args.len() {
+                                let t_j = args[j];
+                                let eqn_i_j = {
+                                    let t = mr.mk_app(b.eq, &[t_i, t_j]);
+                                    TheoryLit::new_t(t, true)
+                                };
+
+                                // `distinct => args[i]!=args[j]`
+                                cs.push(&[!lit_distinct, !eqn_i_j]);
+
+                                // enrich the big conjunction
+                                tmp.push(eqn_i_j);
+                            }
+                        }
+
+                        cs.push(&tmp);
                     },
                     _ => (),
-                }
+                };
             });
         }
 

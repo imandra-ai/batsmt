@@ -625,7 +625,7 @@ mod manager {
         /// Allocates a `iter_dag::State` and uses it to iterate only once.
         /// For more sophisticated use (iterating on several terms, etc.)
         /// use `iter_dag::State` directly.
-        pub fn iter_dag<F>(&self, t: AST, f: F) where F: FnMut(AST) {
+        pub fn iter_dag<F>(&self, t: AST, f: F) where F: FnMut(&Self, AST) {
             let mut st = iter_dag::State::new(self);
             st.iter(t, f)
         }
@@ -666,7 +666,7 @@ mod manager {
         /// Each unique subterm is counted only once.
         pub fn size_dag(&self, t: AST) -> usize {
             let mut n = 0;
-            self.iter_dag(t, |_| { n += 1 });
+            self.iter_dag(t, |_,_| { n += 1 });
             n
         }
 
@@ -1027,7 +1027,7 @@ pub mod iter_dag {
         /// - `self` is the set of already seen terms, and will be mutated.
         /// - `t` is the term to recursively explore
         /// - `f` is the function to call once on every subterm
-        pub fn iter<F>(&mut self, t: AST, mut f: F) where F: FnMut(AST) {
+        pub fn iter<F>(&mut self, t: AST, mut f: F) where F: FnMut(&Manager<S>,AST) {
             if self.st.seen.len() > 0 && self.st.seen.contains(&t) { return }
 
             self.st.push(t);
@@ -1036,7 +1036,7 @@ pub mod iter_dag {
                     continue
                 } else {
                     self.st.seen.insert(t);
-                    f(t); // process `t`
+                    f(&self.m, t); // process `t`
 
                     match self.m.get().view(t) {
                         View::Const(_) => (),
