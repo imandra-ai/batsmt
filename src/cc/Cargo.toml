@@ -21,3 +21,4 @@ naive = []
 
 [dev-dependencies]
 proptest = "^0.8"
+batsmt-hast = { path = "../hast" }

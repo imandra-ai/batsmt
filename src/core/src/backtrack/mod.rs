@@ -4,12 +4,15 @@ pub mod stack;
 pub mod hashmap;
 
 /// A backtrackable component.
-pub trait Backtrackable {
+///
+/// It gets a context `Ctx` to perform operations.
+pub trait Backtrackable<Ctx> {
+
     /// Push one level.
-    fn push_level(&mut self);
+    fn push_level(&mut self, _c: &mut Ctx);
 
     /// Backtrack `n` levels, using `ctx` to undo changes
-    fn pop_levels(&mut self, n: usize);
+    fn pop_levels(&mut self, _c: &mut Ctx, n: usize);
 
     /// How many levels?
     fn n_levels(&self) -> usize;
@@ -36,9 +39,9 @@ impl Default for Dummy {
     fn default() -> Self { Dummy::new() }
 }
 
-impl Backtrackable for Dummy {
-    fn push_level(&mut self) { self.n_levels += 1 }
-    fn pop_levels(&mut self, n: usize) {
+impl<C> Backtrackable<C> for Dummy {
+    fn push_level(&mut self, _: &mut C) { self.n_levels += 1 }
+    fn pop_levels(&mut self, _: &mut C, n: usize) {
         debug_assert!(self.n_levels >= n);
         self.n_levels -= n;
     }

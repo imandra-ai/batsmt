@@ -3,166 +3,98 @@
 
 use {
     batsmt_core::{
-        symbol::Symbol, ast::{self,AST,View},
-        Shared,SharedRef,SharedRefMut,
+        ast::{self, AstMap},
+        ast_u32::{AST, ManagerU32, },
     },
-    batsat::{Var as BVar, LMap},
-    crate::blit::BLit,
+    batsmt_theory::{self as theory, BoolLit, },
+    batsat::{LMap, },
+    crate::BLit,
 };
 
-/// Builtin symbols required for this basic interface
-#[derive(Copy,Clone,Debug)]
-pub struct Builtins {
-    pub bool_: AST, // the boolean sort
-    pub true_: AST, // term for `true`
-    pub false_: AST, // term for `false`
-    pub not_: AST, // used to traverse negation automatically
-}
+// re-exports
+pub use {
+    batsmt_theory::LitMapBuiltins as Builtins,
+};
 
-/// Bidirectional mapping between literals and terms
-#[derive(Clone)]
-pub struct LitMap<S:Symbol>(Shared<LitMapCell<S>>);
-
-pub struct LitMapCell<S:Symbol> {
-    m: ast::Manager<S>,
+/// Bidirectional mapping between SAT literals (`BLit`) and terms.
+pub struct SatLitMap {
     b: Builtins,
-    term_to_lit: ast::HashMap<BLit>,
+    term_to_lit: ast::HashMap<AST,BLit>,
     theory_lits: Vec<(AST,BLit)>, // only bidir terms
     lit_to_term: LMap<(AST,bool)>,
 }
 
-/// Keep or flip polarity of `lit` based on sign
-#[inline(always)]
-pub fn lit_apply_sign(lit: BLit, sign: bool) -> BLit {
-    if sign { lit } else { ! lit }
-}
-
-impl<S:Symbol> LitMap<S> {
-    /// Create a new mapping.
-    ///
-    /// Note that `builtins` need to be provided.
-    pub fn new(m: &ast::Manager<S>, b: Builtins) -> Self {
-        let cell = LitMapCell::new(m.clone(), b);
-        LitMap(Shared::new(cell))
+impl theory::LitMap<BLit> for SatLitMap {
+    fn new(b: Builtins) -> Self {
+        assert_ne!(b.true_, b.false_); // sanity check
+        SatLitMap {
+            b,
+            term_to_lit: ast::SparseMap::new(),
+            lit_to_term: LMap::new(),
+            theory_lits: vec!(),
+        }
     }
 
     #[inline(always)]
-    pub fn get(&self) -> SharedRef<LitMapCell<S>> { self.0.borrow() }
+    fn b(&self) -> &Builtins { &self.b }
 
-    #[inline(always)]
-    pub fn get_mut(&self) -> SharedRefMut<LitMapCell<S>> { self.0.borrow_mut() }
-
-    /// Add a mapping from `t` to `lit`
-    ///
-    /// if `bidir` also remember that `lit` maps to `t`
-    pub fn add_term(&self, t: AST, lit: BLit, bidir: bool) {
-        self.get_mut().add_term(t,lit,bidir)
-    }
-
-    /// Find which literal this term maps to, if any
-    pub fn get_term(&self, t: AST, sign: bool) -> Option<BLit> {
-        self.get().get_term(t,sign)
-    }
-
-    /// Find which literal this term maps to, or create a new one using `f`
-    ///
-    /// `f` is a generator of fresh boolean variables.
-    /// `bidir` if true, remember that this literal maps to this term
-    pub fn get_term_or_else<F>(&self, t: AST, sign: bool, bidir: bool, f: F) -> BLit
-        where F: FnOnce() -> BVar
+    fn get_term<M>(&self, m: &M, t: &AST, sign: bool) -> Option<BLit>
+        where M: ManagerU32
     {
-        self.get_mut().get_term_or_else(t,sign,bidir,f)
+        let (t, sign) = self.b.unfold_not(m, t, sign);
+        self.term_to_lit.get(&t).map(|lit| lit.apply_sign(sign))
     }
 
-    /// Map the given literal into a signed term
-    pub fn map_lit(&self, lit: BLit) -> Option<(AST, bool)> {
-        let r = self.get();
-        if r.lit_to_term.has(lit.0) {
-            let pair = r.lit_to_term[lit.0];
+    fn get_term_or_else<M, F>(
+        &mut self, m: &M, t: &AST, sign: bool, bidir: bool, f: F
+    ) -> BLit
+        where M: ManagerU32,
+              F: FnOnce() -> BLit
+    {
+        let (t, sign) = self.b.unfold_not(m, t, sign);
+        let lit =
+            self.term_to_lit.get(&t).map(|lit| *lit)
+            .unwrap_or_else(|| {
+                let lit = f();
+                // remember mapping
+                self.add_term_normalized(m, t, lit, bidir);
+                lit
+            });
+        lit.apply_sign(sign)
+    }
+
+    fn add_term<M>(&mut self, m: &M, t: &AST, mut lit: BLit, bidir: bool)
+        where M: ManagerU32
+    {
+        let (t, sign) = self.b.unfold_not(m, &t, true);
+        if !sign {
+            lit = !lit; // mapping `not t` to `a42` means mapping `t` to `¬a42`
+        };
+        self.add_term_normalized(m, t, lit, bidir)
+    }
+
+    fn map_lit(&self, lit: BLit) -> Option<(AST, bool)> {
+        trace!("solver.map-lit {:?}", lit);
+        if self.lit_to_term.has(lit.0) {
+            let pair = self.lit_to_term[lit.0];
             // is it a real value?
             if pair.0 == AST::SENTINEL { None } else { Some(pair) }
         } else {
             None
         }
     }
-
-    /// Given `t = not^n(u)`, returns `u, not^n(sign)`.
-    ///
-    /// This way `u` is never a negation.
-    pub fn unfold_not(&self, t: AST, sign: bool) -> (AST, bool) {
-        self.get().unfold_not(t,sign)
-    }
 }
 
-impl<S:Symbol> LitMapCell<S> {
-    fn new(m: ast::Manager<S>, b: Builtins) -> Self {
-        assert_ne!(b.true_, b.false_); // sanity check
-        LitMapCell {
-            b,
-            m: m,
-            term_to_lit: ast::HashMap::default(),
-            lit_to_term: LMap::new(),
-            theory_lits: vec!(),
-        }
-    }
-
-    // given `t = not^n(u)`, returns `u, not^n(sign)`. This way `u` is never
-    // a negation.
-    fn unfold_not(&self, mut t: AST, mut sign: bool) -> (AST, bool) {
-        let mr = self.m.get();
-        loop {
-            match mr.view(t) {
-                View::App {f, args} if f == self.b.not_ => {
-                    // flip sign and recurse
-                    t = args[0];
-                    sign = !sign;
-                },
-                _ if t == self.b.false_ => {
-                    // `false` is just `not true`
-                    t = self.b.true_;
-                    sign = !sign;
-                    break;
-                }
-                _ => break,
-            }
-        }
-        (t,sign)
-    }
-
-    fn get_term(&self, t: AST, sign: bool) -> Option<BLit> {
-        let (t, sign) = self.unfold_not(t, sign);
-        self.term_to_lit.get(&t).map(|lit| lit_apply_sign(*lit, sign))
-    }
-
-    fn get_term_or_else<F>(&mut self, t: AST, sign: bool, bidir: bool, f: F) -> BLit
-        where F: FnOnce() -> BVar
-    {
-        let (t, sign) = self.unfold_not(t, sign);
-        let lit =
-            self.term_to_lit.get(&t).map(|lit| *lit)
-            .unwrap_or_else(|| {
-                let lit = BLit::from_var(f(), true);
-                // remember mapping
-                self.add_term_normalized(t, lit, bidir);
-                lit
-            });
-        lit_apply_sign(lit, sign)
-    }
-
-    // Add a bidirectional mapping from `t` to `lit`
-    fn add_term(&mut self, t: AST, mut lit: BLit, bidir: bool) {
-        let (t, sign) = self.unfold_not(t, true);
-        if !sign {
-            lit = !lit; // mapping `not t` to `a42` means mapping `t` to `¬a42`
-        };
-        self.add_term_normalized(t, lit, bidir)
-    }
-
+impl SatLitMap {
+    // Add `t <-> lit`.
+    //
     // assume `t` is not a negation
-    fn add_term_normalized(&mut self, t: AST, lit: BLit, bidir: bool) {
+    fn add_term_normalized<M>(&mut self, m: &M, t: AST, lit: BLit, bidir: bool)
+        where M: ManagerU32
+    {
         assert_ne!(t, AST::SENTINEL); // breaks invariants
-        debug_assert_eq!(t, self.unfold_not(t,true).0);
-        debug_assert!(! self.term_to_lit.contains_key(&t));
+        debug_assert_eq!(t, self.b.unfold_not(m,&t,true).0);
+        debug_assert!(! self.term_to_lit.contains(&t));
         if bidir {
             let pad = (AST::SENTINEL, true); // used to fill the map
             self.lit_to_term.insert(lit.0, (t, true), pad);

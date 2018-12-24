@@ -6,7 +6,7 @@ pub mod solver;
 pub mod blit;
 
 pub use crate::{
-  lit_map::LitMap,
+  lit_map::SatLitMap,
   solver::Solver,
   blit::BLit,
 };

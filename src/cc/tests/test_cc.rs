@@ -4,13 +4,14 @@
 use {
     std::{rc::Rc, fmt},
     fxhash::FxHashMap,
-    batsmt_core::{ast,AST,StrSymbol,Symbol,backtrack::*},
+    batsmt_core::{ast::{self, HasManager, Manager},backtrack::*, ast_u32::AST},
     batsmt_cc::*,
-    batsmt_pretty as pp,
-    batsmt_theory::{BoolLit},
+    batsmt_hast::*,
+    batsmt_pretty::{self as pp, Pretty1},
+    batsmt_theory::{BoolLit, self as theory, lit_map},
 };
 
-type M = ast::Manager<StrSymbol>;
+type M = HManager<StrSymbolManager>;
 
 // literals that are really just terms + sign.
 //
@@ -42,16 +43,33 @@ mod term_lit {
 
     impl BoolLit for TermLit {}
 
-    impl ast::PrettyM for TermLit {
-        fn pp_m<S:Symbol>(&self, m: &ast::Manager<S>, ctx: &mut pp::Ctx) {
+    impl pp::Pretty1<M> for TermLit {
+        fn pp_with(&self, m: &M, ctx: &mut pp::Ctx) {
             let s = if self.sign() {" = "} else {" != "};
-            ctx.pp(&m.pp(self.1)).str(s).pp(&m.pp(self.2));
+            ctx.pp(&ast::pp(m,&self.1)).str(s).pp(&ast::pp(m,&self.2));
         }
     }
 }
 
-type CC0 = CC<StrSymbol, TermLit>;
-type NaiveCC0 = NaiveCC<StrSymbol, TermLit>;
+struct Ctx(M);
+
+mod ctx {
+    use super::*;
+    impl HasManager for Ctx {
+        type M = M;
+        fn m(&self) -> &M { &self.0 }
+        fn m_mut(&mut self) -> &mut M { &mut self.0 }
+    }
+
+    impl theory::BoolLitCtx for Ctx {
+        type B = TermLit;
+    }
+
+    impl theory::Ctx for Ctx {}
+}
+
+type CC0 = CC<Ctx>;
+type NaiveCC0 = NaiveCC<Ctx>;
 
 // generate a series of operations for the congruence closure
 mod prop_cc {
@@ -60,34 +78,35 @@ mod prop_cc {
 
     /// Context for generating terms
     #[derive(Clone)]
-    struct AstGen(Rc<AstGenCell>);
+    struct AstGen(Rc<std::cell::RefCell<AstGenCell>>);
 
     struct AstGenCell {
-        m: M,
-        b: Option<batsmt_cc::Builtins>,
-        consts: std::cell::RefCell<FxHashMap<String, AST>>,
+        m: Ctx,
+        b: Option<batsmt_cc::Builtins<AST>>,
+        consts: FxHashMap<String, AST>,
     }
 
     impl AstGenCell {
-        fn string(&self, s: String) -> AST {
-            let c = self.consts.borrow();
+        fn string(&mut self, s: String) -> AST {
+            let c = &self.consts;
             match c.get(&s) {
                 Some(t) => *t,
                 None => {
-                    let t = self.m.get_mut().mk_string(s.clone());
+                    let t = self.m.m_mut().mk_string(s.clone());
                     drop(c); // before the borrow
-                    self.consts.borrow_mut().insert(s, t);
+                    self.consts.insert(s, t);
                     t
                 }
             }
         }
-        fn str(&self, s: &str) -> AST { self.string(s.to_string()) }
+        fn str(&mut self, s: &str) -> AST { self.string(s.to_string()) }
     }
 
     impl AstGen {
-        fn new(m: &M) -> Self {
-            let consts = std::cell::RefCell::new(FxHashMap::default());
-            let mut cell = AstGenCell { m: m.clone(), consts, b: None, };
+        fn new(m: M) -> Self {
+            let consts = FxHashMap::default();
+            let m = Ctx(m);
+            let mut cell = AstGenCell { m, consts, b: None, };
             // make builtins
             let b = batsmt_cc::Builtins{
                 true_: cell.str("true"),
@@ -97,16 +116,18 @@ mod prop_cc {
                 not_: cell.str("not"),
             };
             cell.b = Some(b);
-            AstGen(Rc::new(cell))
+            AstGen(Rc::new(std::cell::RefCell::new(cell)))
         }
-        fn m(&self) -> &M { &self.0.m }
         fn app(&self, f: AST, args: &[AST]) -> AST {
-            self.0.m.get_mut().mk_app(f, args)
+            self.0.borrow_mut().m.mk_app(f, args)
         }
-        fn string(&self, s: String) -> AST {
-            self.0.string(s)
-        }
-        fn b(&self) -> Builtins { self.0.b.clone().unwrap() }
+        fn b(&self) -> Builtins<AST> { self.0.borrow_mut().b.clone().unwrap() }
+    }
+
+    impl ast::HasManager for AstGenCell {
+        type M = Ctx;
+        fn m(&self) -> &Self::M { &self.m }
+        fn m_mut(&mut self) -> &mut Self::M { &mut self.m }
     }
 
     // just so we can `prop_map` on it
@@ -117,7 +138,7 @@ mod prop_cc {
     fn with_astgen<F,T>(mut f: F) -> BoxedStrategy<(AstGen,T)>
         where F: FnMut(&AstGen) -> BoxedStrategy<T>, T: 'static+fmt::Debug
     {
-        let m = AstGen::new(&ast::Manager::new());
+        let m = AstGen::new(HManager::new());
         f(&m)
             .prop_map(move |t| (m.clone(), t))
             .boxed()
@@ -128,7 +149,7 @@ mod prop_cc {
         let m = m.clone();
         let leaf = {
             let m2 = m.clone();
-            "f|g|a|b|c|d".prop_map(move |s| m2.string(s))
+            "f|g|a|b|c|d".prop_map(move |s| m2.0.borrow_mut().string(s))
         };
         // see https://docs.rs/proptest/*/proptest/#generating-recursive-data
         leaf.prop_recursive(
@@ -184,10 +205,10 @@ mod prop_cc {
     }
 
     // use a naive CC to check this set of lits
-    fn check_lits_sat<I,U>(m: &AstGen, b: Builtins, i: I) -> bool
+    fn check_lits_sat<I,U>(m: &mut AstGen, b: Builtins<AST>, i: I) -> bool
         where I: Iterator<Item=U>, U: Into<TermLit>
     {
-        let mut ncc = NaiveCC0::new(m.m(), b.clone());
+        let mut ncc = NaiveCC0::new(b.clone());
 
         // conflict clause is a tautology,
         // so assert its negation and check for "unsat"
@@ -195,14 +216,18 @@ mod prop_cc {
             let lit = lit.into();
             let TermLit(sign,t1,t2) = lit;
             if sign {
-                ncc.merge(t1,t2,lit)
+                let ctx = &mut m.0.borrow_mut().m;
+                ncc.merge(ctx,t1,t2,lit)
             } else {
                 let eqn = m.app(b.eq, &[t1,t2]); // `t1=t2`
-                ncc.merge(eqn, b.false_, lit)
+
+                let ctx = &mut m.0.borrow_mut().m;
+                ncc.merge(ctx,eqn, b.false_, lit)
             }
         }
 
-        let r = ncc.final_check();
+        let ctx = &mut m.0.borrow_mut().m;
+        let r = ncc.final_check(ctx);
         r.is_ok()
     }
 
@@ -210,45 +235,53 @@ mod prop_cc {
     proptest! {
         #![proptest_config(Config::with_cases(100))]
         #[test]
-        fn proptest_naive_cc_backtrack(ref tup in with_astgen(|m| cc_ops(m, 100))) {
-            let (agen, ops) = tup;
+        fn proptest_naive_cc_backtrack(ref mut tup in with_astgen(|m| cc_ops(m, 100))) {
+            let (m, ops) = tup;
 
             //println!("ops: {:?}", ops);
 
             let mut st = Stack::new(); // just accumulate lits
-            let mut ncc = NaiveCC0::new(agen.m(), agen.b());
-            let b = agen.b();
+            let mut ncc = NaiveCC0::new(m.b());
+            let b = m.b();
 
             for &op in ops.iter() {
                 match op {
                     Op::PushLevel => {
+                        let ctx = &mut m.0.borrow_mut().m;
                         st.push_level();
-                        ncc.push_level();
+                        ncc.push_level(ctx);
                     },
                     Op::PopLevels(n) => {
+                        let ctx = &mut m.0.borrow_mut().m;
                         st.pop_levels(n, |_| ());
-                        ncc.pop_levels(n);
+                        ncc.pop_levels(ctx, n);
                     },
                     Op::AssertEq(t1,t2) => {
+                        let ctx = &mut m.0.borrow_mut().m;
                         let lit = TermLit::mk_eq(t1,t2);
                         st.push((t1,t2,lit));
-                        ncc.merge(t1,t2,lit);
+                        ncc.merge(ctx, t1,t2,lit);
                     },
                     Op::AssertNeq(t1,t2) => {
                         let lit = TermLit::mk_neq(t1,t2);
-                        let eqn = agen.app(b.eq, &[t1,t2]); // term `t1=t2`
+                        let eqn = m.app(b.eq, &[t1,t2]); // term `t1=t2`
                         st.push((eqn, b.false_, lit));
-                        ncc.merge(eqn, b.false_, lit);
+                        
+                        let ctx = &mut m.0.borrow_mut().m;
+                        ncc.merge(ctx, eqn, b.false_, lit);
                     },
                     Op::FinalCheck => {
                         // here be the main check
-                        let r_ncc = ncc.final_check();
+                        let mut mr = m.0.borrow_mut();
+                        let ctx = &mut mr.m;
+                        let r_ncc = ncc.final_check(ctx);
                         let sat1 = r_ncc.is_ok();
+                        drop(mr); // force release of manager
 
                         // check with a fresh ncc, without the push/pop stuff
                         let sat2 = {
                             let lits = st.iter().map(|(_,_,lit)| lit).cloned();
-                            check_lits_sat(&agen, b.clone(), lits)
+                            check_lits_sat(m, b.clone(), lits)
                         };
 
                         // must agree on satisfiability
@@ -257,7 +290,7 @@ mod prop_cc {
                         // conflict returned by `ncc`, if any, must be valid
                         if let Err(confl) = r_ncc {
                             let lits = confl.0.iter().map(|lit| ! *lit);
-                            let confl_sat = check_lits_sat(&agen, b.clone(), lits);
+                            let confl_sat = check_lits_sat(m, b.clone(), lits);
 
                             prop_assert!(! confl_sat, "ncc-incremental.conflict is sat");
                         }
@@ -273,40 +306,49 @@ mod prop_cc {
         #![proptest_config(Config::with_cases(80))]
         #[test]
         fn proptest_cc_is_correct(ref tup in with_astgen(|m| cc_ops(m, 120))) {
-            let (agen, ops) = tup;
+            let (m, ops) = tup;
 
             //println!("ops: {:?}", ops);
 
-            let mut cc = CC0::new(agen.m(), agen.b());
-            let mut ncc = NaiveCC0::new(agen.m(), agen.b());
-            let m = agen.m().clone();
-            let b = agen.b();
+            let mut cc = {
+                let b = m.b();
+                let m = &mut m.0.borrow_mut().m;
+                CC0::new(m, b)
+            };
+            let mut ncc = NaiveCC0::new(m.b());
+            let b = m.b();
 
             for &op in ops.iter() {
                 match op {
                     Op::PushLevel => {
-                        cc.push_level();
-                        ncc.push_level();
+                        let ctx = &mut m.0.borrow_mut().m;
+                        cc.push_level(ctx);
+                        ncc.push_level(ctx);
                     },
                     Op::PopLevels(n) => {
-                        cc.pop_levels(n);
-                        ncc.pop_levels(n);
+                        let ctx = &mut m.0.borrow_mut().m;
+                        cc.pop_levels(ctx,n);
+                        ncc.pop_levels(ctx,n);
                     },
                     Op::AssertEq(t1,t2) => {
+                        let ctx = &mut m.0.borrow_mut().m;
                         let lit = TermLit::mk_eq(t1,t2);
-                        cc.merge(t1,t2,lit);
-                        ncc.merge(t1,t2,lit);
+                        cc.merge(ctx,t1,t2,lit);
+                        ncc.merge(ctx,t1,t2,lit);
                     },
                     Op::AssertNeq(t1,t2) => {
                         let lit = TermLit::mk_neq(t1,t2);
-                        let eqn = agen.app(b.eq, &[t1,t2]); // term `t1=t2`
-                        cc.merge(eqn, b.false_, lit);
-                        ncc.merge(eqn, b.false_, lit);
+                        let eqn = m.app(b.eq, &[t1,t2]); // term `t1=t2`
+                        let ctx = &mut m.0.borrow_mut().m;
+                        cc.merge(ctx,eqn, b.false_, lit);
+                        ncc.merge(ctx,eqn, b.false_, lit);
                     },
                     Op::FinalCheck => {
                         // here be the main check
-                        let r1 = cc.final_check();
-                        let r2 = ncc.final_check();
+                        let mut mr = m.0.borrow_mut();
+                        let ctx = &mut mr.m;
+                        let r1 = cc.final_check(ctx);
+                        let r2 = ncc.final_check(ctx);
 
                         // must agree on satisfiability
                         let sat1 = r1.is_ok();
@@ -315,7 +357,8 @@ mod prop_cc {
 
                         // check conflict, too, using a fresh new naiveCC
                         if let Err(confl) = r1 {
-                            let mut ncc2 = NaiveCC0::new(agen.m(), b.clone());
+                            drop(mr); // release refcell
+                            let mut ncc2 = NaiveCC0::new(b.clone());
 
                             // conflict clause is a tautology,
                             // so assert its negation and check for "unsat"
@@ -323,15 +366,20 @@ mod prop_cc {
                                 let lit = !lit;
                                 let TermLit(sign,t1,t2) = lit;
                                 if sign {
-                                    ncc2.merge(t1,t2,lit)
+                                    let ctx = &mut m.0.borrow_mut().m;
+                                    ncc2.merge(ctx,t1,t2,lit)
                                 } else {
-                                    let eqn = agen.app(b.eq, &[t1,t2]); // `t1=t2`
-                                    ncc2.merge(eqn, b.false_, lit)
+                                    let eqn = m.app(b.eq, &[t1,t2]); // `t1=t2`
+                                    let ctx = &mut m.0.borrow_mut().m;
+                                    ncc2.merge(ctx,eqn, b.false_, lit)
                                 }
                             }
 
-                            let r = ncc2.final_check();
-                            prop_assert!(r.is_err(), "conflict {:?} should be unsat", m.pp(confl.0));
+                            let ctx = &mut m.0.borrow_mut().m;
+                            let r = ncc2.final_check(ctx);
+                            prop_assert!(r.is_err(), "conflict should be unsat");
+                            // prop_assert!(r.is_err(), "conflict {:?} should be unsat",
+                            //              pp::sexp(confl.0.iter().map(|x| x.pp(m))));
                         }
                     }
                 };

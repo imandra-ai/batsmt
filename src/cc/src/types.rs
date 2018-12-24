@@ -1,17 +1,16 @@
 
 use {
     smallvec::SmallVec,
-    batsmt_core::{AST, },
 };
 
-pub use batsmt_theory::BoolLit;
+pub use batsmt_theory::{Ctx, BoolLit, };
 
 /// a small vector of `T`
 pub type SVec<T> = SmallVec<[T; 3]>;
 
 /// Builtin symbols required by the congruence closure
 #[derive(Debug,Clone)]
-pub struct Builtins {
+pub struct Builtins<AST:Clone> {
     pub true_: AST,
     pub false_: AST,
     pub not_: AST,
@@ -31,9 +30,6 @@ pub struct Conflict<'a,B>(pub &'a [B]);
 
 mod propagation {
     use super::*;
-
-    // iterator
-    struct PropIter<'a,B:BoolLit>(&'a PropagationSet<B>, usize);
 
     impl<B:BoolLit> PropagationSet<B> {
         /// New propagation set.

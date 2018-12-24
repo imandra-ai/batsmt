@@ -1,105 +1,35 @@
 
 use {
     batsmt_parser as parser,
-    batsmt_core::{ast,AST,StrSymbol},
-    batsmt_solver::{solver,lit_map},
-    batsmt_cc as cc,
-    batsmt_tseitin as tseitin,
+    batsmt_core::{ast_u32::AST, },
     fxhash::FxHashMap,
+    crate::{parser::Atom, Ctx, },
 };
 
-type Atom = parser::Atom;
-type M = ast::Manager<StrSymbol>;
-
-#[derive(Clone,Debug)]
-pub struct Builtins {
-    pub bool_: AST,
-    pub true_: AST,
-    pub false_: AST,
-    pub not_: AST,
-    pub eq: AST,
-    pub distinct: AST,
-    pub and_: AST,
-    pub or_: AST,
-    pub imply_: AST,
-}
-
 /// AST builder for the parser
-pub struct AstBuilder {
-    m: M,
-    b: Builtins,
+pub struct AstBuilder<'a> {
+    m: &'a mut Ctx,
+    b: crate::Builtins,
     sorts: FxHashMap<Atom, (AST, u8)>,
     funs: FxHashMap<Atom, (AST, Vec<AST>, AST)>, // sort
 }
 
 mod ast_builder {
-    use super::*;
+    use {super::*, batsmt_core::Manager};
 
-    impl AstBuilder {
+    impl<'a> AstBuilder<'a> {
         /// Create an AST builder that uses the given manager.
-        pub fn new(m: &M) -> Self {
-            let m = m.clone();
+        pub fn new(m: &'a mut Ctx) -> Self {
+            let b = m.builtins();
             Self {
-                m: m.clone(),
-                b: Builtins::new(&m),
+                m, b,
                 funs: FxHashMap::default(),
                 sorts: FxHashMap::default(),
             }
         }
-
-        /// Convert builtins into `B`
-        pub fn builtins<B>(&self) -> B where Builtins: Into<B>
-        {
-            let b = self.b.clone();
-            b.into()
-        }
     }
 
-    impl Builtins {
-        pub fn new(m: &M) -> Self {
-            Builtins {
-                bool_: m.mk_str("Bool"),
-                true_: m.mk_str("true"),
-                false_: m.mk_str("false"),
-                eq: m.mk_str("="),
-                and_: m.mk_str("and"),
-                or_: m.mk_str("or"),
-                imply_: m.mk_str("=>"),
-                not_: m.mk_str("not"),
-                distinct: m.mk_str("distinct"),
-            }
-        }
-    }
-
-    impl Into<solver::Builtins> for Builtins {
-        fn into(self) -> solver::Builtins {
-            let Builtins {true_, false_, bool_, not_,..} = self;
-            solver::Builtins {bool_,true_,false_,not_}
-        }
-    }
-
-    impl Into<cc::Builtins> for Builtins {
-        fn into(self) -> cc::Builtins {
-            let Builtins {true_, false_, eq, distinct, not_, ..} = self;
-            cc::Builtins {true_,false_,eq,distinct,not_}
-        }
-    }
-
-    impl Into<tseitin::Builtins> for Builtins {
-        fn into(self) -> tseitin::Builtins {
-            let Builtins {true_,false_,and_,or_,not_,imply_,eq,distinct, ..} = self;
-            tseitin::Builtins {true_,false_,and_,or_,not_,imply_,eq,distinct}
-        }
-    }
-
-    impl Into<lit_map::Builtins> for Builtins {
-        fn into(self) -> lit_map::Builtins {
-            let Builtins {true_, false_, not_, bool_, ..} = self;
-            lit_map::Builtins {true_,false_,not_,bool_}
-        }
-    }
-
-    impl parser::SortBuilder for AstBuilder {
+    impl<'a> parser::SortBuilder for AstBuilder<'a> {
         type Sort = AST;
 
         fn get_bool(&self) -> AST { self.b.bool_ }
@@ -109,14 +39,14 @@ mod ast_builder {
             if self.sorts.contains_key(&s) {
                 panic!("sort {:?} already declared", &s);
             } else {
-                let ast = self.m.get_mut().mk_str(&s);
+                let ast = self.m.m.mk_str(&s);
                 self.sorts.insert(s, (ast, arity));
                 ast
             }
         }
     }
 
-    impl parser::TermBuilder for AstBuilder {
+    impl<'a> parser::TermBuilder for AstBuilder<'a> {
         type Term = AST;
         type Fun = AST;
         type Var = AST; // expand let on the fly
@@ -124,7 +54,7 @@ mod ast_builder {
         fn var(&mut self, v: AST) -> AST { v }
 
         fn get_builtin(&self, op: parser::BuiltinOp) -> AST {
-            use parser::BuiltinOp::*;
+            use crate::parser::BuiltinOp::*;
             match op {
                 True => self.b.true_,
                 False => self.b.false_,
@@ -141,7 +71,7 @@ mod ast_builder {
             if self.funs.contains_key(&f) {
                 panic!("fun {:?} already declared", &f);
             } else {
-                let ast = self.m.get_mut().mk_str(&*f);
+                let ast = self.m.m.mk_str(&*f);
                 let args = args.iter().map(|t| t.clone()).collect();
                 self.funs.insert(f, (ast, args, ret));
                 ast
@@ -153,7 +83,7 @@ mod ast_builder {
         }
 
         fn app_fun(&mut self, f: AST, args: &[AST]) -> AST {
-            self.m.get_mut().mk_app(f, args)
+            self.m.m.mk_app(f, args)
         }
 
         fn bind(&mut self, _v: Atom, t: AST) -> AST { t }
