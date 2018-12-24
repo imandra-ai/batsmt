@@ -1,15 +1,15 @@
 [package]
-name = "batsmt-core"
+name = "batsmt-ast"
 version = "0.1.0"
 authors = ["Simon Cruanes <simon.cruanes.2007@m4x.org>"]
 edition = "2018"
 
 [dependencies]
 
+batsmt-core = { path="../core" }
+batsmt-pretty = { path = "../pretty" }
 bit-set = "0.5.0"
 fxhash = "^0.2.1"
-smallvec = "0.6"
-batsmt-pretty = { path = "../pretty" }
 
 [dev-dependencies]
 

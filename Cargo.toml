@@ -3,6 +3,7 @@
 
 members = [
   "src/core",
+  "src/ast",
   "src/cc",
   "src/run",
   "src/parser",
