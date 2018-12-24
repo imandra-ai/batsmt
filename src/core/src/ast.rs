@@ -298,7 +298,8 @@ mod node_stored {
 
 // free memory for this node, including its hashmap entry if any
 unsafe fn free_node<S:Symbol>(
-    tbl: &mut FxHashMap<AppStored<'static>, AST>, mut n: NodeStored<S>)
+    tbl: &mut FxHashMap<AppStored<'static>, AST>,
+    mut n: NodeStored<S>)
 {
     if n.kind() == Kind::App {
         let app = n.as_app();

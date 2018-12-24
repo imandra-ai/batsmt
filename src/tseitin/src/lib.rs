@@ -50,7 +50,9 @@ impl<'a, S:Symbol> LitMapB<'a,S> {
     fn term_to_lit(&self, t: AST) -> TheoryLit<BLit> {
         let (t,sign) = self.lit_map.unfold_not(t, true);
         let b = &self.b;
-        match self.m.get().view(t) {
+        let mut mr = self.m.get_mut();
+        let view_t = mr.view(t);
+        match view_t {
             View::App {f, args} => {
                 if f == b.true_ || f == b.false_ {
                     TheoryLit::new_b(t, sign)
@@ -61,7 +63,8 @@ impl<'a, S:Symbol> LitMapB<'a,S> {
                         // turn `distinct(a,b)` into `!(a=b)`
                         let t0 = args[0];
                         let t1 = args[1];
-                        let eqn = self.m.get_mut().mk_app(b.eq, &[t0, t1]);
+                        drop(view_t); // to get `mr` again
+                        let eqn = mr.mk_app(b.eq, &[t0, t1]);
                         ! TheoryLit::new_t(eqn, sign)
                     } else {
                         TheoryLit::new_b(t,sign) // encoded away
@@ -114,7 +117,9 @@ impl<S:Symbol> Tseitin<S> {
             // traverse `t` as a DAG
             self.iter.iter(t, |m, u| {
                 // `u` is a subterm that has never been processed.
-                match m.get().view(u) {
+                let mut mr = m.get_mut();
+                let view_u = mr.view(u);
+                match view_u {
                     View::App {f, args} if f == b.not_ => {
                         debug_assert_eq!(1, args.len());
                         () // nothing to do here
@@ -200,7 +205,7 @@ impl<S:Symbol> Tseitin<S> {
                     },
                     View::App {f, args} if f == b.distinct => {
                         let args: Vec<AST> = args.into();
-                        let mut mr = m.get_mut();
+                        drop(view_u); // access `mr` again
 
                         // eliminate `distinct` into a conjunction of O(n^2) dis-equations
                         let lit_distinct = lmb.term_to_lit(u);
