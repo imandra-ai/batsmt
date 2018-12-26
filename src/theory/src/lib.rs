@@ -13,7 +13,7 @@
 
 use {
     std::{ops::{Deref,Not}, hash::Hash, fmt},
-    batsmt_core::{ ast::{Manager,PrettyM}, backtrack::Backtrackable},
+    batsmt_core::{ ast::{Manager, ManagerCtx, }, backtrack::Backtrackable},
     batsmt_pretty as pp,
 };
 
@@ -25,30 +25,41 @@ use {
 /// It must be the case that `!!b` is the same as `b`.
 pub trait BoolLit : fmt::Debug + Eq + Ord + Hash + Copy + Not<Output=Self> {}
 
+/// Context that has a notion of boolean literals.
+pub trait BoolLitCtx {
+    type B : BoolLit;
+}
+
+/// A theory is parametrized by a Manager (with its AST, symbol, etc.) and boolean literals.
+pub trait Ctx : ManagerCtx + BoolLitCtx {}
+
+// auto impl
+impl<T:ManagerCtx+BoolLitCtx> Ctx for T {}
+
 /// A theory-level literal, either a boolean literal, or a boolean term plus a sign.
 ///
 /// The conversion to SAT literals of the latter
 /// is done automatically and theories
 /// should not have to worry about it.
-#[derive(Copy,Clone,Eq,PartialEq)]
-pub enum TheoryLit<AST, B:BoolLit> {
-    T(AST, bool), // theory lit
-    BLazy(AST, bool), // to be turned into B
-    B(B),
+#[derive(Eq,PartialEq)]
+pub enum TheoryLit<C:Ctx> {
+    T(C::AST, bool), // theory lit
+    BLazy(C::AST, bool), // to be turned into B
+    B(C::B),
 }
 
 /// A temporary theory-level clause, such as a lemma or theory conflict
 ///
 /// It is composed of a set of `TheoryLit`.
 #[derive(Clone,Copy)]
-pub struct TheoryClauseRef<'a,M:Manager,B:BoolLit> {
-    lits: &'a [TheoryLit<M::AST,B>],
+pub struct TheoryClauseRef<'a,C:Ctx> {
+    lits: &'a [TheoryLit<C>],
 }
 
 /// A set of theory clauses, with efficient append
 #[derive(Clone)]
-pub struct TheoryClauseSet<M:Manager,B:BoolLit> {
-    lits: Vec<TheoryLit<M::AST,B>>, // clause lits
+pub struct TheoryClauseSet<C:Ctx> {
+    lits: Vec<TheoryLit<C>>, // clause lits
     offsets: Vec<(usize,usize)>, // slices in `lits`
 }
 
@@ -57,9 +68,9 @@ pub struct TheoryClauseSet<M:Manager,B:BoolLit> {
 /// A theory can use these actions to signal its caller that some
 /// literals can be propagated, or that the current set of literals
 /// is T-inconsistent.
-pub struct Actions<M:Manager,B:BoolLit> {
-    cs: TheoryClauseSet<M,B>,
-    propagations: Vec<B>,
+pub struct Actions<C:Ctx> {
+    cs: TheoryClauseSet<C>,
+    propagations: Vec<C::B>,
     conflict: bool,
     costly_conflict: bool,
 }
@@ -70,15 +81,15 @@ pub struct Actions<M:Manager,B:BoolLit> {
 /// `theory::partial_check` or `theory::final_check`, the actions
 /// structure will contain
 #[derive(Clone,Debug)]
-pub enum ActState<'a, M:Manager, B:BoolLit> {
+pub enum ActState<'a, C:Ctx> {
     /// propagations and new lemmas
     Props {
-        props: &'a [B],
-        lemmas: &'a TheoryClauseSet<M,B>
+        props: &'a [C::B],
+        lemmas: &'a TheoryClauseSet<C>
     },
     /// conflict reached
     Conflict {
-        c: TheoryClauseRef<'a, M, B>,
+        c: TheoryClauseRef<'a, C>,
         costly: bool,
     }
 }
@@ -87,13 +98,13 @@ pub enum ActState<'a, M:Manager, B:BoolLit> {
 ///
 /// This is given to the theory in order to check its validity. It doesn't show
 /// purely boolean literals.
-pub struct Trail<'a,M:Manager,B>(pub(crate) &'a [(M::AST,bool,B)]);
+pub struct Trail<'a,C:Ctx>(pub(crate) &'a [(C::AST,bool,C::B)]);
 
 /// Interface satisfied by a SMT theory.
 ///
 /// A theory is responsible for enforcing the semantics of some
 /// of the boolean literals.
-pub trait Theory<M: Manager, B:BoolLit> : Backtrackable {
+pub trait Theory<C:Ctx> : Backtrackable {
     /// Check a full model.
     ///
     /// ## Params:
@@ -101,7 +112,7 @@ pub trait Theory<M: Manager, B:BoolLit> : Backtrackable {
     /// - `trail` contains triples `(term, bool, literal)` where `literal`
     ///     is `term <=> bool` and the current model contains `literal`
     /// - `acts` is a set of actions available to the theory.
-    fn final_check(&mut self, acts: &mut Actions<M, B>, trail: &Trail<M, B>);
+    fn final_check(&mut self, acts: &mut Actions<C>, trail: &Trail<C>);
 
     /// Check a partial model.
     ///
@@ -111,7 +122,7 @@ pub trait Theory<M: Manager, B:BoolLit> : Backtrackable {
     /// this function is allowed to not fully check the model, and `trail`
     /// only contains _new_ literals (since the last call to `partial_check`).
     /// It will be called more often than `final_check` so it should be efficient.
-    fn partial_check(&mut self, _acts: &mut Actions<M, B>, _trail: &Trail<M, B>) {}
+    fn partial_check(&mut self, _acts: &mut Actions<C>, _trail: &Trail<C>) {}
 
     /// Does the theory handle partial checks?
     ///
@@ -126,37 +137,47 @@ pub trait Theory<M: Manager, B:BoolLit> : Backtrackable {
     /// This is typically called before solving, so as to add terms once
     /// and for all, and so that the theory can propagate
     /// literals back to the SAT solver.
-    fn add_literal(&mut self, _t: M::AST, _lit: B) {}
+    fn add_literal(&mut self, _t: C::AST, _lit: C::B) {}
 
     /// Ask the theory to explain why it propagated literal `p`.
     ///
     /// The result must be a set `g` of literals which are true in the current
     /// trail, and such that `g => p` is a T-tautology.
-    fn explain_propagation(&mut self, p: B) -> &[B];
+    fn explain_propagation(&mut self, p: C::B) -> &[C::B];
 }
 
 mod theory_lit {
     use super::*;
 
-    impl<AST, B:BoolLit> TheoryLit<AST, B> {
+    impl<C:Ctx> Clone for TheoryLit<C> {
+        fn clone(&self) -> Self {
+            match self {
+                TheoryLit::B(a) => TheoryLit::B(*a),
+                TheoryLit::T(t,sign) => TheoryLit::T(t.clone(), *sign),
+                TheoryLit::BLazy(t,sign) => TheoryLit::BLazy(t.clone(), *sign),
+            }
+        }
+    }
+
+    impl<C:Ctx> TheoryLit<C> {
         /// Make a theory literal.
         ///
         /// This literal will map bidirectionally with the term, and
         /// will be passed to the Theory whenever it's decided by the SAT solver.
-        pub fn new_t(ast: AST, sign: bool) -> Self { TheoryLit::T(ast,sign) }
+        pub fn new_t(ast: C::AST, sign: bool) -> Self { TheoryLit::T(ast,sign) }
 
         /// Make a lazy pure boolean literal.
         ///
         /// This designates a pure boolean literal that will live in the SAT
         /// solver but will not be passed to the theory.
         /// The same term will always map to the same boolean literal.
-        pub fn new_b(ast: AST, sign: bool) -> Self { TheoryLit::BLazy(ast,sign) }
+        pub fn new_b(ast: C::AST, sign: bool) -> Self { TheoryLit::BLazy(ast,sign) }
 
         /// Wrap a pure boolean literal.
         ///
         /// This pure SAT literal will never be passed to the theory.
         /// It is given to the SAT solver as is.
-        pub fn from_blit(b: B) -> Self { TheoryLit::B(b) }
+        pub fn from_blit(b: C::B) -> Self { TheoryLit::B(b) }
 
         /// Is is a theory literal (i.e. given to the theory when in a partial model)?
         pub fn is_theory(&self) -> bool { match self { TheoryLit::T(..) => true, _ => false } }
@@ -167,7 +188,10 @@ mod theory_lit {
         }
     }
 
-    impl<AST:fmt::Debug,B:BoolLit+fmt::Debug> fmt::Debug for TheoryLit<AST,B> {
+    impl<C:Ctx> fmt::Debug for TheoryLit<C>
+        where C::AST: fmt::Debug,
+              C::B: fmt::Debug
+    {
         fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
             match self {
                 TheoryLit::B(lit) => write!(fmt, "{:?}", lit),
@@ -183,9 +207,10 @@ mod theory_lit {
         }
     }
 
-    impl<AST:PrettyM, B:BoolLit> PrettyM for TheoryLit<AST, B> {
-        type M = AST::M;
-        fn pp_m(&self, m: &Self::M, ctx: &mut pp::Ctx) {
+    impl<C:Ctx> pp::Pretty1<C::M> for TheoryLit<C>
+        where C::AST: pp::Pretty1<C::M>
+    {
+        fn pp_with(&self, m: &C::M, ctx: &mut pp::Ctx) {
             match self {
                 TheoryLit::B(lit) => {
                     pp::Pretty::pp(&pp::dbg(lit), ctx);
@@ -204,17 +229,12 @@ mod theory_lit {
         }
     }
 
-    // conversion from BLit
-    impl<AST,B:BoolLit> From<B> for TheoryLit<AST,B> {
-        fn from(l: B) -> Self { TheoryLit::B(l) }
-    }
-
-    impl<AST,B:BoolLit> From<(AST,bool)> for TheoryLit<AST,B> {
-        fn from(p: (AST,bool)) -> Self { Self::new_t(p.0,p.1) }
+    impl<C:Ctx> From<(C::AST,bool)> for TheoryLit<C> {
+        fn from(p: (C::AST,bool)) -> Self { Self::new_t(p.0,p.1) }
     }
 
     // easy negation
-    impl<AST,B:BoolLit> Not for TheoryLit<AST,B> {
+    impl<C:Ctx> Not for TheoryLit<C> {
         type Output = Self;
         /// Negation on the AST-based literals
         fn not(self) -> Self {
@@ -230,13 +250,13 @@ mod theory_lit {
 mod theory_clause {
     use super::*;
 
-    impl<'a,M:Manager,B:BoolLit> TheoryClauseRef<'a,M,B> {
-        pub fn iter(&'a self) -> impl Iterator<Item=TheoryLit<M::AST,B>> + 'a {
-            self.lits.iter().map(|l| l.clone())
+    impl<'a,C:Ctx> TheoryClauseRef<'a,C> {
+        pub fn iter(&'a self) -> impl Iterator<Item=TheoryLit<C>> + 'a {
+            self.lits.iter().cloned()
         }
     }
 
-    impl<'a,M:Manager,B:BoolLit+fmt::Debug> fmt::Debug for TheoryClauseRef<'a,M,B> {
+    impl<'a,C:Ctx> fmt::Debug for TheoryClauseRef<'a,C> {
         fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
             write!(fmt, "[")?;
             for lit in self.iter() { lit.fmt(fmt)? }
@@ -244,17 +264,16 @@ mod theory_clause {
         }
     }
 
-    impl<'a,M:Manager,B:BoolLit> Deref for TheoryClauseRef<'a,M,B> {
-        type Target = [TheoryLit<M::AST,B>];
+    impl<'a,C:Ctx> Deref for TheoryClauseRef<'a,C> {
+        type Target = [TheoryLit<C>];
         fn deref(&self) -> &Self::Target { &self.lits }
     }
 
     // Print a list of literals
-    impl<'a,M:Manager,B:BoolLit> PrettyM for TheoryClauseRef<'a,M,B>
-        where M::AST : PrettyM<M=M>
+    impl<'a,C:Ctx> pp::Pretty1<C::M> for TheoryClauseRef<'a,C>
+        where C::AST : pp::Pretty1<C::M>
     {
-        type M = M;
-        fn pp_m(&self, m: &M, ctx: &mut pp::Ctx) {
+        fn pp_with(&self, m: &C::M, ctx: &mut pp::Ctx) {
             ctx.sexp(|ctx| {
                 ctx.iter(pp::pair(" ∨", pp::space()),
                     self.lits.iter().map(|lit| m.pp(lit)));
@@ -263,7 +282,7 @@ mod theory_clause {
     }
 }
 
-impl<M:Manager,B:BoolLit> TheoryClauseSet<M,B> {
+impl<C:Ctx> TheoryClauseSet<C> {
     /// New set of clauses.
     pub fn new() -> Self {
         Self {lits: Vec::new(), offsets: Vec::new() }
@@ -279,7 +298,7 @@ impl<M:Manager,B:BoolLit> TheoryClauseSet<M,B> {
 
     /// Push a clause into the set.
     pub fn push<L>(&mut self, c: &[L])
-        where L: Clone + Into<TheoryLit<M::AST,B>>
+        where L: Clone + Into<TheoryLit<C>>
     {
         let idx = self.lits.len();
         self.offsets.push((idx, c.len()));
@@ -288,7 +307,7 @@ impl<M:Manager,B:BoolLit> TheoryClauseSet<M,B> {
 
     /// Push a clause (as an iterator) into the set.
     pub fn push_iter<U, I>(&mut self, i: I)
-        where I: Iterator<Item=U>, U: Into<TheoryLit<M::AST,B>>
+        where I: Iterator<Item=U>, U: Into<TheoryLit<C>>
     {
         let idx = self.lits.len();
         self.lits.extend(i.map(|x| x.into()));
@@ -300,21 +319,21 @@ impl<M:Manager,B:BoolLit> TheoryClauseSet<M,B> {
     ///
     /// Use `c.into()` over the slices to turn them into proper `TheoryClause`,
     /// if needed.
-    pub fn iter<'a>(&'a self) -> impl Iterator<Item=TheoryClauseRef<'a,M,B>> {
+    pub fn iter<'a>(&'a self) -> impl Iterator<Item=TheoryClauseRef<'a,C>> {
         CSIter{cs: &self, idx: 0}
     }
 }
 
 // iterator over clauses
-struct CSIter<'a, M:Manager, B:BoolLit> {
-    cs: &'a TheoryClauseSet<M,B>,
+struct CSIter<'a, C:Ctx> {
+    cs: &'a TheoryClauseSet<C>,
     idx: usize, // in `cs.offsets`
 }
 
 mod theory_clause_set {
     use super::*;
 
-    impl<M:Manager, B:BoolLit> fmt::Debug for TheoryClauseSet<M, B> {
+    impl<C:Ctx> fmt::Debug for TheoryClauseSet<C> {
         fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
             write!(fmt, "clause_set(")?;
             for c in self.iter() {
@@ -325,8 +344,8 @@ mod theory_clause_set {
     }
 
     // the iterator over clauses
-    impl<'a, M:Manager, B:BoolLit> Iterator for CSIter<'a, M, B> {
-        type Item = TheoryClauseRef<'a, M, B>;
+    impl<'a, C:Ctx> Iterator for CSIter<'a, C> {
+        type Item = TheoryClauseRef<'a, C>;
 
         fn next(&mut self) -> Option<Self::Item> {
             let cs = self.cs;
@@ -341,21 +360,21 @@ mod theory_clause_set {
     }
 }
 
-impl<'a, M:Manager, B:BoolLit> Trail<'a, M, B> {
+impl<'a, C:Ctx> Trail<'a, C> {
     #[inline(always)]
     /// Access the underlying items.
-    pub fn as_slice(&self) -> &'a [(M::AST,bool,B)] { &self.0 }
+    pub fn as_slice(&self) -> &'a [(C::AST,bool,C::B)] { &self.0 }
 
     #[inline(always)]
     /// Build a trail from this slice.
-    pub fn from_slice(a: &'a [(M::AST,bool,B)]) -> Self { Trail(a) }
+    pub fn from_slice(a: &'a [(C::AST,bool,C::B)]) -> Self { Trail(a) }
 
     #[inline(always)]
     /// Empty trail.
     pub fn empty() -> Self { Trail(&[]) }
 
     /// Iterate on the underlying items.
-    pub fn iter(&self) -> impl Iterator<Item=(M::AST,bool,B)> + 'a {
+    pub fn iter(&self) -> impl Iterator<Item=(C::AST,bool,C::B)> + 'a {
         self.0.iter().cloned()
     }
 
@@ -364,7 +383,7 @@ impl<'a, M:Manager, B:BoolLit> Trail<'a, M, B> {
     pub fn len(&self) -> usize { self.0.len() }
 }
 
-impl<M: Manager, B:BoolLit> Actions<M, B> {
+impl<C:Ctx> Actions<C> {
     /// Create a new set of actions
     pub fn new() -> Self {
         Self {
@@ -385,7 +404,7 @@ impl<M: Manager, B:BoolLit> Actions<M, B> {
     /// Return current state.
     ///
     /// Either a set of propagated clauses, or a single conflict clause
-    pub fn state<'a>(&'a self) -> ActState<'a, M, B> {
+    pub fn state<'a>(&'a self) -> ActState<'a, C> {
         if self.conflict {
             let c = self.cs.iter().next().expect("conflict but no conflict clause");
             ActState::Conflict {c, costly: self.costly_conflict}
@@ -402,27 +421,28 @@ impl<M: Manager, B:BoolLit> Actions<M, B> {
 
     /// Propagate the given boolean literal.
     #[inline(always)]
-    pub fn propagate(&mut self, p: B) {
+    pub fn propagate(&mut self, p: C::B) {
         self.propagations.push(p)
     }
 
     /// Instantiate the given lemma
-    pub fn add_lemma(&mut self, c: &[TheoryLit<M::AST, B>]) {
+    pub fn add_lemma(&mut self, c: &[TheoryLit<C>]) {
         if ! self.conflict {
             trace!("theory.add_lemma {:?}", c);
             self.cs.push(c.into())
         }
     }
 
-    pub fn add_bool_lemma(&mut self, c: &[B]) {
+    pub fn add_bool_lemma(&mut self, c: &[C::B]) {
         if ! self.conflict {
             trace!("theory.add-lemma {:?}", c);
-            self.cs.push(c.into())
+            let i = c.iter().map(|a| TheoryLit::from_blit(*a));
+            self.cs.push_iter(i)
         }
     }
 
     pub fn add_lemma_iter<U, I>(&mut self, i: I)
-        where I: Iterator<Item=U>, U: Into<TheoryLit<M::AST, B>>
+        where I: Iterator<Item=U>, U: Into<TheoryLit<C>>
     {
         if ! self.conflict {
             trace!("theory.add-lemma-iter");
@@ -434,7 +454,7 @@ impl<M: Manager, B:BoolLit> Actions<M, B> {
     ///
     /// This clause should be a valid theory lemma (a valid tautology) that
     /// is false in the current model.
-    pub fn raise_conflict(&mut self, c: &[TheoryLit<M::AST, B>], costly: bool) {
+    pub fn raise_conflict(&mut self, c: &[TheoryLit<C>], costly: bool) {
         // only create a conflict if there's not one already
         if ! self.conflict {
             trace!("theory.raise-conflict {:?} (costly: {})", c, costly);
@@ -450,7 +470,7 @@ impl<M: Manager, B:BoolLit> Actions<M, B> {
     ///
     /// The clause is built from an iterator over theory lits
     pub fn raise_conflict_iter<U, I>(&mut self, i: I, costly: bool)
-        where I: Iterator<Item=U>, U: Into<TheoryLit<M::AST, B>>
+        where I: Iterator<Item=U>, U: Into<TheoryLit<C>>
     {
         if ! self.conflict {
             trace!("theory.raise-conflict-iter (costly: {})", costly);

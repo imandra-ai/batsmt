@@ -10,10 +10,11 @@ pub mod shared;
 pub use crate::{
   backtrack::{Stack as BacktrackStack,Backtrackable},
   ast::{
-      Manager,
-      AstHashMap,
+      Manager, ManagerCtx,
       View as AstView,
-      PrettyM,
+      AstSet, AstDenseSet, AstSparseSet,
+      AstMap, AstDenseMap, AstSparseMap,
+      WithDenseSet, WithDenseMap, WithSparseSet, WithSparseMap,
   },
   gc::GC,
   shared::{Shared,SharedRef,SharedRefMut},

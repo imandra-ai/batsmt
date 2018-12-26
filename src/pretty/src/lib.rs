@@ -230,6 +230,30 @@ pub trait Pretty {
     }
 }
 
+/// A type pretty-printable when given a context of type `T`.
+pub trait Pretty1<T : ?Sized> {
+    fn pp_with(&self, x: &T, ctx: &mut Ctx);
+}
+
+mod pretty1 {
+    use super::*;
+    impl<'a, M, T:Pretty1<M>> Pretty1<M> for &'a T {
+        fn pp_with(&self, m: &M, ctx: &mut Ctx) { (*self).pp_with(m,ctx) }
+    }
+
+    // render array in a S-expr
+    impl<'a, M, T:Pretty1<M>> Pretty1<M> for &'a [T] {
+        fn pp_with(&self, m: &M, ctx: &mut Ctx) {
+            ctx.sexp(|ctx| {
+                for (i,x) in self.iter().enumerate() {
+                    if i > 0 { space().pp(ctx); }
+                    x.pp_with(m, ctx)
+                }
+            });
+        }
+    }
+}
+
 // ability to use `Op` directly as a printable object
 impl Pretty for Op {
     fn pp(&self, ctx: &mut Ctx) { ctx.push_(self.clone()); }

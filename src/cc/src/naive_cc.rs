@@ -8,77 +8,73 @@ use {
         marker::PhantomData, collections::VecDeque, fmt,
     },
     fxhash::{FxHashMap,FxHashSet},
-    batsmt_core::{AST,ast,ast::View,Symbol,backtrack},
-    crate::{*,types::BoolLit},
+    batsmt_core::{ast::{View,Manager},backtrack},
+    batsmt_theory::Ctx,
+    crate::{*, types::*},
 };
 
-type M<S> = ast::Manager<S>;
-
-#[derive(Clone,Copy)]
-enum Op<B> {
-    Merge(AST,AST,B),
+#[derive(Clone)]
+enum Op<C:Ctx> {
+    Merge(C::AST, C::AST, C::B),
 }
 
 /// A naive implementation of the congruence closure
-pub struct NaiveCC<S:Symbol,B>{
-    m: ast::Manager<S>, // the AST manager
-    b: Builtins, // builtin terms
-    props: PropagationSet<B>,
-    confl: Vec<B>,
-    ops: backtrack::Stack<Op<B>>, // just keep the set of operations to do here
-    m_s: PhantomData<S>,
+pub struct NaiveCC<C:Ctx>{
+    b: Builtins<C::AST>, // builtin terms
+    props: PropagationSet<C::B>,
+    confl: Vec<C::B>,
+    ops: backtrack::Stack<Op<C>>, // just keep the set of operations to do here
 }
 
 /// A class representative
-#[derive(Clone,Copy,Debug,Eq,PartialEq,Hash)]
-struct Repr(AST);
+#[derive(Clone,Debug,Eq,PartialEq,Hash)]
+struct Repr<AST>(AST);
 
 // A non-incremental congruence closure.
 //
 // It returns highly-non-minimal conflicts, that basically involve all
 // literals used so far.
-struct Solve<'a, S:Symbol, B> {
-    _props: &'a mut PropagationSet<B>,
-    confl: &'a mut Vec<B>,
-    all_lits: FxHashSet<B>, // all literals used in ops so far
-    m_s: PhantomData<S>,
-    m: ast::Manager<S>, // the AST manager
-    b: Builtins, // builtin terms
-    root: FxHashMap<AST, Repr>, // term -> its root + expl
+struct Solve<'a, C:Ctx> {
+    _props: &'a mut PropagationSet<C::B>,
+    m: &'a C::M,
+    confl: &'a mut Vec<C::B>,
+    all_lits: FxHashSet<C::B>, // all literals used in ops so far
+    b: Builtins<C::AST>, // builtin terms
+    root: FxHashMap<C::AST, Repr<C::AST>>, // term -> its root + expl
     //root: FxHashMap<AST, (Repr,Option<Expl<B>>)>, // term -> its root + expl
-    parents: FxHashMap<Repr, SVec<AST>>, // term -> its direct superterms
-    tasks: VecDeque<Task>, // tasks to perform
+    parents: FxHashMap<Repr<C::AST>, SVec<C::AST>>, // term -> its direct superterms
+    tasks: VecDeque<Task<C::AST>>, // tasks to perform
 }
 
 #[derive(Clone,Copy,Debug)]
-enum Expl<B> {
+enum Expl<AST, B> {
     Lit(B),
-    Congruent(AST,AST),
+    Congruent(AST, AST),
     AreEq(AST,AST),
 }
 
 #[derive(Clone,Copy,Debug)]
-enum Task {
+enum Task<AST> {
     UpdateTerm(AST), // check for congruence
     Merge(AST,AST), // merge the two classes
 }
 
-impl<S:Symbol,B:BoolLit> CCInterface<B> for NaiveCC<S,B> {
-    fn merge(&mut self, t1: AST, t2: AST, lit: B) {
+impl<C:Ctx> CCInterface<C> for NaiveCC<C> {
+    fn merge(&mut self, _m: &C::M, t1: C::AST, t2: C::AST, lit: C::B) {
         self.ops.push(Op::Merge(t1,t2,lit))
     }
 
-    fn distinct(&mut self, _ts: &[AST], _lit: B) {
+    fn distinct(&mut self, _m: &C::M, _ts: &[C::AST], _lit: C::B) {
         unimplemented!("no handling of `distinct` in naiveCC")
     }
 
-    fn final_check(&mut self) -> Result<&PropagationSet<B>, Conflict<B>> {
+    fn final_check(&mut self, m: &C::M) -> Result<&PropagationSet<C::B>, Conflict<C::B>> {
         debug!("cc.check()");
         // create local solver
         self.props.clear();
         self.confl.clear();
         let mut solve =
-            Solve::new(&self.m, self.b.clone(),
+            Solve::new(m, self.b.clone(),
                 &mut self.props,
                 &mut self.confl);
         // here is where we do all the work
@@ -92,18 +88,18 @@ impl<S:Symbol,B:BoolLit> CCInterface<B> for NaiveCC<S,B> {
 
     // NOTE: do not implement partial check at all.
 
-    fn impl_descr(&self) -> &'static str { "naive congruence closure"}
+    fn impl_descr() -> &'static str { "naive congruence closure"}
 
-    fn explain_propagation(&mut self, _p: B) -> &[B] {
+    fn explain_propagation(&mut self, _m: &C::M, _p: C::B) -> &[C::B] {
         unreachable!() // never propagated anything
     }
 }
 
-impl<S:Symbol,B:BoolLit> NaiveCC<S,B> {
+impl<C:Ctx> NaiveCC<C> {
     /// Create a new congruence closure using the given `Manager`
-    pub fn new(m: &ast::Manager<S>, b: Builtins) -> Self {
+    pub fn new(b: Builtins<C::AST>) -> Self {
         NaiveCC {
-            m: m.clone(), b,
+            b,
             m_s: PhantomData::default(),
             props: PropagationSet::new(),
             confl: vec!(),
@@ -113,7 +109,7 @@ impl<S:Symbol,B:BoolLit> NaiveCC<S,B> {
 }
 
 // just backtrack the set of operations we'll have to perform
-impl<S:Symbol,B> backtrack::Backtrackable for NaiveCC<S,B> {
+impl<C:Ctx> backtrack::Backtrackable for NaiveCC<C> {
     fn push_level(&mut self) { self.ops.push_level() }
     fn n_levels(&self) -> usize { self.ops.n_levels() }
     fn pop_levels(&mut self, n: usize) {
@@ -122,13 +118,13 @@ impl<S:Symbol,B> backtrack::Backtrackable for NaiveCC<S,B> {
 }
 
 // main algorithm
-impl<'a, S:Symbol, B:BoolLit> Solve<'a, S, B> {
-    fn new(m: &'a M<S>, b: Builtins,
-           props: &'a mut PropagationSet<B>,
-           confl: &'a mut Vec<B>) -> Self
+impl<'a, C:Ctx> Solve<'a, C> {
+    fn new(m: &'a C::M, b: Builtins<C::AST>,
+           props: &'a mut PropagationSet<C::B>,
+           confl: &'a mut Vec<C::B>) -> Self
     {
         let mut s = Solve {
-            m: m.clone(), b: b.clone(),
+            m, b: b.clone(),
             _props: props,
             confl,
             m_s: PhantomData::default(),
@@ -144,7 +140,7 @@ impl<'a, S:Symbol, B:BoolLit> Solve<'a, S, B> {
     }
 
     /// entry point
-    pub(super) fn check_internal(&mut self, ops: &[Op<B>]) -> bool {
+    pub(super) fn check_internal(&mut self, ops: &[Op<C>]) -> bool {
         trace!("naive-cc.check (ops: {:?})", ops);
         for &op in ops.iter() {
             let ok = self.perform_op(op);
@@ -160,7 +156,7 @@ impl<'a, S:Symbol, B:BoolLit> Solve<'a, S, B> {
 
 
     // perform one operation to change the CC
-    fn perform_op(&mut self, op: Op<B>) -> bool {
+    fn perform_op(&mut self, op: Op<C>) -> bool {
         match op {
             Op::Merge(a,b,lit) => {
                 // add terms, then merge
@@ -170,7 +166,7 @@ impl<'a, S:Symbol, B:BoolLit> Solve<'a, S, B> {
     }
 
     // Find representative of `a`
-    fn find(&self, mut a: AST) -> Repr {
+    fn find(&self, mut a: &C::AST) -> Repr<C::AST> {
         loop {
             let n = self.root.get(&a).expect("term not present");
 
@@ -182,7 +178,7 @@ impl<'a, S:Symbol, B:BoolLit> Solve<'a, S, B> {
         }
     }
 
-    fn merge(&mut self, a: AST, b: AST, lit: B) -> bool {
+    fn merge(&mut self, a: C::AST, b: C::AST, lit: C::B) -> bool {
         self.add_term(a);
         self.add_term(b);
 
@@ -203,25 +199,24 @@ impl<'a, S:Symbol, B:BoolLit> Solve<'a, S, B> {
     }
 
     // are `a` and `b` equal?
-    fn is_eq(&self, a: AST, b: AST) -> bool {
+    fn is_eq(&self, a: &C::AST, b: &C::AST) -> bool {
         self.find(a) == self.find(b)
     }
 
-    fn is_root(&self, r: Repr) -> bool {
+    fn is_root(&self, r: Repr<C::AST>) -> bool {
         self.find(r.0) == r
     }
 
     // add subterms recursively
-    fn add_term(&mut self, t: AST) {
-        if ! self.root.contains_key(&t) {
+    fn add_term(&mut self, t: &C::AST) {
+        if ! self.root.contains_key(t) {
             trace!("add-term {:?}", self.m.pp(t));
-            self.root.insert(t, Repr(t));
-            self.parents.insert(Repr(t), SVec::new());
+            self.root.insert(t.clone(), Repr(t.clone()));
+            self.parents.insert(Repr(t.clone()), SVec::new());
             self.tasks.push_back(Task::UpdateTerm(t));
 
             // add arguments to CC, and add `t` to its arguments' parents lists
-            let m = self.m.clone(); // multiple borrows
-            match m.get().view(t) {
+            match self.m.view(t) {
                 View::App {f, args} => {
                     {
                         self.add_term(f);
@@ -259,12 +254,12 @@ impl<'a, S:Symbol, B:BoolLit> Solve<'a, S, B> {
     }
 
     // number of parents of `r`
-    fn n_parents(&self, r: Repr) -> usize {
+    fn n_parents(&self, r: Repr<C::AST>) -> usize {
         self.parents.get(&r).unwrap().len()
     }
 
     // are t and u congruent?
-    fn congruent(&self, t: AST, u: AST) -> bool {
+    fn congruent(&self, t: C::AST, u: C::AST) -> bool {
         if t == u { return true }
 
         let ok = match (self.m.get().view(t), self.m.get().view(u)) {
@@ -280,7 +275,7 @@ impl<'a, S:Symbol, B:BoolLit> Solve<'a, S, B> {
     }
 
     // merge these two distinct representatives
-    fn merge_repr(&mut self, mut ra: Repr, mut rb: Repr) {
+    fn merge_repr(&mut self, mut ra: Repr<C::AST>, mut rb: Repr<C::AST>) {
         assert_ne!(ra, rb);
         debug_assert!(self.is_root(ra));
         debug_assert!(self.is_root(rb));
@@ -334,7 +329,7 @@ impl<'a, S:Symbol, B:BoolLit> Solve<'a, S, B> {
     // this new term `t` might be congruent to other terms.
     //
     // Look for these based on t's arguments' parents
-    fn update_term(&mut self, t: AST) {
+    fn update_term(&mut self, t: C::AST) {
         let m = self.m.clone();
         match m.get().view(t) {
             View::App {f, args} => {
@@ -367,7 +362,7 @@ impl<'a, S:Symbol, B:BoolLit> Solve<'a, S, B> {
     }
 }
 
-impl<B:BoolLit> fmt::Debug for Op<B> {
+impl<C:Ctx> fmt::Debug for Op<C> {
     fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Op::Merge(a,b,lit) => write!(out, "merge({:?},{:?},{:?})",a,b,lit),

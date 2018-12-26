@@ -1,8 +1,21 @@
 
 //! Main Interface for GC
 
-/// The trait for managers that support Garbage Collection of their content
-pub trait GC {
+pub trait HasInternalMemory {
+    /// Free unused internal memory, as much as possible.
+    ///
+    /// This includes:
+    /// - clearing caches
+    /// - shrinking internal structures (maps, tables, etc.)
+    /// - compacting internal allocators
+    fn reclaim_unused_memory(&mut self);
+}
+
+/// The trait for managers that support Garbage Collection of their content.
+///
+/// This must also implement `HasInternalMemory`; the typical usage would
+/// be to mark roots, collect, then free internal memory.
+pub trait GC : HasInternalMemory {
     type Element;
 
     /// Mark the given element as a root used by the rest of the program
