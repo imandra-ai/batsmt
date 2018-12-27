@@ -12,8 +12,10 @@ use {
     std::{
         slice, u32, marker::PhantomData,
     },
-    batsmt_core::{ ast::{self, AstDenseMap, Manager, AstSet, }, gc, AstView, },
-    fxhash::{FxHashMap,FxHashSet},
+    batsmt_core::{
+        ast::{self, DenseMap, Manager, AstSet, },
+        ast_u32::{self, DenseSet, }, gc, AstView, },
+    fxhash::{FxHashMap},
     batsmt_pretty as pp,
 };
 
@@ -21,16 +23,10 @@ pub use {
     crate::symbol::{ SymbolCtx, SymbolManager, str::StrManager as StrSymbolManager, }
 };
 
-/// The unique identifier of an AST node.
-#[derive(Copy,Clone,Eq,PartialEq,Hash,Ord,PartialOrd,Debug)]
-pub struct AST(u32);
+/// Use the `u32` AST.
+pub use batsmt_core::ast_u32::AST;
 
-pub type HView<'a, S:SymbolManager> = AstView<'a, &'a S::View, AST>;
-
-impl AST {
-    /// A value of type AST. Only ever use to fill array, do not access.
-    pub const SENTINEL : AST = AST(u32::MAX);
-}
+pub type HView<'a, S> = AstView<'a, &'a <S as SymbolCtx>::View, AST>;
 
 /// Definition of application keys
 ///
@@ -73,7 +69,7 @@ mod app_stored {
             // copy arguments into local array or heap
             let new_args =
                 if len <= N_SMALL_APP {
-                    let mut arr = [AST(0); N_SMALL_APP];
+                    let mut arr = [AST::SENTINEL; N_SMALL_APP];
                     arr[0..len].copy_from_slice(args);
                     ArrOrVec{arr}
                 } else {
@@ -127,7 +123,7 @@ mod app_stored {
             check_len(len);
             let new_args =
                 if len <= N_SMALL_APP {
-                    let mut arr = [AST(0); N_SMALL_APP];
+                    let mut arr = [AST::SENTINEL; N_SMALL_APP];
                     arr[0..len].copy_from_slice(args);
                     ArrOrVec{arr}
                 } else {
@@ -274,7 +270,7 @@ pub struct HManager<S:SymbolManager> {
     tbl_app: FxHashMap<AppStored<'static>, AST>, // hashconsing of applications
     sym_m: S,
     // TODO: use some bits of nodes[i].kind (a u8) for this?
-    gc_alive: BitSet, // for GC
+    gc_alive: ast_u32::DenseSet, // for GC
     gc_stack: Vec<AST>, // temporary vector for GC marking
     recycle: Vec<u32>, // indices that contain a `undefined`
 }
@@ -282,17 +278,14 @@ pub struct HManager<S:SymbolManager> {
 mod manager {
     use super::*;
 
-    impl<S:SymbolManager> ast::ManagerCtx for HManager<S> {
+    impl<S:SymbolManager> Manager for HManager<S> {
         type SymBuilder = S::Builder;
         type SymView = S::View;
         type AST = AST;
-        type M = Self;
-    }
 
-    impl<S:SymbolManager> ast::Manager for HManager<S> {
         #[inline(always)]
         fn view<'a>(&'a self, t: &AST) -> HView<'a, S> {
-            view_node(&self.sym_m, &self.nodes[t.0 as usize])
+            view_node(&self.sym_m, &self.nodes[t.idx() as usize])
         }
 
         /// `m.mk_app(f, args)` creates the application of `f` to `args`.
@@ -315,7 +308,7 @@ mod manager {
                 None => {
                     // insert
                     let n = nodes.len();
-                    let ast = AST(n as u32);
+                    let ast = ast_u32::manager_util::ast_from_u32(n as u32);
                     // make 2 owned copies of the key
                     let k1 = k.to_owned();
                     let k2 = k1.clone();
@@ -358,7 +351,7 @@ mod manager {
                 nodes: Vec::with_capacity(512),
                 tbl_app,
                 sym_m: S::new(),
-                gc_alive: BitSet::new(),
+                gc_alive: DenseSet::new(),
                 gc_stack: Vec::new(),
                 recycle: Vec::new(),
             }
@@ -367,17 +360,17 @@ mod manager {
         /// View the given AST node
         #[inline(always)]
         pub fn view(&self, ast: AST) -> HView<S> {
-            view_node(&self.sym_m, &self.nodes[ast.0 as usize])
+            view_node(&self.sym_m, &self.nodes[ast.idx() as usize])
         }
 
         #[inline(always)]
         pub fn is_app(&self, ast: AST) -> bool {
-            self.nodes[ast.0 as usize].is_app()
+            self.nodes[ast.idx() as usize].is_app()
         }
 
         #[inline(always)]
         pub fn is_sym(&self, ast: AST) -> bool {
-            self.nodes[ast.0 as usize].is_sym()
+            self.nodes[ast.idx() as usize].is_sym()
         }
 
         /// Number of terms
@@ -392,7 +385,7 @@ mod manager {
         fn allocate_id(&mut self) -> (AST, &mut NodeStored<S>) {
             match self.recycle.pop() {
                 Some(n) => {
-                    let ast = AST(n);
+                    let ast = ast_u32::manager_util::ast_from_u32(n);
                     let slot = &mut self.nodes[n as usize];
                     debug_assert!(slot.kind() == Kind::Undef);
                     (ast,slot)
@@ -405,7 +398,7 @@ mod manager {
                     }
                     self.nodes.push(Self::UNDEF);
                     let slot = &mut self.nodes[n];
-                    (AST(n as u32), slot)
+                    (ast_u32::manager_util::ast_from_u32(n as u32), slot)
                 }
             }
         }
@@ -417,7 +410,7 @@ mod manager {
             let sym_m = &self.sym_m;
             self.nodes.iter().enumerate()
                 .filter_map(move |(i,n)| {
-                    let a = AST(i as u32);
+                    let a = ast_u32::manager_util::ast_from_u32(i as u32);
                     match n.kind {
                         Kind::Undef => None, // skip empty slot
                         _ => Some((a, view_node(sym_m, n))),
@@ -429,7 +422,7 @@ mod manager {
         pub fn iter_ast<'a>(&'a self) -> impl Iterator<Item=AST> + 'a {
             self.nodes.iter().enumerate()
                 .filter_map(|(i,n)| {
-                    let a = AST(i as u32);
+                    let a = ast_u32::manager_util::ast_from_u32(i as u32);
                     match n.kind {
                         Kind::Undef => None, // skip empty slot
                         _ => Some(a),
@@ -445,7 +438,7 @@ mod manager {
                 }
                 self.gc_alive.add(ast);
 
-                match view_node(&self.sym_m, &self.nodes[ast.0 as usize]) {
+                match view_node(&self.sym_m, &self.nodes[ast.idx() as usize]) {
                     AstView::Const(_) => (),
                     AstView::App{f, args} => {
                         // explore subterms, too
@@ -465,7 +458,8 @@ mod manager {
             for i in 0 .. len {
                 match self.nodes[i].kind() {
                     Kind::Undef => (),
-                    _ if self.gc_alive.contains(&AST(i as u32)) => (), // keep
+                    _ if self.gc_alive.contains(
+                        &ast_u32::manager_util::ast_from_u32(i as u32)) => (), // keep
                     _ => {
                         // collect
                         count += 1;
@@ -525,7 +519,7 @@ mod manager {
             self.sym_m.reclaim_unused_memory();
             self.nodes.shrink_to_fit();
             self.tbl_app.shrink_to_fit();
-            self.gc_alive.0.shrink_to_fit();
+            self.gc_alive.shrink_to_fit();
             self.gc_stack.shrink_to_fit();
             self.recycle.shrink_to_fit();
         }
@@ -546,26 +540,25 @@ mod manager {
     }
 
     /// An AST can be printed, given a manager, if the symbols are pretty
-    impl<S:SymbolManager> pp::Pretty1<HManager<S>> for AST
-        where for<'a> &'a S::View : pp::Pretty1<S>
-    {
-        fn pp_with(&self, m: &HManager<S>, ctx: &mut pp::Ctx) {
-            match m.view(*self) {
+    impl<S:SymbolManager> pp::Pretty1<AST> for HManager<S> {
+        fn pp_with(&self, t: &AST, ctx: &mut pp::Ctx) {
+            match self.view(*t) {
                 AstView::Const(s) => {
-                    s.pp_with(&m.sym_m, ctx);
+                    self.sym_m.pp_with(&s, ctx);
                 },
                 AstView::App{f,args} if args.len() == 0 => {
-                    ctx.pp(&m.pp(f)); // just f
+                    self.pp_with(&f, ctx); // just f
                 },
                 AstView::App{f,args} => {
                     ctx.sexp(|ctx| {
-                        ctx.pp(&m.pp(f)).space();
-                        ctx.iter(" ", args.iter().map(|u| m.pp(*u)));
+                        self.pp_with(&f, ctx);
+                        ctx.space();
+                        ctx.iter(" ", args.iter().map(|u| self.pp(u)));
                     });
                 }
             }
             if ctx.alternate() {
-                ctx.string(format!("/{}", self.0)); // print unique ID
+                ctx.string(format!("/{}", t.idx())); // print unique ID
             }
         }
     }
@@ -574,206 +567,20 @@ mod manager {
 /// An implementation of `ManagerCtx` using some notion of symbol and `HManager`
 pub trait HManagerCtx
     : SymbolCtx
-    + ast::ManagerCtx<
+    + Manager<
         AST=AST,
-        SymView=<Self as SymbolCtx>::SymView,
-        SymBuilder=<Self as SymbolCtx>::SymBuilder,
-        M=HManager<<Self as SymbolCtx>::SymM>>
+        SymView=<Self as SymbolCtx>::View,
+        SymBuilder=<Self as SymbolCtx>::Builder,
+    >
 {}
 
 // auto impl
 impl<U> HManagerCtx for U
 where U: SymbolCtx,
-      U: ast::ManagerCtx<
+      U: Manager<
         AST=AST,
-        SymView=<Self as SymbolCtx>::SymView,
-        SymBuilder=<Self as SymbolCtx>::SymBuilder,
-        M=HManager<<Self as SymbolCtx>::SymM>>
+        SymView=<Self as SymbolCtx>::View,
+        SymBuilder=<Self as SymbolCtx>::Builder,
+    >
 {}
 
-/// A bitset whose elements are AST nodes
-pub struct BitSet(::bit_set::BitSet);
-
-mod bit_set {
-    use super::*;
-
-    impl ast::AstSet<AST> for BitSet {
-        /// New bitset
-        #[inline(always)]
-        fn new() -> Self { BitSet(::bit_set::BitSet::new()) }
-
-        /// Clear all bits.
-        #[inline(always)]
-        fn clear(&mut self) { self.0.clear() }
-
-        #[inline(always)]
-        fn contains(&self, ast: &AST) -> bool {
-            self.0.contains(ast.0 as usize)
-        }
-
-        #[inline(always)]
-        fn len(&self) -> usize { self.0.len () }
-
-        #[inline]
-        fn add(&mut self, ast: AST) { self.0.insert(ast.0 as usize); }
-
-        #[inline]
-        fn remove(&mut self, ast: &AST) { self.0.remove(ast.0 as usize); }
-    }
-    impl ast::AstDenseSet<AST> for BitSet {}
-
-    impl<S:SymbolManager> ast::WithDenseSet<AST> for HManager<S> {
-        type DenseSet = BitSet;
-        fn new_dense_set() -> Self::DenseSet { BitSet::new() }
-    }
-}
-
-/// A hashmap whose keys are AST nodes
-pub type HashMap<V> = ast::AstHashMap<AST, V>;
-
-/// A hashset whose keys are AST nodes
-pub type HashSet = FxHashSet<AST>;
-
-
-/// An AST map backed by an array, with a default value.
-///
-/// We assume the existence of a `sentinel` value that is used to fill the
-/// vector. The sentinel should be fast to clone.
-#[derive(Clone)]
-pub struct DenseMap<V : Clone> {
-    sentinel: V,
-    mem: ::bit_set::BitSet,
-    vec: Vec<V>, // mappings, but sparse (holes filled with sentinel)
-    len: usize, // number of elements
-}
-
-/// implement AstDenseMap class.
-mod dense_map {
-    use super::*;
-    use ::bit_set::BitSet;
-
-    impl<V : Clone> ast::AstMap<AST, V> for DenseMap<V> {
-        /// Access the given key
-        fn get(&self, ast: &AST) -> Option<&V> {
-            let i = ast.0 as usize;
-            if self.mem.contains(i) {
-                debug_assert!(i < self.vec.len());
-                Some(&self.vec[i])
-            } else {
-                None
-            }
-        }
-
-        /// Access the given key, return a mutable reference to its value
-        fn get_mut(&mut self, ast: &AST) -> Option<&mut V> {
-            let i = ast.0 as usize;
-            if self.mem.contains(i) {
-                debug_assert!(i < self.vec.len());
-                Some(&mut self.vec[i])
-            } else {
-                None
-            }
-        }
-
-        /// Does the map contain this key?
-        fn contains(&self, ast: &AST) -> bool {
-            let i = ast.0 as usize;
-            self.mem.contains(i)
-        }
-
-        /// Insert a value
-        fn insert(&mut self, ast: AST, v: V) {
-            let i = ast.0 as usize;
-            let len = self.vec.len();
-            // resize arrays if required
-            if len <= i {
-                self.vec.resize(i+1, self.sentinel.clone());
-            }
-            debug_assert!(self.vec.len() > i);
-            self.vec[i] = v;
-            let is_new = self.mem.insert(i);
-            if is_new {
-                self.len += 1;
-            }
-        }
-
-        /// Remove all bindings
-        fn clear(&mut self) {
-            self.len = 0;
-            self.vec.clear();
-            self.mem.clear();
-        }
-
-        /// Remove the given key
-        fn remove(&mut self, ast: &AST) {
-            let i = ast.0 as usize;
-
-            if self.mem.contains(i) {
-                self.mem.remove(i);
-                self.vec[i] = self.sentinel.clone();
-
-                debug_assert!(self.len > 0);
-                self.len -= 1;
-            }
-        }
-
-        /// Number of elements
-        #[inline(always)]
-        fn len(&self) -> usize {
-            self.len
-        }
-    }
-
-    impl<V:Clone> DenseMap<V> {
-        /// Iterate over key/value pairs
-        pub fn iter<'a>(&'a self) -> impl Iterator<Item=(AST, &'a V)> + 'a {
-            self.vec.iter().enumerate().filter_map(move |(i,v)| {
-                if self.mem.contains(i) {
-                    let a = AST(i as u32);
-                    Some((a,v))
-                } else {
-                    None
-                }
-            })
-        }
-    }
-
-    impl<V : Clone> ast::AstDenseMap<AST, V> for DenseMap<V> {
-        /// Create a new map with `sentinel` as an element to fill the underlying storage.
-        ///
-        /// It is best if `sentinel` is efficient to clone.
-        fn new(sentinel: V) -> Self {
-            DenseMap {sentinel, mem: BitSet::new(), vec: Vec::new(), len: 0, }
-        }
-
-        /// Access two disjoint locations, mutably.
-        ///
-        /// Precondition: the ASTs are distinct and in the map (panics otherwise).
-        fn get2(&mut self, t1: AST, t2: AST) -> (&mut V, &mut V) {
-            let t1 = t1.0 as usize;
-            let t2 = t2.0 as usize;
-
-            if t1 == t2 || !self.mem.contains(t1) || !self.mem.contains(t2) {
-                panic!("dense_map.get2: invalid access");
-            }
-
-            let ref1 = (&mut self.vec[t1]) as *mut V;
-            let ref2 = (&mut self.vec[t2]) as *mut V;
-            // this is correct because t1 != t2, so the pointers are disjoint.
-            unsafe { (&mut* ref1, &mut *ref2) }
-        }
-    }
-}
-
-impl<S:SymbolManager,V:Clone> ast::WithDenseMap<AST, V> for HManager<S> {
-    type DenseMap = DenseMap<V>;
-    fn new_dense_map(sentinel: V) -> Self::DenseMap { DenseMap::new(sentinel) }
-}
-
-// check that `Manager` is just pointer-sized
-#[test]
-fn test_size_manager() {
-    type S = StrSymbolManager;
-    use std::mem;
-    assert_eq!(mem::size_of::<HManager<S>>(), mem::size_of::<*const u32>());
-}

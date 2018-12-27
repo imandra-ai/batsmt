@@ -7,7 +7,6 @@ edition = "2018"
 [dependencies]
 
 batsmt-core = { path = "../core" }
-batsmt-hast = { path = "../hast" }
 batsmt-pretty = { path = "../pretty" }
 log = "0.4"
 

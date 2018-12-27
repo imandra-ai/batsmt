@@ -1,29 +1,11 @@
 
 use {
-    batsmt_core::{gc, }
+    batsmt_core::{gc, },
+    batsmt_pretty as pp,
 };
 
 /// Context with a notion of symbols and symbol manager.
 pub trait SymbolCtx {
-    /// A reference to a symbol in the manager.
-    type SymRef : Copy + Sized;
-
-    /// A temporary view of a symbol.
-    type SymView : std::fmt::Debug + ?Sized;
-
-    /// Something to build a symbol from
-    type SymBuilder;
-
-    /// The symbol manager.
-    type SymM : 'static + SymbolManager<View=Self::SymView, Builder=Self::SymBuilder,Ref=Self::SymRef>;
-}
-
-/// The interface for a representation of logic symbols.
-///
-/// Symbols should be any unique object that belongs
-/// to the logic signature, set of sorts, custom domain elements
-/// (such as arithmetic constants, datatype constructors, etc.).
-pub trait SymbolManager : gc::HasInternalMemory {
     /// A reference to a symbol in the manager.
     type Ref : Copy + Sized;
 
@@ -33,6 +15,20 @@ pub trait SymbolManager : gc::HasInternalMemory {
     /// Something to build a symbol from
     type Builder;
 
+    /// The symbol manager.
+    type SymM : SymbolManager<View=Self::View, Builder=Self::Builder,Ref=Self::Ref>;
+}
+
+/// The interface for a representation of logic symbols.
+///
+/// Symbols should be any unique object that belongs
+/// to the logic signature, set of sorts, custom domain elements
+/// (such as arithmetic constants, datatype constructors, etc.).
+pub trait SymbolManager
+: Sized + gc::HasInternalMemory
++ SymbolCtx<SymM=Self>
++ for<'a> pp::Pretty1<&'a <Self as SymbolCtx>::View>
+{
     /// Build a new manager.
     fn new() -> Self;
 
@@ -69,11 +65,14 @@ pub mod str {
         recycle: Vec<u32>, // ids to recycle
     }
 
-    impl SymbolManager for StrManager {
+    impl SymbolCtx for StrManager {
         type Ref = u32;
         type View = str;
         type Builder = Rc<str>;
+        type SymM = StrManager;
+    }
 
+    impl SymbolManager for StrManager {
         /// Build a new manager.
         fn new() -> Self {
             StrManager {
@@ -118,6 +117,16 @@ pub mod str {
         }
     }
 
+    impl<'a> pp::Pretty1<&'a str> for StrManager {
+        // SMTLIB printing
+        fn pp_with(&self, s: &&'a str, ctx: &mut pp::Ctx) {
+            let escape = s.contains(|c| {c == ' ' || c == '\n'});
+            if escape { ctx.str("|"); }
+            ctx.string(s.to_string());
+            if escape { ctx.str("|"); }
+        }
+    }
+
     impl gc::HasInternalMemory for StrManager {
         fn reclaim_unused_memory(&mut self) {
             self.tbl.shrink_to_fit();
@@ -146,15 +155,4 @@ pub mod str {
         ptr: *const u8,
         len: usize,
     }
-
-    /* FIXME: how to print in SMTLIB…
-    impl<'a> pp::Pretty for &'a str {
-        fn pp(&'a self, ctx: &mut pp::Ctx) {
-            let escape = self.contains(|c| {c == ' ' || c == '\n'});
-            if escape { ctx.str("|"); }
-            ctx.string(self.to_string());
-            if escape { ctx.str("|"); }
-        }
-    }
-    */
 }

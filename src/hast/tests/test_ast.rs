@@ -1,21 +1,30 @@
 
 #[macro_use] extern crate proptest;
 extern crate batsmt_core;
-extern crate batsmt_ast;
+extern crate batsmt_hast;
 
-type M = AstManager<StrSymbol>;
+use {
+    std::{fmt, rc::Rc}, 
+    batsmt_core::{
+        ast_u32::{self, AST, DenseSet, DenseMap, HashSet, ManagerU32, },
+        ast::{self, AstSet, AstMap, Manager, View}, gc::GC, },
+    fxhash::FxHashMap,
+    batsmt_pretty::Pretty1,
+    batsmt_hast::{HManager, StrSymbolManager,}
+};
+
+type M = HManager<StrSymbolManager>;
 
 /// Reference implementation for `ast::iter_dag`
 mod ast_iter_ref {
     use super::*;
 
-    fn iter_dag_ref_rec<F>(seen: &mut ast::HashSet, m: &M, t: AST, f: &mut F) where F:FnMut(AST) {
+    fn iter_dag_ref_rec<F>(seen: &mut ast_u32::HashSet, m: &M, t: AST, f: &mut F) where F:FnMut(&M, AST) {
         if ! seen.contains(&t) {
-            seen.insert(t);
-            f(t);
+            seen.add(t);
+            f(&m, t);
 
-            let mr = m.get();
-            match mr.view(t) {
+            match m.view(t) {
                 View::Const(_) => (),
                 View::App{f: f0,args} => {
                     iter_dag_ref_rec(seen, m, f0, f);
@@ -28,8 +37,8 @@ mod ast_iter_ref {
     }
 
     // trivial implementation of `iter_dag`, as a reference
-    pub(super) fn iter_dag_ref<F>(m: &M, t: AST, mut f: F) where F: FnMut(AST) {
-        let mut seen = ast::HashSet::default();
+    pub(super) fn iter_dag_ref<F>(m: &M, t: AST, mut f: F) where F: FnMut(&M, AST) {
+        let mut seen = ast_u32::SparseSet::new();
         iter_dag_ref_rec(&mut seen, m, t, &mut f);
     }
 }
@@ -39,7 +48,7 @@ mod test_ast {
 
     #[test]
     fn test_mk_str() {
-        let m = M::new();
+        let mut m = M::new();
         let a = m.mk_str("a");
         let b = m.mk_str("b");
         assert_ne!(a,b);
@@ -49,16 +58,16 @@ mod test_ast {
 
     #[test]
     fn test_view_const() {
-        let m = M::new();
+        let mut m = M::new();
         let a = m.mk_str("a");
         let b = m.mk_str("b");
-        assert!(match m.get().view(a) { View::Const(s) => s == "a", _ => false });
-        assert!(match m.get().view(b) { View::Const(s) => s == "b", _ => false });
+        assert!(match m.view(a) { View::Const(s) => s == "a", _ => false });
+        assert!(match m.view(b) { View::Const(s) => s == "b", _ => false });
     }
 
     #[test]
     fn test_mk_fun() {
-        let m = M::new();
+        let mut m = M::new();
         let f = m.mk_str("f");
         let g = m.mk_str("g");
         let a = m.mk_str("a");
@@ -82,8 +91,7 @@ mod test_ast {
 
     #[test]
     fn test_view() {
-        let m = M::new();
-        let mut m = m.get_mut();
+        let mut m = M::new();
         let f = m.mk_str("f");
         let g = m.mk_str("g");
         let a = m.mk_str("a");
@@ -115,7 +123,7 @@ mod test_ast {
     fn mk_stress_app(s: &mut StressApp) {
         use std::time::Instant;
 
-        let mut m = s.m.get_mut();
+        let m = &mut s.m;
         let f = s.f;
         let g = s.g;
         let mut n_app_created = 0;
@@ -163,7 +171,7 @@ mod test_ast {
 
     impl StressApp {
         fn new(n: usize) -> Self {
-            let m = M::new();
+            let mut m = M::new();
             let f = m.mk_str("f");
             let g = m.mk_str("g");
             let a = m.mk_str("a");
@@ -190,19 +198,19 @@ mod test_ast {
         // create a bunch of terms
         let mut s = StressApp::new(100).verbose(false).long_apps(true);
         s.run();
-        let mut bs = AstBitSet::new();
-        for &t in s.terms.iter() {
-            assert!(! bs.get(t));
-            bs.add(t);
+        let mut bs = DenseSet::new();
+        for t in s.terms.iter() {
+            assert!(! bs.contains(t));
+            bs.add(*t);
         }
-        for &t in s.terms.iter() {
-            assert!(bs.get(t));
+        for t in s.terms.iter() {
+            assert!(bs.contains(t));
         }
-        for &t in s.terms.iter() {
+        for t in s.terms.iter() {
             bs.remove(t);
         }
-        for &t in s.terms.iter() {
-            assert!(! bs.get(t));
+        for t in s.terms.iter() {
+            assert!(! bs.contains(t));
         }
     }
 
@@ -211,14 +219,14 @@ mod test_ast {
         // create a bunch of terms
         let mut s = StressApp::new(100).verbose(false).long_apps(true);
         s.run();
-        let mut bs = AstBitSet::new();
+        let mut bs = DenseSet::new();
         bs.add_slice(&s.terms);
-        for &t in s.terms.iter() {
-            assert!(bs.get(t));
+        for t in s.terms.iter() {
+            assert!(bs.contains(t));
         }
         bs.clear();
-        for &t in s.terms.iter() {
-            assert!(! bs.get(t));
+        for t in s.terms.iter() {
+            assert!(! bs.contains(t));
         }
     }
 
@@ -284,12 +292,12 @@ mod test_ast {
         let mut s = StressApp::new(100).verbose(false).long_apps(true);
         s.run();
 
-        let mut m : AstDenseMap<usize> = AstDenseMap::new(0);
+        let mut m : DenseMap<usize> = DenseMap::new(0);
 
-        for (i,&t) in s.terms.iter().enumerate() {
+        for (i,t) in s.terms.iter().enumerate() {
             assert!(! m.contains(t));
 
-            m.insert(t,i);
+            m.insert(*t,i);
         }
 
         // ahah just kidding
@@ -297,14 +305,14 @@ mod test_ast {
         assert!(m.is_empty());
         assert_eq!(0, m.len());
 
-        for (i,&t) in s.terms.iter().enumerate() {
+        for (i,t) in s.terms.iter().enumerate() {
             assert!(! m.contains(t));
 
-            m.insert(t,i);
+            m.insert(*t,i);
         }
 
         // now check membership
-        for (i,&t) in s.terms.iter().enumerate() {
+        for (i,t) in s.terms.iter().enumerate() {
             assert!(m.contains(t));
             assert_eq!(m.get(t), Some(&i));
         }
@@ -317,15 +325,15 @@ mod test_ast {
         // create a bunch of terms
         let mut s = StressApp::new(100).verbose(false).long_apps(true);
         s.run();
-        let m = s.m.clone();
+        let m = &s.m;
 
         for &t in s.terms.iter() {
             // count subterms using `iter_dag`
             let mut n1 = 0;
-            m.iter_dag(t, |_| n1 += 1);
+            ast::iter_dag(m, &t, |_,_| n1 += 1);
 
             let mut n2 = 0;
-            ast_iter_ref::iter_dag_ref(&m, t, |_| n2 += 1);
+            ast_iter_ref::iter_dag_ref(m, t, |_,_| n2 += 1);
 
             assert_eq!(n1, n2);
         }
@@ -374,34 +382,37 @@ mod test_ast {
 
 mod ast_prop {
     use super::*;
+    use proptest::prelude::*;
 
     #[derive(Clone)]
-    struct AstGen(Rc<AstGenCell>);
-
+    struct AstGen(Rc<std::cell::RefCell<AstGenCell>>);
     struct AstGenCell {
         m: M,
-        consts: std::cell::RefCell<FxHashMap<String, AST>>,
+        consts: FxHashMap<String, AST>,
+    }
+
+    impl ast::HasManager for AstGenCell {
+        type M = M;
+        fn m(&self) -> &M { &self.m }
+        fn m_mut(&mut self) -> &mut M { &mut self.m }
     }
 
     impl AstGen {
-        fn new(m: &M) -> Self {
-            AstGen(Rc::new(AstGenCell {
-                m: m.clone(),
-                consts: std::cell::RefCell::new(FxHashMap::default()),
-            }))
+        fn new(m: M) -> Self {
+            AstGen(Rc::new(std::cell::RefCell::new(AstGenCell{
+                m, consts: FxHashMap::default(),
+            })))
         }
-        fn m(&self) -> &M { &self.0.m }
         fn app(&self, f: AST, args: &[AST]) -> AST {
-            self.0.m.get_mut().mk_app(f, args)
+            self.0.borrow_mut().m.mk_app(f, args)
         }
         fn string(&self, s: String) -> AST {
-            let c = self.0.consts.borrow();
-            match c.get(&s) {
+            let mut c = self.0.borrow_mut();;
+            match c.consts.get(&s) {
                 Some(t) => *t,
                 None => {
-                    let t = self.0.m.get_mut().mk_string(s.clone());
-                    drop(c); // before the borrow
-                    self.0.consts.borrow_mut().insert(s, t);
+                    let t = c.m.mk_string(s.clone());
+                    c.consts.insert(s, t);
                     t
                 }
             }
@@ -416,10 +427,8 @@ mod ast_prop {
     fn with_astgen<F,T>(mut f: F) -> BoxedStrategy<(AstGen,T)>
         where F: FnMut(&AstGen) -> BoxedStrategy<T>, T: 'static+fmt::Debug
     {
-        let m = AstGen::new(&ast::Manager::new());
-        f(&m)
-            .prop_map(move |t| (m.clone(), t))
-            .boxed()
+        let m = AstGen::new(HManager::new());
+        f(&m).prop_map(move |t| (m.clone(), t)) .boxed()
     }
 
     /// Random generator of terms
@@ -427,7 +436,7 @@ mod ast_prop {
         let m = m.clone();
         let leaf = {
             let m2 = m.clone();
-            "f|g|a|b|c|d".prop_map(move |s| m2.string(s))
+            "f|g|a|b|c|d".prop_map(move |s| m2.string(s)).boxed()
         };
         // see https://docs.rs/proptest/*/proptest/#generating-recursive-data
         leaf.prop_recursive(
@@ -446,16 +455,18 @@ mod ast_prop {
     // size_tree(t) >= size_dag(t)
     proptest! {
         #[test]
-        fn prop_term_size(ref tup in with_astgen(gen_term)) {
+        fn prop_term_size(ref mut tup in with_astgen(gen_term)) {
             let (m,t) = tup;
 
-            let size_tree = m.m().size_tree(*t);
-            let size_dag = m.m().size_dag(*t);
+            let m = &mut m.0.borrow_mut().m;
+
+            let size_tree = ast_u32::ast_size_tree(m, t);
+            let size_dag = ast::size_dag(m, t);
 
             prop_assert!(size_tree >= size_dag,
                          "size tree {}, size dag {}, t: {:?}",
                          size_tree,
-                         size_dag, m.m().pp(*t))
+                         size_dag, m.pp(&t))
         }
     }
 
@@ -464,19 +475,20 @@ mod ast_prop {
         #[test]
         fn prop_term_map_id_is_id(ref tup in with_astgen(gen_term)) {
             let (m,t) = tup;
+            let m = &mut m.0.borrow_mut().m;
 
-            let u = m.m().map(*t, |m, u, view| {
+            let u = ast::map_dag(m, t, |_| (), |m, u, view: ast::View<(),AST>| {
                 match view {
-                    ast::MapView::Const => u,
-                    ast::MapView::App{f, args} => {
-                        m.get_mut().mk_app(*f, args)
+                    ast::View::Const(()) => *u,
+                    ast::View::App{f, args} => {
+                        m.mk_app(f, args)
                     },
                 }
             });
 
             prop_assert_eq!(*t, u,
                             "t: {:?}, t.map(id): {:?}",
-                            m.m().pp(*t), m.m().pp(u))
+                            m.pp(t), m.pp(&u))
         }
     }
 
@@ -485,14 +497,15 @@ mod ast_prop {
         #[test]
         fn prop_iter_dag_ref(ref tup in with_astgen(gen_term)) {
             let (m,t) = tup;
+            let m = &mut m.0.borrow_mut().m;
 
             let mut n1 = 0;
             let mut n2 = 0;
 
-            m.m().iter_dag(*t, |_| { n1 += 1 });
-            ast_iter_ref::iter_dag_ref(m.m(), *t, |_| { n2 += 1 });
+            ast::iter_dag(m, t, |_,_| { n1 += 1 });
+            ast_iter_ref::iter_dag_ref(m, *t, |_,_| { n2 += 1 });
 
-            prop_assert!(n1 == n2, "same size, t: {:?}", m.m().pp(*t))
+            prop_assert!(n1 == n2, "same size, t: {:?}", m.pp(t))
         }
     }
 
@@ -501,18 +514,19 @@ mod ast_prop {
         #[test]
         fn prop_iter_dag_and_iter_suffix_same_set_of_subterms(ref tup in with_astgen(gen_term)) {
             let (m,t) = tup;
+            let m = &mut m.0.borrow_mut().m;
 
             let mut seen1 = vec!();
             let mut seen2 = vec!();
 
-            m.m().iter_dag(*t, |u| { seen1.push(u) });
-            m.m().iter_suffix(*t, &mut(), |_,_| true, |_,u| { seen2.push(u) });
+            ast::iter_dag(m, t, |_,u| { seen1.push(*u) });
+            ast::iter_suffix(m, t, &mut(), |_,_,_| true, |_,_,u| { seen2.push(*u) });
 
             seen1.sort();
             seen2.sort();
 
             prop_assert!(&seen1 == &seen2,
-                         "same traversal, t: {:?}", m.m().pp(*t))
+                         "same traversal, t: {:?}", m.pp(t))
         }
     }
 
@@ -521,28 +535,29 @@ mod ast_prop {
         #[test]
         fn prop_iter_suffix_subterms_first(ref tup in with_astgen(gen_term)) {
             let (m,t) = tup;
+            let m = &mut m.0.borrow_mut().m;
 
-            let mut seen = FxHashSet::default();
+            let mut seen = ast::HashSet::new();
 
             let mut res = None; // for fast exit
-            m.m().iter_suffix(*t, &mut res, |r,_| r.is_some(), |r,u| {
+            ast::iter_suffix(m, t, &mut res, |_,r,_| r.is_some(), |m,r,u| {
                 // immediate subterms
-                let subs: Vec<_> = m.m().get().view(u).subterms().collect();
-                for &v in &subs {
-                    if ! seen.contains(&v) {
-                        *r = Some((*t, u, v));
+                let subs: Vec<_> = m.view(*u).subterms().cloned().collect();
+                for v in &subs {
+                    if ! seen.contains(v) {
+                        *r = Some((*t, *u, *v));
                     }
                     if r.is_some() { break }
                 }
-                seen.insert(*t);
+                seen.add(*t);
             });
 
             if let Some((t,u,v)) = res {
                 prop_assert!(false,
                 "traversing {:?}\nsubterm {:?}\nseen should contain {:?}\nseen: {:?}",
-                m.m().pp(t),
-                m.m().pp(u),
-                m.m().pp(v),
+                m.pp(&t),
+                m.pp(&u),
+                m.pp(&v),
                 &seen);
             }
             prop_assert!(true)

@@ -13,8 +13,7 @@
 
 use {
     std::{ops::{Deref,Not}, hash::Hash, fmt},
-    batsmt_core::{ backtrack::Backtrackable, Manager, },
-    batsmt_hast::{ AST, HManagerCtx, },
+    batsmt_core::{ backtrack::Backtrackable, ast, ast_u32, },
     batsmt_pretty as pp,
 };
 
@@ -32,10 +31,13 @@ pub trait BoolLitCtx {
 }
 
 /// A theory is parametrized by a `HManager` (with its AST, symbol, etc.) and boolean literals.
-pub trait Ctx : HManagerCtx + BoolLitCtx {}
+pub trait Ctx : ast_u32::ManagerU32 + BoolLitCtx {}
 
 // auto impl
-impl<T:HManagerCtx+BoolLitCtx> Ctx for T {}
+impl<T> Ctx for T
+    where T : ast_u32::ManagerU32,
+          T : BoolLitCtx,
+          T : pp::Pretty1<ast_u32::AST> {}
 
 /// A theory-level literal, either a boolean literal, or a boolean term plus a sign.
 ///
@@ -105,7 +107,7 @@ pub struct Trail<'a,C:Ctx>(pub(crate) &'a [(C::AST,bool,C::B)]);
 ///
 /// A theory is responsible for enforcing the semantics of some
 /// of the boolean literals.
-pub trait Theory<C:Ctx> : Backtrackable {
+pub trait Theory<C:Ctx> : Backtrackable<C>{
     /// Check a full model.
     ///
     /// ## Params:
@@ -113,7 +115,7 @@ pub trait Theory<C:Ctx> : Backtrackable {
     /// - `trail` contains triples `(term, bool, literal)` where `literal`
     ///     is `term <=> bool` and the current model contains `literal`
     /// - `acts` is a set of actions available to the theory.
-    fn final_check(&mut self, acts: &mut Actions<C>, trail: &Trail<C>);
+    fn final_check(&mut self, _ctx: &mut C, acts: &mut Actions<C>, trail: &Trail<C>);
 
     /// Check a partial model.
     ///
@@ -123,7 +125,7 @@ pub trait Theory<C:Ctx> : Backtrackable {
     /// this function is allowed to not fully check the model, and `trail`
     /// only contains _new_ literals (since the last call to `partial_check`).
     /// It will be called more often than `final_check` so it should be efficient.
-    fn partial_check(&mut self, _acts: &mut Actions<C>, _trail: &Trail<C>) {}
+    fn partial_check(&mut self, _ctx: &mut C, _acts: &mut Actions<C>, _trail: &Trail<C>) {}
 
     /// Does the theory handle partial checks?
     ///
@@ -138,13 +140,13 @@ pub trait Theory<C:Ctx> : Backtrackable {
     /// This is typically called before solving, so as to add terms once
     /// and for all, and so that the theory can propagate
     /// literals back to the SAT solver.
-    fn add_literal(&mut self, _t: C::AST, _lit: C::B) {}
+    fn add_literal(&mut self, _ctx: &C, _t: C::AST, _lit: C::B) {}
 
     /// Ask the theory to explain why it propagated literal `p`.
     ///
     /// The result must be a set `g` of literals which are true in the current
     /// trail, and such that `g => p` is a T-tautology.
-    fn explain_propagation(&mut self, p: C::B) -> &[C::B];
+    fn explain_propagation(&mut self, _ctx: &C, p: C::B) -> &[C::B];
 }
 
 mod theory_lit {
@@ -208,23 +210,21 @@ mod theory_lit {
         }
     }
 
-    impl<C:Ctx> pp::Pretty1<C::M> for TheoryLit<C>
-        where C::AST: pp::Pretty1<C::M>
-    {
-        fn pp_with(&self, m: &C::M, ctx: &mut pp::Ctx) {
+    impl<C:Ctx> pp::Pretty1<C> for TheoryLit<C> {
+        fn pp_with(&self, c: &C, ctx: &mut pp::Ctx) {
             match self {
                 TheoryLit::B(lit) => {
-                    pp::Pretty::pp(&pp::dbg(lit), ctx);
+                    pp::Pretty::pp_into(&pp::dbg(lit), ctx);
                 },
                 TheoryLit::T(t,sign) => {
                     let s = if *sign { "t+" } else { "t-" };
                     ctx.sexp(|ctx| {
-                        ctx.str(s).space().pp(&m.pp(t));
+                        ctx.str(s).space().pp(&ast::pp(c,t));
                     });
                 },
                 TheoryLit::BLazy(t,sign) => {
                     let s = if *sign { "b+" } else { "b-" };
-                    ctx.sexp(|ctx| {ctx.str(s).space().pp(&m.pp(t)); });
+                    ctx.sexp(|ctx| {ctx.str(s).space().pp(&ast::pp(c,t)); });
                 },
             }
         }
@@ -271,13 +271,11 @@ mod theory_clause {
     }
 
     // Print a list of literals
-    impl<'a,C:Ctx> pp::Pretty1<C::M> for TheoryClauseRef<'a,C>
-        where C::AST : pp::Pretty1<C::M>
-    {
-        fn pp_with(&self, m: &C::M, ctx: &mut pp::Ctx) {
+    impl<'a,C:Ctx> pp::Pretty1<C> for TheoryClauseRef<'a,C> {
+        fn pp_with(&self, c: &C, ctx: &mut pp::Ctx) {
             ctx.sexp(|ctx| {
                 ctx.iter(pp::pair(" ∨", pp::space()),
-                    self.lits.iter().map(|lit| m.pp(lit)));
+                    self.lits.iter().map(|lit| lit.pp(c)));
             });
         }
     }
@@ -375,7 +373,7 @@ impl<'a, C:Ctx> Trail<'a, C> {
     pub fn empty() -> Self { Trail(&[]) }
 
     /// Iterate on the underlying items.
-    pub fn iter(&self) -> impl Iterator<Item=(AST,bool,C::B)> + 'a {
+    pub fn iter(&self) -> impl Iterator<Item=(ast_u32::AST,bool,C::B)> + 'a {
         self.0.iter().cloned()
     }
 
@@ -501,19 +499,3 @@ pub mod int_lit {
 }
 
 pub type IntLit = int_lit::Lit;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use batsmt_hast as hast;
-
-    #[test]
-    fn type_eqs() {
-        // check that
-        {
-            let a1: [hast::AST;0] = [];
-            let a2: [Ctx::AST;0] = [];
-            let _: &[hast::AST;0] = a1 + a2; // same type?
-        }
-    }
-}

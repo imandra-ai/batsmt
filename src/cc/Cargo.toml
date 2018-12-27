@@ -9,7 +9,6 @@ edition = "2018"
 batsmt-core = { path="../core" }
 batsmt-pretty = { path="../pretty" }
 batsmt-theory = { path="../theory" }
-batsmt-hast = { path="../hast" }
 smallvec = "^0.6"
 fxhash = "^0.2"
 log = "0.4"
@@ -22,3 +21,4 @@ naive = []
 
 [dev-dependencies]
 proptest = "^0.8"
+batsmt-hast = { path = "../hast" }

@@ -5,10 +5,10 @@
 
 use {
     std::{
-        marker::PhantomData, collections::VecDeque, fmt,
+        collections::VecDeque, fmt,
     },
     fxhash::{FxHashMap,FxHashSet},
-    batsmt_core::{ast::{View,Manager},backtrack},
+    batsmt_core::{ast::{self,View,Manager},backtrack},
     batsmt_theory::Ctx,
     crate::{*, types::*},
 };
@@ -36,7 +36,7 @@ struct Repr<AST>(AST);
 // literals used so far.
 struct Solve<'a, C:Ctx> {
     _props: &'a mut PropagationSet<C::B>,
-    m: &'a C::M,
+    m: &'a C,
     confl: &'a mut Vec<C::B>,
     all_lits: FxHashSet<C::B>, // all literals used in ops so far
     b: Builtins<C::AST>, // builtin terms
@@ -60,15 +60,17 @@ enum Task<AST> {
 }
 
 impl<C:Ctx> CCInterface<C> for NaiveCC<C> {
-    fn merge(&mut self, _m: &C::M, t1: C::AST, t2: C::AST, lit: C::B) {
+    fn merge(&mut self, _m: &C, t1: C::AST, t2: C::AST, lit: C::B) {
         self.ops.push(Op::Merge(t1,t2,lit))
     }
 
-    fn distinct(&mut self, _m: &C::M, _ts: &[C::AST], _lit: C::B) {
+    fn distinct(&mut self, _m: &C, _ts: &[C::AST], _lit: C::B) {
         unimplemented!("no handling of `distinct` in naiveCC")
     }
 
-    fn final_check(&mut self, m: &C::M) -> Result<&PropagationSet<C::B>, Conflict<C::B>> {
+    fn final_check<'a>(&'a mut self, m: &C)
+        -> Result<&'a PropagationSet<C::B>, Conflict<'a, C::B>>
+    {
         debug!("cc.check()");
         // create local solver
         self.props.clear();
@@ -90,7 +92,7 @@ impl<C:Ctx> CCInterface<C> for NaiveCC<C> {
 
     fn impl_descr() -> &'static str { "naive congruence closure"}
 
-    fn explain_propagation(&mut self, _m: &C::M, _p: C::B) -> &[C::B] {
+    fn explain_propagation(&mut self, _m: &C, _p: C::B) -> &[C::B] {
         unreachable!() // never propagated anything
     }
 }
@@ -100,7 +102,6 @@ impl<C:Ctx> NaiveCC<C> {
     pub fn new(b: Builtins<C::AST>) -> Self {
         NaiveCC {
             b,
-            m_s: PhantomData::default(),
             props: PropagationSet::new(),
             confl: vec!(),
             ops: backtrack::Stack::new(),
@@ -109,17 +110,17 @@ impl<C:Ctx> NaiveCC<C> {
 }
 
 // just backtrack the set of operations we'll have to perform
-impl<C:Ctx> backtrack::Backtrackable for NaiveCC<C> {
-    fn push_level(&mut self) { self.ops.push_level() }
+impl<C:Ctx> backtrack::Backtrackable<C> for NaiveCC<C> {
+    fn push_level(&mut self, _: &mut C) { self.ops.push_level() }
     fn n_levels(&self) -> usize { self.ops.n_levels() }
-    fn pop_levels(&mut self, n: usize) {
+    fn pop_levels(&mut self, _: &mut C, n: usize) {
         self.ops.pop_levels(n, |_| ()) // we didn't do anything to cancel
     }
 }
 
 // main algorithm
 impl<'a, C:Ctx> Solve<'a, C> {
-    fn new(m: &'a C::M, b: Builtins<C::AST>,
+    fn new(m: &'a C, b: Builtins<C::AST>,
            props: &'a mut PropagationSet<C::B>,
            confl: &'a mut Vec<C::B>) -> Self
     {
@@ -127,7 +128,6 @@ impl<'a, C:Ctx> Solve<'a, C> {
             m, b: b.clone(),
             _props: props,
             confl,
-            m_s: PhantomData::default(),
             root: FxHashMap::default(),
             parents: FxHashMap::default(),
             all_lits: FxHashSet::default(),
@@ -142,7 +142,7 @@ impl<'a, C:Ctx> Solve<'a, C> {
     /// entry point
     pub(super) fn check_internal(&mut self, ops: &[Op<C>]) -> bool {
         trace!("naive-cc.check (ops: {:?})", ops);
-        for &op in ops.iter() {
+        for op in ops.iter() {
             let ok = self.perform_op(op);
             if !ok {
                 // build conflict (all literals used so far, negated)
@@ -156,22 +156,22 @@ impl<'a, C:Ctx> Solve<'a, C> {
 
 
     // perform one operation to change the CC
-    fn perform_op(&mut self, op: Op<C>) -> bool {
+    fn perform_op(&mut self, op: &Op<C>) -> bool {
         match op {
             Op::Merge(a,b,lit) => {
                 // add terms, then merge
-                self.merge(a,b,lit)
+                self.merge(*a,*b,*lit)
             }
         }
     }
 
     // Find representative of `a`
-    fn find(&self, mut a: &C::AST) -> Repr<C::AST> {
+    fn find(&self, mut a: C::AST) -> Repr<C::AST> {
         loop {
             let n = self.root.get(&a).expect("term not present");
 
             if a == n.0 {
-                return *n
+                return n.clone()
             } else {
                 a = n.0 // recurse
             }
@@ -188,7 +188,7 @@ impl<'a, C:Ctx> Solve<'a, C> {
         if ra == rb {
             true
         } else {
-            trace!("merge {:?} and {:?}", self.m.pp(ra.0), self.m.pp(rb.0));
+            trace!("merge {:?} and {:?}", ast::pp(self.m,&ra.0), ast::pp(self.m,&rb.0));
             self.all_lits.insert(lit); // may be involved in conflict
 
             self.tasks.push_back(Task::Merge(a,b));
@@ -199,24 +199,24 @@ impl<'a, C:Ctx> Solve<'a, C> {
     }
 
     // are `a` and `b` equal?
-    fn is_eq(&self, a: &C::AST, b: &C::AST) -> bool {
+    fn is_eq(&self, a: C::AST, b: C::AST) -> bool {
         self.find(a) == self.find(b)
     }
 
-    fn is_root(&self, r: Repr<C::AST>) -> bool {
-        self.find(r.0) == r
+    fn is_root(&self, r: &Repr<C::AST>) -> bool {
+        self.find(r.0) == *r
     }
 
     // add subterms recursively
-    fn add_term(&mut self, t: &C::AST) {
-        if ! self.root.contains_key(t) {
-            trace!("add-term {:?}", self.m.pp(t));
+    fn add_term(&mut self, t: C::AST) {
+        if ! self.root.contains_key(&t) {
+            trace!("add-term {:?}", ast::pp(self.m,&t));
             self.root.insert(t.clone(), Repr(t.clone()));
             self.parents.insert(Repr(t.clone()), SVec::new());
             self.tasks.push_back(Task::UpdateTerm(t));
 
             // add arguments to CC, and add `t` to its arguments' parents lists
-            match self.m.view(t) {
+            match self.m.view(&t) {
                 View::App {f, args} => {
                     {
                         self.add_term(f);
@@ -254,7 +254,7 @@ impl<'a, C:Ctx> Solve<'a, C> {
     }
 
     // number of parents of `r`
-    fn n_parents(&self, r: Repr<C::AST>) -> usize {
+    fn n_parents(&self, r: &Repr<C::AST>) -> usize {
         self.parents.get(&r).unwrap().len()
     }
 
@@ -262,7 +262,7 @@ impl<'a, C:Ctx> Solve<'a, C> {
     fn congruent(&self, t: C::AST, u: C::AST) -> bool {
         if t == u { return true }
 
-        let ok = match (self.m.get().view(t), self.m.get().view(u)) {
+        let ok = match (self.m.view(&t), self.m.view(&u)) {
             (View::App{f:f1, args:args1}, View::App{f:f2, args: args2}) => {
                 args1.len() == args2.len() &&
                     self.is_eq(f1,f2) &&
@@ -277,16 +277,16 @@ impl<'a, C:Ctx> Solve<'a, C> {
     // merge these two distinct representatives
     fn merge_repr(&mut self, mut ra: Repr<C::AST>, mut rb: Repr<C::AST>) {
         assert_ne!(ra, rb);
-        debug_assert!(self.is_root(ra));
-        debug_assert!(self.is_root(rb));
+        debug_assert!(self.is_root(&ra));
+        debug_assert!(self.is_root(&rb));
 
         // ensure `ra` is the biggest
-        if self.n_parents(ra) < self.n_parents(rb) {
+        if self.n_parents(&ra) < self.n_parents(&rb) {
             std::mem::swap(&mut ra, &mut rb);
         }
 
-        trace!("task::merge-repr {:?} into {:?}", self.m.pp(rb.0), self.m.pp(ra.0));
-        self.root.insert(rb.0, ra); // rb --> ra now
+        trace!("task::merge-repr {:?} into {:?}", ast::pp(self.m,&rb.0), ast::pp(self.m,&ra.0));
+        self.root.insert(rb.0, ra.clone()); // rb --> ra now
 
         // move `parents_b` here
         let parents_b = self.parents.remove(&rb).unwrap();
@@ -303,7 +303,7 @@ impl<'a, C:Ctx> Solve<'a, C> {
         }
 
         for &t in parents_a.iter().chain(parents_b.iter()) {
-            match self.m.get().view(t) {
+            match self.m.view(&t) {
                 View::App {f, args} => {
                     // `a=b` where a and b are merged --> merge with true
                     if f == self.b.eq && self.is_eq(args[0], args[1]) {
@@ -321,7 +321,7 @@ impl<'a, C:Ctx> Solve<'a, C> {
         }
 
         for (t,u) in new_congr {
-            trace!("merge congruent parents: {:?} and {:?}", self.m.pp(t), self.m.pp(u));
+            trace!("merge congruent parents: {:?} and {:?}", ast::pp(self.m,&t), ast::pp(self.m,&u));
             self.tasks.push_back(Task::Merge(t,u))
         }
     }
@@ -331,7 +331,7 @@ impl<'a, C:Ctx> Solve<'a, C> {
     // Look for these based on t's arguments' parents
     fn update_term(&mut self, t: C::AST) {
         let m = self.m.clone();
-        match m.get().view(t) {
+        match m.view(&t) {
             View::App {f, args} => {
                 let mut new_congr = SVec::new();
 
@@ -353,7 +353,7 @@ impl<'a, C:Ctx> Solve<'a, C> {
                 }
 
                 for (t,u) in new_congr {
-                    trace!("update-term({:?}): merge with {:?}", m.pp(t), m.pp(u));
+                    trace!("update-term({:?}): merge with {:?}", ast::pp(m,&t), ast::pp(m,&u));
                     self.tasks.push_back(Task::Merge(t,u))
                 }
             },

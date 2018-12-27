@@ -6,14 +6,15 @@ pub mod ast;
 pub mod gc;
 pub mod backtrack;
 pub mod shared;
+pub mod ast_u32;
 
 pub use crate::{
   backtrack::{Stack as BacktrackStack,Backtrackable},
   ast::{
-      Manager, ManagerCtx,
+      Manager,
       View as AstView,
-      AstSet, AstDenseSet, AstSparseSet,
-      AstMap, AstDenseMap, AstSparseMap,
+      AstSet, DenseSet, SparseSet,
+      AstMap, DenseMap, SparseMap,
       WithDenseSet, WithDenseMap, WithSparseSet, WithSparseMap,
   },
   gc::GC,

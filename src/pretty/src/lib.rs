@@ -156,7 +156,7 @@ impl Ctx {
     fn open_indent(&mut self, u: usize) -> &mut Self { self.push_(Op::Open(u)); self }
     fn close(&mut self) -> &mut Self { self.push_(Op::Close); self }
 
-    pub fn pp<T:Pretty>(&mut self, x: &T) -> &mut Self { x.pp(self); self }
+    pub fn pp<T:Pretty>(&mut self, x: &T) -> &mut Self { x.pp_into(self); self }
 
     /// Call `f` in a box with given indentation
     pub fn with_indent<F,U>(&mut self, n: usize, f: F) -> &mut Self
@@ -185,22 +185,22 @@ impl Ctx {
     }
 
     /// `ctx.array(sep, arr)` prints elements of `arr` with `str` in between
-    pub fn array<Sep: Pretty, U:Pretty>(&mut self, sep: Sep, arr: &[U]) -> &mut Self 
+    pub fn array<Sep: Pretty, U:Pretty>(&mut self, sep: Sep, arr: &[U]) -> &mut Self
     {
         for (i,x) in arr.iter().enumerate() {
-            if i > 0 { sep.pp(self); }
-            x.pp(self)
+            if i > 0 { sep.pp_into(self); }
+            x.pp_into(self)
         }
         self
     }
 
     /// `ctx.array(sep, arr)` prints elements of `arr` with `str` in between
-    pub fn iter<Sep, I, U>(&mut self, sep: Sep, iter: I) -> &mut Self 
+    pub fn iter<Sep, I, U>(&mut self, sep: Sep, iter: I) -> &mut Self
         where Sep: Pretty, U: Pretty, I: Iterator<Item=U>
     {
         for (i,x) in iter.enumerate() {
-            if i > 0 { sep.pp(self); }
-            x.pp(self)
+            if i > 0 { sep.pp_into(self); }
+            x.pp_into(self)
         }
         self
     }
@@ -215,7 +215,7 @@ pub const WIDTH : usize = 80;
 /// passed as an argument.
 pub trait Pretty {
     /// Pretty print itself into the given context
-    fn pp(&self, ctx: &mut Ctx);
+    fn pp_into(&self, ctx: &mut Ctx);
 
     /// Width for printing. Default is `WIDTH`
     fn width(&self) -> usize { WIDTH }
@@ -224,39 +224,68 @@ pub trait Pretty {
     fn pp_fmt(&self, out: &mut fmt::Formatter, alternate: bool) -> fmt::Result {
         let mut ctx = Ctx::new();
         if alternate { ctx.set_alternate() }
-        self.pp(&mut ctx);
+        self.pp_into(&mut ctx);
         let s = ctx.into_str(self.width());
         write!(out, "{}", &s)
     }
 }
 
-/// A type pretty-printable when given a context of type `T`.
-pub trait Pretty1<T : ?Sized> {
+/// A way to print type `T` given self as a context.
+pub trait Pretty1<T> {
     fn pp_with(&self, x: &T, ctx: &mut Ctx);
+
+    /// Pretty-printable/debug/display-able version of the given object.
+    fn pp<'a>(&'a self, x: &'a T) -> Tmp1<(&'a Self, &'a T)> { Tmp1((self,x)) }
+}
+
+/// Temporary holder of `T`. Can be pretty-printed, displayed,, etc.
+pub struct Tmp1<T>(T);
+
+impl<'a,T1:Pretty1<T2>,T2> Pretty for Tmp1<(&'a T1,&'a T2)> {
+    fn pp_into(&self, ctx: &mut Ctx) { (self.0).0.pp_with(&(self.0).1, ctx); }
+}
+impl<'a,T1:Pretty1<T2>,T2> fmt::Debug for Tmp1<(&'a T1,&'a T2)> {
+    fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result
+    { Pretty::pp_fmt(&self,out,true) }
+}
+impl<'a,T1:Pretty1<T2>,T2> fmt::Display for Tmp1<(&'a T1,&'a T2)> {
+    fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result
+    { Pretty::pp_fmt(&self,out,false) }
+}
+
+/// An array of `T`
+pub struct Arr<'a, T>(&'a [T]);
+
+pub fn sexp1<'a,T,M>(x: &'a [T]) -> impl Pretty1<M> + 'a where T: Pretty1<M> {
+    Arr(x)
+}
+
+// render array in a S-expr
+impl<'a, T, M> Pretty1<M> for Arr<'a, T> where T : Pretty1<M> {
+    fn pp_with(&self, m: &M, ctx: &mut Ctx) {
+        ctx.sexp(|ctx| {
+            for (i,x) in self.0.iter().enumerate() {
+                if i > 0 { space().pp_into(ctx); }
+                x.pp_with(m, ctx)
+            }
+        });
+    }
 }
 
 mod pretty1 {
     use super::*;
-    impl<'a, M, T:Pretty1<M>> Pretty1<M> for &'a T {
-        fn pp_with(&self, m: &M, ctx: &mut Ctx) { (*self).pp_with(m,ctx) }
+
+    /* FIXME: collisions?
+    impl<'a, T, M> Pretty1<&'a T> for M where M : Pretty1<T> {
+        fn pp_with(&self, x: &&'a T, ctx: &mut Ctx) { self.pp_with(*x,ctx) }
     }
 
-    // render array in a S-expr
-    impl<'a, M, T:Pretty1<M>> Pretty1<M> for &'a [T] {
-        fn pp_with(&self, m: &M, ctx: &mut Ctx) {
-            ctx.sexp(|ctx| {
-                for (i,x) in self.iter().enumerate() {
-                    if i > 0 { space().pp(ctx); }
-                    x.pp_with(m, ctx)
-                }
-            });
-        }
-    }
+    */
 }
 
 // ability to use `Op` directly as a printable object
 impl Pretty for Op {
-    fn pp(&self, ctx: &mut Ctx) { ctx.push_(self.clone()); }
+    fn pp_into(&self, ctx: &mut Ctx) { ctx.push_(self.clone()); }
 }
 
 /// Display a newline
@@ -276,11 +305,11 @@ pub fn text<U:Into<String>>(u: U) -> impl Pretty { Op::Text(u.into()) }
 
 struct Sexp<'a>(&'a [&'a dyn Pretty]);
 impl<'a> Pretty for Sexp<'a> {
-    fn pp(&self, ctx: &mut Ctx) {
+    fn pp_into(&self, ctx: &mut Ctx) {
         ctx.sexp(|ctx| {
             for (i,t) in self.0.iter().enumerate() {
                 if i > 0 { ctx.space(); }
-                (*t).pp(ctx)
+                (*t).pp_into(ctx)
             }
         });
     }
@@ -290,11 +319,11 @@ impl<'a> Pretty for Sexp<'a> {
 pub fn sexp_slice<'a>(v: &'a[&'a dyn Pretty]) -> impl Pretty + 'a { Sexp(v) }
 
 impl<A:Pretty,B:Pretty> Pretty for (A,B) {
-    fn pp(&self, ctx: &mut Ctx) { self.0.pp(ctx); self.1.pp(ctx) }
+    fn pp_into(&self, ctx: &mut Ctx) { ctx.pp(&self.0).pp(&self.1); }
 }
 
 impl<A:Pretty,B:Pretty,C:Pretty> Pretty for (A,B,C) {
-    fn pp(&self, ctx: &mut Ctx) { self.0.pp(ctx); self.1.pp(ctx); self.2.pp(ctx); }
+    fn pp_into(&self, ctx: &mut Ctx) { ctx.pp(&self.0).pp(&self.1).pp(&self.2); }
 }
 
 /// Print `a` then `b`
@@ -306,14 +335,14 @@ pub fn triple<A,B,C>(a: A, b: B, c: C) -> impl Pretty
 { (a,b,c) }
 
 impl<'a, T: Pretty> Pretty for &'a T {
-    fn pp(&self, ctx: &mut Ctx) { (*self).pp(ctx) }
+    fn pp_into(&self, ctx: &mut Ctx) { (*self).pp_into(ctx) }
 }
 
 /// Print `T` using its Debug implementation
 pub fn from_debug<T:fmt::Debug>(x: T) -> impl Pretty {
     struct Dbg<T:fmt::Debug>(T);
     impl<T:fmt::Debug> Pretty for Dbg<T> {
-        fn pp(&self, ctx: &mut Ctx) { ctx.string(format!("{:?}", self.0)); }
+        fn pp_into(&self, ctx: &mut Ctx) { ctx.string(format!("{:?}", self.0)); }
     }
     Dbg(x)
 }
@@ -325,13 +354,13 @@ pub fn dbg<T:fmt::Debug>(x: T) -> impl Pretty { from_debug(x) }
 pub fn from_display<T:fmt::Display>(x: T) -> impl Pretty {
     struct Dis<T:fmt::Display>(T);
     impl<T:fmt::Display> Pretty for Dis<T> {
-        fn pp(&self, ctx: &mut Ctx) { ctx.string(format!("{}", self.0)); }
+        fn pp_into(&self, ctx: &mut Ctx) { ctx.string(format!("{}", self.0)); }
     }
     Dis(x)
 }
 
-// temporary holder
-struct Tmp<T: Pretty>(T);
+/// Temporary holder of `T`.
+struct Tmp<T>(T);
 
 impl<T:Pretty> fmt::Display for Tmp<T> {
     fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result
@@ -350,7 +379,7 @@ pub fn debug<T:Pretty>(x: T) -> impl fmt::Debug { Tmp(x) }
 
 /// Print arrays as S-expressions
 impl<T> Pretty for [T] where T : Pretty {
-    fn pp(&self, ctx: &mut Ctx) {
+    fn pp_into(&self, ctx: &mut Ctx) {
         ctx.sexp(|ctx| { ctx.array(" ", &self); });
     }
 }
@@ -364,20 +393,20 @@ macro_rules! sexp {
 }
 
 impl<T> Pretty for Vec<T> where T : Pretty {
-    fn pp(&self, ctx: &mut Ctx) { self.as_slice().pp(ctx) }
+    fn pp_into(&self, ctx: &mut Ctx) { self.as_slice().pp_into(ctx) }
 }
 
 // Implementations
 
 impl<'a> Pretty for &'a str {
-    fn pp(&self, ctx: &mut Ctx) { ctx.string(self.to_string()); }
+    fn pp_into(&self, ctx: &mut Ctx) { ctx.string(self.to_string()); }
 }
 impl Pretty for String {
-    fn pp(&self, ctx: &mut Ctx) { ctx.string(self.clone()); }
+    fn pp_into(&self, ctx: &mut Ctx) { ctx.string(self.clone()); }
 }
 
 impl Pretty for std::rc::Rc<str> {
-    fn pp(&self, out: &mut Ctx) { out.string(self.to_string()); }
+    fn pp_into(&self, out: &mut Ctx) { out.string(self.to_string()); }
 }
 
 #[test]
@@ -386,7 +415,7 @@ fn test_display() {
     struct Foo(u32);
 
     impl Pretty for Foo {
-        fn pp(&self, ctx: &mut Ctx) { ctx.string(self.0.to_string()); }
+        fn pp_into(&self, ctx: &mut Ctx) { ctx.string(self.0.to_string()); }
     };
 
     let foo = Foo(42);
@@ -395,7 +424,7 @@ fn test_display() {
 
     struct V<T>(Vec<T>);
     impl<T:Pretty> Pretty for V<T> {
-        fn pp(&self, ctx: &mut Ctx) { self.0.pp(ctx) }
+        fn pp_into(&self, ctx: &mut Ctx) { self.0.pp_into(ctx) }
     };
 
     let s2 = format!("{}", display(V(vec![Foo(1), Foo(23), Foo(105)])));
