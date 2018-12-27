@@ -13,13 +13,15 @@
 use {
     std::{ u32, collections::VecDeque, hash::Hash, fmt::Debug, },
     batsmt_core::{ast::{self,Manager,AstMap,View},backtrack},
+    batsmt_hast as hast,
     batsmt_pretty as pp,
     crate::{
-        types::{Ctx as ThCtx},
+        types::{Ctx },
         PropagationSet,Conflict,Builtins,CCInterface,SVec,
     },
 };
 
+/* FIXME: need associated type constructor?
 /// Public interface
 pub trait Ctx: ThCtx + Sized {
     type Map : AstMap<Self::AST, Node<Self>> + Sized;
@@ -36,6 +38,7 @@ impl<C> Ctx for C
         <C::M as ast::WithDenseMap<C::AST, Node<C>>>::new_dense_map()
     }
 }
+*/
 
 /// The congruence closure.
 pub struct CC<C:Ctx> {
@@ -45,7 +48,7 @@ pub struct CC<C:Ctx> {
     confl: Vec<C::B>, // local for conflict
     props: PropagationSet<C::B>, // local for propagations
     traverse: ast::iter_suffix::State<C::M, ast::AstHashSet<C::M>>, // for recursive traversal
-    expl_st: Vec<Expl<C>>, // to expand explanations
+    expl_st: Vec<Expl<C::AST, C::B>>, // to expand explanations
     tmp_sig: Signature<C::AST>, // for computing signatures
     sig_tbl: backtrack::HashMap<Signature<C::AST>, C::AST>,
     cc1: CC1<C>,
@@ -54,11 +57,15 @@ pub struct CC<C:Ctx> {
 /// internal state, with just the core structure for nodes and parent sets
 struct CC1<C:Ctx> {
     ok: bool, // no conflict?
-    nodes: Nodes<C::Map>,
+    // NOTE: here we need to work on `hast` because the lack of HKT prevents
+    // us from abstracting over the notion of a DenseMap
+    nodes: Nodes<C>,
 }
 
+type DMap<C:Ctx> = hast::DenseMap<Node<C::AST, C::B>>;
+
 /// Map terms into the corresponding node.
-struct Nodes<Map>(Map);
+struct Nodes<C:Ctx>(DMap<C>);
 
 /// One node in the congruence closure's E-graph.
 ///
@@ -69,14 +76,14 @@ struct Nodes<Map>(Map);
 /// - the proof forest pointer
 /// - an optional mapping from the term to a boolean literal (for propagation)
 #[derive(Clone,Eq)]
-struct Node<C:Ctx> where C::AST : Sized, C::B : Sized {
-    id: C::AST,
-    next: C::AST, // next elt in class
+struct Node<AST, B> where AST : Sized, B : Sized {
+    id: AST,
+    next: AST, // next elt in class
     size: u32, // number of elements in class
-    expl: Option<(C::AST, Expl<C>)>, // proof forest
-    as_lit: Option<C::B>, // if this term corresponds to a boolean literal
-    root: Repr<C::AST>, // current representative (initially, itself)
-    parents: ParentList<C::AST>, // parents of the given term
+    expl: Option<(AST, Expl<AST,B>)>, // proof forest
+    as_lit: Option<B>, // if this term corresponds to a boolean literal
+    root: Repr<AST>, // current representative (initially, itself)
+    parents: ParentList<AST>, // parents of the given term
 }
 
 #[derive(Clone)]
@@ -88,10 +95,10 @@ struct Repr<AST>(AST);
 
 /// An explanation for a merge
 #[derive(Clone,Debug)]
-enum Expl<C:Ctx> {
-    Lit(C::B), // because literal was asserted
-    Congruence(C::AST, C::AST), // because terms are congruent
-    AreEq(C::AST, C::AST), // because terms are equal
+enum Expl<AST, B> {
+    Lit(B), // because literal was asserted
+    Congruence(AST, AST), // because terms are congruent
+    AreEq(AST, AST), // because terms are equal
 }
 
 /// Undo operations on the congruence closure
@@ -113,8 +120,8 @@ enum Task<C:Ctx> {
     AddTerm(C::AST), // add term if not present
     MapToLit(C::AST,C::B), // map term to lit
     UpdateSig(C::AST), // re-check signature
-    Merge(C::AST, C::AST, Expl<C>), // merge the classes of these two terms
-    Distinct(SVec<C::AST>, Expl<C>),
+    Merge(C::AST, C::AST, Expl<C::AST, C::B>), // merge the classes of these two terms
+    Distinct(SVec<C::AST>, Expl<C::AST, C::B>),
 }
 
 /// A signature for a term, obtained by replacing its subterms with their repr.
@@ -291,7 +298,7 @@ impl<C:Ctx> CC<C> {
     }
 
     /// Merge `a` and `b`, if they're not already equal.
-    fn merge(&mut self, a: C::AST, b: C::AST, expl: Expl<C>) {
+    fn merge(&mut self, a: C::AST, b: C::AST, expl: Expl<C::AST, C::B>) {
         debug_assert!(self.cc1.contains_ast(a));
         debug_assert!(self.cc1.contains_ast(b));
 
@@ -458,7 +465,7 @@ impl<C:Ctx> CC<C> {
 
 // query the graph
 impl<C:Ctx> CC1<C> {
-    fn new(map: C::Map) -> Self {
+    fn new(map: hast::DenseMap<Node<C::AST, C::B>>) -> Self {
         CC1 {
             nodes: Nodes::new(map),
             ok: true,
@@ -653,12 +660,12 @@ struct ExplResolve<'a,C:Ctx> {
     m: &'a C::M,
     cc1: &'a CC1<C>,
     confl: &'a mut Vec<C::B>, // conflict clause to produce
-    expl_st: &'a mut Vec<Expl<C>>,
+    expl_st: &'a mut Vec<Expl<C::AST, C::B>>,
 }
 
 impl<'a,C:Ctx> ExplResolve<'a,C> {
     /// Create the temporary structure.
-    fn new(cc: &'a mut CC<C>, m: &C::M, e: Expl<C>) -> Self {
+    fn new(cc: &'a mut CC<C>, m: &C::M, e: Expl<C::AST, C::B>) -> Self {
         let CC { cc1, confl, expl_st, ..} = cc;
         confl.clear();
         expl_st.clear();
@@ -726,7 +733,7 @@ impl<'a,C:Ctx> ExplResolve<'a,C> {
 }
 
 impl<C:Ctx> Nodes<C> {
-    fn new(map: C::Map) -> Self {
+    fn new(map: DMap<C>) -> Self {
         Nodes(map)
     }
 
@@ -734,7 +741,7 @@ impl<C:Ctx> Nodes<C> {
     fn contains(&self, t: C::AST) -> bool { self.0.contains(t) }
 
     #[inline(always)]
-    fn insert(&mut self, t: C::AST, n: Node<C>) {
+    fn insert(&mut self, t: C::AST, n: Node<C::AST, C::B>) {
         self.0.insert(t, n)
     }
 
@@ -758,7 +765,7 @@ impl<C:Ctx> Nodes<C> {
 
     /// Call `f` with a mutable ref on all nodes of the class of `r`
     fn iter_class<F>(&mut self, r: Repr<C::AST>, mut f: F)
-        where F: for<'b> FnMut(&'b mut Node<C>)
+        where F: for<'b> FnMut(&'b mut Node<C::AST, C::B>)
     {
         let mut t = r.0;
         loop {

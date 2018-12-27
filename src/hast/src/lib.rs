@@ -18,7 +18,7 @@ use {
 };
 
 pub use {
-    crate::symbol::{ SymbolManager, str::StrManager as StrSymbolManager, }
+    crate::symbol::{ SymbolCtx, SymbolManager, str::StrManager as StrSymbolManager, }
 };
 
 /// The unique identifier of an AST node.
@@ -570,6 +570,26 @@ mod manager {
         }
     }
 }
+
+/// An implementation of `ManagerCtx` using some notion of symbol and `HManager`
+pub trait HManagerCtx
+    : SymbolCtx
+    + ast::ManagerCtx<
+        AST=AST,
+        SymView=<Self as SymbolCtx>::SymView,
+        SymBuilder=<Self as SymbolCtx>::SymBuilder,
+        M=HManager<<Self as SymbolCtx>::SymM>>
+{}
+
+// auto impl
+impl<U> HManagerCtx for U
+where U: SymbolCtx,
+      U: ast::ManagerCtx<
+        AST=AST,
+        SymView=<Self as SymbolCtx>::SymView,
+        SymBuilder=<Self as SymbolCtx>::SymBuilder,
+        M=HManager<<Self as SymbolCtx>::SymM>>
+{}
 
 /// A bitset whose elements are AST nodes
 pub struct BitSet(::bit_set::BitSet);

@@ -382,8 +382,6 @@ pub trait WithDenseMap<AST,V> {
 pub trait ManagerWithDenseMap<V: Clone>
     : Manager + WithDenseMap<<Self as ManagerCtx>::AST,V> {}
 
-pub trait Yolo<C:ManagerCtx> : for<V:Clone> WithDenseMap<C::AST, V> {}
-
 // auto-impl
 impl<M, V:Clone> ManagerWithDenseMap<V> for M
     where M : Manager, M : WithDenseMap<<M as ManagerCtx>::AST,V> {}

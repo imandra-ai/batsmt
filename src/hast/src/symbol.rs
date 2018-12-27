@@ -3,6 +3,21 @@ use {
     batsmt_core::{gc, }
 };
 
+/// Context with a notion of symbols and symbol manager.
+pub trait SymbolCtx {
+    /// A reference to a symbol in the manager.
+    type SymRef : Copy + Sized;
+
+    /// A temporary view of a symbol.
+    type SymView : std::fmt::Debug + ?Sized;
+
+    /// Something to build a symbol from
+    type SymBuilder;
+
+    /// The symbol manager.
+    type SymM : 'static + SymbolManager<View=Self::SymView, Builder=Self::SymBuilder,Ref=Self::SymRef>;
+}
+
 /// The interface for a representation of logic symbols.
 ///
 /// Symbols should be any unique object that belongs

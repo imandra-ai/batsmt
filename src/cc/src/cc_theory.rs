@@ -77,7 +77,7 @@ impl<C:Ctx> core::backtrack::Backtrackable for CCTheory<C> {
 }
 
 
-fn act_propagate<B:BoolLit>(acts: &mut theory::Actions<B>, props: &PropagationSet<B>) {
+fn act_propagate<C:Ctx>(acts: &mut theory::Actions<C>, props: &PropagationSet<C>) {
     if props.len() > 0 {
         for p in props.iter() {
             acts.propagate(p)
@@ -85,7 +85,7 @@ fn act_propagate<B:BoolLit>(acts: &mut theory::Actions<B>, props: &PropagationSe
     }
 }
 
-fn act_conflict<B:BoolLit>(acts: &mut theory::Actions<B>, c: Conflict<B>) {
+fn act_conflict<C:Ctx>(acts: &mut theory::Actions<C>, c: Conflict<C>) {
     let costly = true;
     let iter = c.0.iter().map(|b| theory::TheoryLit::B(*b));
     acts.raise_conflict_iter(iter, costly)

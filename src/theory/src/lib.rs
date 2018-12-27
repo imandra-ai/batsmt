@@ -13,7 +13,8 @@
 
 use {
     std::{ops::{Deref,Not}, hash::Hash, fmt},
-    batsmt_core::{ ast::{Manager, ManagerCtx, }, backtrack::Backtrackable},
+    batsmt_core::{ backtrack::Backtrackable, Manager, },
+    batsmt_hast::{ AST, HManagerCtx, },
     batsmt_pretty as pp,
 };
 
@@ -30,11 +31,11 @@ pub trait BoolLitCtx {
     type B : BoolLit;
 }
 
-/// A theory is parametrized by a Manager (with its AST, symbol, etc.) and boolean literals.
-pub trait Ctx : ManagerCtx + BoolLitCtx {}
+/// A theory is parametrized by a `HManager` (with its AST, symbol, etc.) and boolean literals.
+pub trait Ctx : HManagerCtx + BoolLitCtx {}
 
 // auto impl
-impl<T:ManagerCtx+BoolLitCtx> Ctx for T {}
+impl<T:HManagerCtx+BoolLitCtx> Ctx for T {}
 
 /// A theory-level literal, either a boolean literal, or a boolean term plus a sign.
 ///
@@ -374,7 +375,7 @@ impl<'a, C:Ctx> Trail<'a, C> {
     pub fn empty() -> Self { Trail(&[]) }
 
     /// Iterate on the underlying items.
-    pub fn iter(&self) -> impl Iterator<Item=(C::AST,bool,C::B)> + 'a {
+    pub fn iter(&self) -> impl Iterator<Item=(AST,bool,C::B)> + 'a {
         self.0.iter().cloned()
     }
 
@@ -500,3 +501,19 @@ pub mod int_lit {
 }
 
 pub type IntLit = int_lit::Lit;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use batsmt_hast as hast;
+
+    #[test]
+    fn type_eqs() {
+        // check that
+        {
+            let a1: [hast::AST;0] = [];
+            let a2: [Ctx::AST;0] = [];
+            let _: &[hast::AST;0] = a1 + a2; // same type?
+        }
+    }
+}
