@@ -124,10 +124,6 @@ mod prop_cc {
         fn app(&self, f: AST, args: &[AST]) -> AST {
             self.0.borrow_mut().m.mk_app(f, args)
         }
-        fn string(&self, s: String) -> AST {
-            self.0.borrow_mut().string(s)
-        }
-        fn str(&mut self, s: &str) -> AST { self.string(s.to_string()) }
         fn b(&self) -> Builtins<AST> { self.0.borrow_mut().b.clone().unwrap() }
     }
 
