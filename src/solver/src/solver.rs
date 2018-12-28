@@ -161,7 +161,8 @@ mod solver {
                 let mut th = TheoryTmp(&mut self.s0.c, m);
                 sat.solve_limited_th(&mut th, assumptions)
             };
-            info!("solver.sat.stats: conflicts {}, decisions {}, propagations {}, {}",
+            info!("{}, sat.conflicts {}, sat.decisions {}, sat.propagations {}, {}",
+                  self.s0.c.acts.stats(),
                   sat.num_conflicts(), sat.num_decisions(),
                   sat.num_propagations(), sat.cb().stats());
             // convert result
@@ -396,7 +397,7 @@ mod solver {
 
     impl fmt::Display for Cb {
         fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result {
-            write!(out, "restarts: {}, gc.calls: {}",
+            write!(out, "sat.restarts: {}, sat.gc: {}",
                    self.n_restarts, self.n_gc_calls)
         }
     }

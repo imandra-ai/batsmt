@@ -90,6 +90,7 @@ pub struct Actions<C:Ctx> {
     propagations: Vec<C::B>,
     conflict: bool,
     costly_conflict: bool,
+    stats: Stats,
 }
 
 /// State of the `Actions` structure.
@@ -161,6 +162,33 @@ pub trait Theory<C:Ctx> : Backtrackable<C>{
     /// The result must be a set `g` of literals which are true in the current
     /// trail, and such that `g => p` is a T-tautology.
     fn explain_propagation(&mut self, _ctx: &C, p: C::B) -> &[C::B];
+}
+
+/// Statistics.
+#[derive(Clone,Debug)]
+pub struct Stats {
+    conflicts: u64,
+    propagations: u64,
+    lemmas: u64,
+}
+
+mod stats {
+    use {std::fmt, super::*};
+    impl Stats {
+        /// New statistics accumulator.
+        pub fn new() -> Self {
+            Stats{ conflicts: 0, propagations: 0, lemmas: 0, }
+        }
+    }
+    impl fmt::Display for Stats {
+        fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result {
+            write!(out, "theory.conflicts {}, theory.propagations {}, theory.lemmas {}",
+                   self.conflicts, self.propagations, self.lemmas)
+        }
+    }
+    impl Default for Stats {
+        fn default() -> Self { Stats::new() }
+    }
 }
 
 mod theory_lit {
@@ -404,6 +432,7 @@ impl<C:Ctx> Actions<C> {
         Self {
             conflict: false,
             costly_conflict: false,
+            stats: Stats::new(),
             propagations: vec!(),
             cs: TheoryClauseSet::new(),
         }
@@ -437,14 +466,16 @@ impl<C:Ctx> Actions<C> {
     /// Propagate the given boolean literal.
     #[inline(always)]
     pub fn propagate(&mut self, p: C::B) {
-        self.propagations.push(p)
+        self.propagations.push(p);
+        self.stats.propagations += 1;
     }
 
     /// Instantiate the given lemma
     pub fn add_lemma(&mut self, c: &[TheoryLit<C>]) {
         if ! self.conflict {
             trace!("theory.add_lemma {:?}", c);
-            self.cs.push(c.into())
+            self.cs.push(c.into());
+            self.stats.lemmas += 1;
         }
     }
 
@@ -452,7 +483,8 @@ impl<C:Ctx> Actions<C> {
         if ! self.conflict {
             trace!("theory.add-lemma {:?}", c);
             let i = c.iter().map(|a| TheoryLit::from_blit(*a));
-            self.cs.push_iter(i)
+            self.cs.push_iter(i);
+            self.stats.lemmas += 1;
         }
     }
 
@@ -462,6 +494,7 @@ impl<C:Ctx> Actions<C> {
         if ! self.conflict {
             trace!("theory.add-lemma-iter");
             self.cs.push_iter(i);
+            self.stats.lemmas += 1;
         }
     }
 
@@ -478,6 +511,7 @@ impl<C:Ctx> Actions<C> {
             self.propagations.clear();
             self.cs.clear(); // remove propagated lemmas
             self.cs.push(c);
+            self.stats.conflicts += 1;
         }
     }
 
@@ -494,8 +528,12 @@ impl<C:Ctx> Actions<C> {
             self.propagations.clear();
             self.cs.clear(); // remove propagated lemmas
             self.cs.push_iter(i);
+            self.stats.conflicts += 1;
         }
     }
+
+    /// Access statistics.
+    pub fn stats(&self) -> &Stats { &self.stats }
 }
 
 /// A basic implementation of boolean literals using signed integers

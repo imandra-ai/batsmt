@@ -9,6 +9,7 @@ mod ast_printer;
 
 use {
     std::{env,fs,error::Error},
+    batsmt_core::Chrono,
     batsmt_cc as cc,
     batsmt_parser::{self as parser, Statement},
     batsmt_tseitin::Tseitin,
@@ -22,6 +23,7 @@ pub use {
 
 fn main() -> Result<(), Box<Error>> {
     batsmt_logger::init();
+    let chrono = Chrono::new();
 
     let mut c = Ctx::new();
 
@@ -42,7 +44,7 @@ fn main() -> Result<(), Box<Error>> {
         }
     };
 
-    info!("parsed {} statements", stmts.len());
+    info!("parsed {} statements (after {}s)", stmts.len(), chrono.as_f64());
 
     let th = {
         let b = c.builtins();
@@ -69,7 +71,7 @@ fn main() -> Result<(), Box<Error>> {
                 println!("{:?}", r)
             },
             Statement::Exit => {
-                info!("exit");
+                info!("exit (after {}s)", chrono.as_f64());
                 break;
             }
             _ => (),

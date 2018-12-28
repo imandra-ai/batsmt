@@ -7,6 +7,7 @@ pub mod gc;
 pub mod backtrack;
 pub mod shared;
 pub mod ast_u32;
+pub mod chrono;
 
 pub use crate::{
   backtrack::{Stack as BacktrackStack,Backtrackable},
@@ -19,5 +20,6 @@ pub use crate::{
   },
   gc::GC,
   shared::{Shared,SharedRef,SharedRefMut},
+  chrono::Chrono,
 };
 
