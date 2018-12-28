@@ -3,12 +3,12 @@
 
 members = [
   "src/core",
-  "src/ast",
+  "src/pretty",
+  "src/hast",
+  "src/theory",
   "src/cc",
   "src/run",
   "src/parser",
-  "src/pretty",
-  "src/theory",
   "src/solver",
   "src/tseitin",
 ]
