@@ -29,7 +29,7 @@ pub enum View<'a, Sym, Sub> {
 /// - pretty-printing terms
 pub trait Manager : Sized {
     /// Annotation for constants (when viewed).
-    type SymView : ?Sized + fmt::Debug;
+    type SymView : ?Sized + fmt::Display;
 
     /// Annotation for constants (when creating them).
     type SymBuilder;
@@ -217,7 +217,7 @@ mod pp0 {
 
     impl<'a, M:Manager> pp::Pretty for PP<'a,M> {
         fn pp_into(&self, ctx: &mut pp::Ctx) {
-            pp_ast(self.0, &self.1, &mut |s,ctx| { ctx.debug(s); }, ctx)
+            pp_ast(self.0, &self.1, &mut |s,ctx| { ctx.display(s); }, ctx)
         }
     }
     impl<'a, M:Manager> fmt::Debug for PP<'a, M> {

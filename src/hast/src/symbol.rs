@@ -10,7 +10,7 @@ pub trait SymbolCtx {
     type Ref : Copy + Sized;
 
     /// A temporary view of a symbol.
-    type View : std::fmt::Debug + ?Sized;
+    type View : std::fmt::Display + ?Sized;
 
     /// Something to build a symbol from
     type Builder;

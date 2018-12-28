@@ -481,7 +481,7 @@ impl<C:Ctx> CC1<C> {
 
     /// Undo one change.
     fn perform_undo(&mut self, m: &C, op: UndoOp<C::AST>) {
-        trace!("perform-undo {:?}", op.pp(m));
+        trace!("perform-undo {}", op.pp(m));
         match op {
             UndoOp::SetOk => {
                 debug_assert!(! self.ok);
