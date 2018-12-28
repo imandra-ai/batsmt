@@ -3,10 +3,6 @@
 extern crate batsmt_core;
 
 use {
-    std::{fmt, rc::Rc},
-    fxhash::{FxHashSet,FxHashMap},
-    batsmt_core::*,
-    batsmt_core::ast::View,
     proptest::{prelude::*,test_runner::Config},
 };
 

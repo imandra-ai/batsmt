@@ -2,15 +2,13 @@
 //! Main SMT solver
 
 use {
-    std::{fmt, marker::PhantomData},
+    std::{fmt, },
     batsat::{
         self as sat,lbool,
         theory::CheckRes,
     },
-    batsmt_pretty::{self as pp, Pretty1},
     batsmt_theory::{ self as theory,
         Ctx, Theory, TheoryLit, TheoryClauseRef, Trail,
-        LitMap,
     },
     batsmt_core::{
         backtrack, ast_u32::{AST, },
@@ -67,8 +65,11 @@ pub enum Res {
 }
 
 mod solver {
-    use super::*;
-    use batsat::SolverInterface;
+    use {
+        super::*, batsat::SolverInterface,
+        batsmt_pretty::{self as pp, Pretty1},
+        batsmt_theory::LitMap,
+    };
 
     // public API
     impl<C,Th> Solver<C,Th>

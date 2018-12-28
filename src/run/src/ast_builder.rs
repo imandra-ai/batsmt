@@ -1,12 +1,9 @@
 
 use {
     batsmt_parser as parser,
-    batsmt_core::{ast, Manager, ast_u32::AST, },
-    batsmt_solver::{solver,lit_map},
-    batsmt_cc as cc,
-    batsmt_tseitin as tseitin,
+    batsmt_core::{ast_u32::AST, },
     fxhash::FxHashMap,
-    crate::{parser::Atom, Ctx, Builtins,},
+    crate::{parser::Atom, Ctx, },
 };
 
 /// AST builder for the parser
@@ -18,7 +15,7 @@ pub struct AstBuilder<'a> {
 }
 
 mod ast_builder {
-    use super::*;
+    use {super::*, batsmt_core::Manager};
 
     impl<'a> AstBuilder<'a> {
         /// Create an AST builder that uses the given manager.

@@ -13,7 +13,7 @@ use {
         slice, u32, marker::PhantomData,
     },
     batsmt_core::{
-        ast::{self, DenseMap, Manager, AstSet, },
+        ast::{Manager, },
         ast_u32::{self, DenseSet, }, gc, AstView, },
     fxhash::{FxHashMap},
     batsmt_pretty as pp,
@@ -276,7 +276,9 @@ pub struct HManager<S:SymbolManager> {
 }
 
 mod manager {
-    use super::*;
+    use {
+        super::*, batsmt_core::ast::{ Manager, AstSet, },
+    };
 
     impl<S:SymbolManager> Manager for HManager<S> {
         type SymBuilder = S::Builder;

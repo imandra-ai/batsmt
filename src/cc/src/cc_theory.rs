@@ -2,7 +2,7 @@
 //! Theory built on the congruence closure
 
 use {
-    batsmt_core::{ast::{self, Manager}, backtrack, },
+    batsmt_core::{ast::{self, }, backtrack, },
     batsmt_theory::{self as theory, },
     crate::{Builtins, CCInterface, PropagationSet, Conflict, Ctx},
 };

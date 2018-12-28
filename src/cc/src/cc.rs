@@ -12,7 +12,7 @@
 
 use {
     std::{ u32, collections::VecDeque, hash::Hash, fmt::Debug, },
-    batsmt_core::{ast::{self,Manager,AstMap,DenseMap,View},backtrack, ast_u32, },
+    batsmt_core::{ast::{self,AstMap,DenseMap,View},backtrack, ast_u32, },
     batsmt_pretty::{self as pp, Pretty1},
     crate::{
         types::{Ctx },
@@ -61,10 +61,10 @@ struct CC1<C:Ctx> {
     nodes: Nodes<C>,
 }
 
-type DMap<C:Ctx> = ast_u32::DenseMap<Node<ast_u32::AST, C::B>>;
+type DMap<B> = ast_u32::DenseMap<Node<ast_u32::AST, B>>;
 
 /// Map terms into the corresponding node.
-struct Nodes<C:Ctx>(DMap<C>);
+struct Nodes<C:Ctx>(DMap<C::B>);
 
 /// One node in the congruence closure's E-graph.
 ///
@@ -731,7 +731,7 @@ impl<'a,C:Ctx> ExplResolve<'a,C> {
 }
 
 impl<C:Ctx> Nodes<C> {
-    fn new(map: DMap<C>) -> Self {
+    fn new(map: DMap<C::B>) -> Self {
         Nodes(map)
     }
 

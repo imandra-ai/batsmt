@@ -6,10 +6,9 @@ extern crate batsmt_hast;
 use {
     std::{fmt, rc::Rc}, 
     batsmt_core::{
-        ast_u32::{self, AST, DenseSet, DenseMap, HashSet, ManagerU32, },
-        ast::{self, AstSet, AstMap, Manager, View}, gc::GC, },
+        ast_u32::{self, AST, DenseSet, DenseMap, },
+        ast::{self, View}, },
     fxhash::FxHashMap,
-    batsmt_pretty::Pretty1,
     batsmt_hast::{HManager, StrSymbolManager,}
 };
 
@@ -17,7 +16,7 @@ type M = HManager<StrSymbolManager>;
 
 /// Reference implementation for `ast::iter_dag`
 mod ast_iter_ref {
-    use super::*;
+    use {super::*, batsmt_core::ast::{AstSet, } };
 
     fn iter_dag_ref_rec<F>(seen: &mut ast_u32::HashSet, m: &M, t: AST, f: &mut F) where F:FnMut(&M, AST) {
         if ! seen.contains(&t) {
@@ -44,7 +43,7 @@ mod ast_iter_ref {
 }
 
 mod test_ast {
-    use super::*;
+    use {super::*, batsmt_core::{gc::GC,ast::{AstSet, AstMap, Manager}} };
 
     #[test]
     fn test_mk_str() {
@@ -381,8 +380,11 @@ mod test_ast {
 }
 
 mod ast_prop {
-    use super::*;
-    use proptest::prelude::*;
+    use {
+        super::*, batsmt_pretty::Pretty1,
+        batsmt_core::ast::{AstSet, Manager},
+        proptest::prelude::*,
+    };
 
     #[derive(Clone)]
     struct AstGen(Rc<std::cell::RefCell<AstGenCell>>);
@@ -417,7 +419,6 @@ mod ast_prop {
                 }
             }
         }
-        fn str(&self, s: &str) -> AST { self.string(s.to_string()) }
     }
 
     impl fmt::Debug for AstGen {
@@ -446,10 +447,6 @@ mod ast_prop {
                 (inner.clone(),prop::collection::vec(inner.clone(), 0..6)).
                     prop_map(move |(f,args)| m2.app(f,&args))
             }).boxed()
-    }
-
-    fn gen_terms(m: &AstGen, len: usize) -> BoxedStrategy<Vec<AST>> {
-        prop::collection::vec(gen_term(&m), 0 .. len).boxed()
     }
 
     // size_tree(t) >= size_dag(t)

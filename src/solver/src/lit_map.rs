@@ -3,7 +3,7 @@
 
 use {
     batsmt_core::{
-        ast::{self, View, AstMap},
+        ast::{self, AstMap},
         ast_u32::{AST, ManagerU32, },
     },
     batsmt_theory::{self as theory, BoolLit, },

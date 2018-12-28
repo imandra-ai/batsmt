@@ -273,9 +273,9 @@ impl<'a, T, M> Pretty1<M> for Arr<'a, T> where T : Pretty1<M> {
 }
 
 mod pretty1 {
-    use super::*;
 
     /* FIXME: collisions?
+    use super::*;
     impl<'a, T, M> Pretty1<&'a T> for M where M : Pretty1<T> {
         fn pp_with(&self, x: &&'a T, ctx: &mut Ctx) { self.pp_with(*x,ctx) }
     }

@@ -6,12 +6,12 @@
 
 use {
     batsmt_core::{
-        ast_u32::{self, AST, ManagerU32}, gc,
+        ast_u32::{self, AST, }, gc,
         ast::{self, View, iter_dag::State as AstIter},
     },
     batsmt_theory::{
         TheoryLit, TheoryClauseSet, TheoryClauseRef,
-        LitMap, Ctx, BoolLit},
+        LitMap, Ctx, },
 };
 
 /// Main state for the Tseitin transformation.

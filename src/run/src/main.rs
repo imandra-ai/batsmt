@@ -9,11 +9,8 @@ mod ast_printer;
 
 use {
     std::{env,fs,error::Error},
-    batsmt_core::{ast, ast_u32},
-    batsmt_hast::{HManager, StrSymbolManager},
     batsmt_cc as cc,
     batsmt_parser::{self as parser, Statement},
-    batsmt_theory as theory,
     batsmt_tseitin::Tseitin,
     batsmt_solver as solver,
     crate::ast_printer::PP,

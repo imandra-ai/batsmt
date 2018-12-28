@@ -31,9 +31,6 @@ pub struct Conflict<'a,B>(pub &'a [B]);
 mod propagation {
     use super::*;
 
-    // iterator
-    struct PropIter<'a,C:Ctx>(&'a PropagationSet<C::B>, usize);
-
     impl<B:BoolLit> PropagationSet<B> {
         /// New propagation set.
         pub fn new() -> Self { PropagationSet { lits: vec!(), } }
