@@ -57,7 +57,7 @@ fn main() -> Result<(), Box<Error>> {
     let mut tseitin = Tseitin::new(c.builtins());
 
     for s in &stmts {
-        info!("parsed statement {}", PP::new(&c, s.clone()));
+        debug!("parsed statement {}", PP::new(&c, s.clone()));
 
         // process statement
         match s {
