@@ -87,7 +87,7 @@ impl<T,S> Statement<T,S> {
 impl<T,S> pp::Pretty for Statement<T,S>
     where T: pp::Pretty, S: pp::Pretty
 {
-    fn pp(&self, ctx: &mut pp::Ctx) {
+    fn pp_into(&self, ctx: &mut pp::Ctx) {
         match self {
             &Statement::SetInfo(ref a, ref b) => {
                 ctx.sexp(|ctx| {

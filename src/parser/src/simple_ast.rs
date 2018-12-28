@@ -189,19 +189,19 @@ impl types::TermBuilder for Builder {
 }
 
 impl pp::Pretty for Sort {
-    fn pp(&self, ctx: &mut pp::Ctx) {
+    fn pp_into(&self, ctx: &mut pp::Ctx) {
         ctx.string(self.0.name.to_string());
     }
 }
 
 impl pp::Pretty for Fun {
-    fn pp(&self, ctx: &mut pp::Ctx) {
+    fn pp_into(&self, ctx: &mut pp::Ctx) {
         ctx.string(self.0.name.to_string());
     }
 }
 
 impl pp::Pretty for Term {
-    fn pp(&self, ctx: &mut pp::Ctx) {
+    fn pp_into(&self, ctx: &mut pp::Ctx) {
         match self.0.deref() {
             TermCell::Ite(a,b,c) => {
                 ctx.sexp(|ctx| {
@@ -210,10 +210,10 @@ impl pp::Pretty for Term {
             },
             TermCell::App(f, args) => {
                 if args.len() == 0 {
-                    f.pp(ctx);
+                    f.pp_into(ctx);
                 } else {
                     ctx.sexp(|ctx| {
-                        f.pp(ctx);
+                        f.pp_into(ctx);
                         ctx.space().array(pp::space(), args);
                     });
                 }
