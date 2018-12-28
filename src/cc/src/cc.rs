@@ -163,12 +163,17 @@ impl<C:Ctx> CCInterface<C> for CC<C> {
         self.check_internal(m)
     }
 
-    fn explain_propagation(&mut self, _m: &C, _p: C::B) -> &[C::B] {
-        unimplemented!("explain propagation not implemented yet") // FIXME
+    fn explain_merge(&mut self, m: &C, t: C::AST, u: C::AST) -> &[C::B] {
+        trace!("explain merge {} = {}", ast::pp(m,&t), ast::pp(m,&u));
+        debug_assert!(self.cc1.nodes.is_eq(t,u)); // check that they are equal
+        let mut er = ExplResolve::new(self);
+        er.explain_eq(m,t,u);
+        er.fixpoint(m);
+        trace!("... explanation: {:?}", &self.confl[..]);
+        &self.confl[..]
     }
 
-    // FIXME
-    // fn has_partial_check() -> bool { true }
+    // TODO: fix that
     fn has_partial_check() -> bool { false }
 
     fn impl_descr() -> &'static str { "fast congruence closure"}
@@ -333,12 +338,13 @@ impl<C:Ctx> CC<C> {
                 self.cc1.ok = false;
                 self.undo.push_if_nonzero(UndoOp::SetOk);
                 {
-                    let mut expl = ExplResolve::new(self, expl);
-                    expl.explain_eq(m, a, ra.0);
-                    expl.explain_eq(m, b, rb.0);
-                    expl.fixpoint(m);
+                    let mut er = ExplResolve::new(self);
+                    er.add_expl(expl);
+                    er.explain_eq(m, a, ra.0);
+                    er.explain_eq(m, b, rb.0);
+                    er.fixpoint(m);
                 }
-                trace!("computed conflict: {:?}", &self.confl);
+                trace!("inconsistent set of explanations: {:?}", &self.confl);
                 return;
             } else {
                 // merge into true/false
@@ -553,7 +559,7 @@ impl<C:Ctx> CC1<C> {
 
     /// Reroot proof forest for the class of `r` so that `r` is the root.
     fn reroot_forest(&mut self, m: &C, t: C::AST) {
-        trace!("reroot {}", ast::pp(m,&t));
+        trace!("reroot-forest-to {}", ast::pp(m,&t));
         let (mut cur_t, mut expl) = {
             let n = &mut self[t];
             match &n.expl {
@@ -648,6 +654,7 @@ impl<C:Ctx> backtrack::Backtrackable<C> for CC<C> {
         self.sig_tbl.pop_levels(n);
         if n > 0 {
             trace!("pop-levels {}", n);
+            self.props.clear();
             self.tasks.clear(); // changes are invalidated
         }
     }
@@ -664,12 +671,15 @@ struct ExplResolve<'a,C:Ctx> {
 
 impl<'a,C:Ctx> ExplResolve<'a,C> {
     /// Create the temporary structure.
-    fn new(cc: &'a mut CC<C>, e: Expl<C::AST, C::B>) -> Self {
+    fn new(cc: &'a mut CC<C>, ) -> Self {
         let CC { cc1, confl, expl_st, ..} = cc;
         confl.clear();
         expl_st.clear();
-        expl_st.push(e); // start from there
         ExplResolve { confl, cc1, expl_st }
+    }
+
+    fn add_expl(&mut self, e: Expl<C::AST, C::B>) {
+        self.expl_st.push(e)
     }
 
     /// Main loop for turning explanations into a conflict
@@ -678,7 +688,7 @@ impl<'a,C:Ctx> ExplResolve<'a,C> {
             trace!("expand-expl: {}", e.pp(m));
             match e {
                 Expl::Lit(lit) => {
-                    self.confl.push(!lit); // conflict needs negation
+                    self.confl.push(lit);
                 },
                 Expl::AreEq(a,b) => {
                     self.explain_eq(m, a, b);
@@ -709,7 +719,7 @@ impl<'a,C:Ctx> ExplResolve<'a,C> {
     /// onto `self.expl_st`, and leaf literals onto `self.confl`.
     fn explain_eq(&mut self, m: &C, a: C::AST, b: C::AST) {
         if a == b { return }
-        trace!("explain merge of {} and {}", ast::pp(m,&a), ast::pp(m,&b));
+        trace!("explain eq of {} and {}", ast::pp(m,&a), ast::pp(m,&b));
 
         let common_ancestor = self.cc1.find_expl_common_ancestor(a, b);
         trace!("common ancestor: {}", ast::pp(m,&common_ancestor));

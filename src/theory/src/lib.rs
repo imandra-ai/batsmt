@@ -157,11 +157,17 @@ pub trait Theory<C:Ctx> : Backtrackable<C>{
     /// literals back to the SAT solver.
     fn add_literal(&mut self, _ctx: &C, _t: C::AST, _lit: C::B) {}
 
-    /// Ask the theory to explain why it propagated literal `p`.
+    /// Ask the theory to explain why it propagated literal `lit`.
     ///
     /// The result must be a set `g` of literals which are true in the current
     /// trail, and such that `g => p` is a T-tautology.
-    fn explain_propagation(&mut self, _ctx: &C, p: C::B) -> &[C::B];
+    ///
+    /// ## Params
+    ///
+    /// - `ctx`: the theory context.
+    /// - `(t,sign)`: the signed theory atom corresponding to `p`.
+    /// - `p`: the raw boolean literal whose propagation must be explained.
+    fn explain_propagation(&mut self, ctx: &C, t: C::AST, sign: bool, p: C::B) -> &[C::B];
 }
 
 /// Statistics.

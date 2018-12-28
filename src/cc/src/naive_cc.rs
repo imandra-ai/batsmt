@@ -92,7 +92,7 @@ impl<C:Ctx> CCInterface<C> for NaiveCC<C> {
 
     fn impl_descr() -> &'static str { "naive congruence closure"}
 
-    fn explain_propagation(&mut self, _m: &C, _p: C::B) -> &[C::B] {
+    fn explain_merge(&mut self, _m: &C, _t: C::AST, _u: C::AST) -> &[C::B] {
         unreachable!() // never propagated anything
     }
 }

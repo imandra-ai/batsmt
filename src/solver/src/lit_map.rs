@@ -74,7 +74,6 @@ impl theory::LitMap<BLit> for SatLitMap {
     }
 
     fn map_lit(&self, lit: BLit) -> Option<(AST, bool)> {
-        trace!("solver.map-lit {:?}", lit);
         if self.lit_to_term.has(lit.0) {
             let pair = self.lit_to_term[lit.0];
             // is it a real value?

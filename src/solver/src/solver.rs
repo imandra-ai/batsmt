@@ -309,7 +309,14 @@ mod solver {
         fn explain_propagation(&mut self, p: sat::Lit) -> &[sat::Lit] {
             // copy explanation from theory
             self.0.lits.clear();
-            let e = self.0.th.explain_propagation(self.1, BLit(p)).iter().map(|l| l.0);
+            let blit = BLit(p);
+            // map to a theory literal
+            let (t, sign) = {
+                let t_opt = self.0.lit_map.map_lit(blit);
+                debug_assert!(t_opt.is_some(), "try to explain {:?} which is not a theory lit", p);
+                t_opt.unwrap()
+            };
+            let e = self.0.th.explain_propagation(self.1, t, sign, blit).iter().map(|l| l.0);
             self.0.lits.extend(e);
             &self.0.lits
         }

@@ -3,7 +3,7 @@
 
 use {
     batsmt_core::{ast::{self, }, backtrack, },
-    batsmt_theory::{self as theory, },
+    batsmt_theory::{self as theory},
     crate::{Builtins, CCInterface, PropagationSet, Conflict, Ctx},
 };
 
@@ -86,7 +86,8 @@ fn act_propagate<C:Ctx>(acts: &mut theory::Actions<C>, props: &PropagationSet<C:
 
 fn act_conflict<C:Ctx>(acts: &mut theory::Actions<C>, c: Conflict<C::B>) {
     let costly = true;
-    let iter = c.0.iter().map(|b| theory::TheoryLit::B(*b));
+    // need to add negation
+    let iter = c.0.iter().map(|b| !theory::TheoryLit::B(*b));
     acts.raise_conflict_iter(iter, costly)
 }
 
@@ -135,8 +136,28 @@ impl<C:Ctx> theory::Theory<C> for CCTheory<C> {
         self.cc.add_literal(ctx, t,lit);
     }
 
-    #[inline(always)]
-    fn explain_propagation(&mut self, ctx: &C, p: C::B) -> &[C::B] {
-        self.cc.explain_propagation(ctx, p)
+    fn explain_propagation(&mut self, m: &C, t: C::AST, sign: bool, _p: C::B) -> &[C::B] {
+        // what does `t=sign` correspond to?
+        trace!("explain-prop {} sign={} (lit {:?})", ast::pp(m,&t), sign, _p);
+        match m.view(&t) {
+            ast::View::App {f, args} if f == self.builtins.eq => {
+                assert_eq!(2,args.len());
+                if sign {
+                    self.cc.explain_merge(m, args[0], args[1])
+                } else {
+                    // `(a=b)=false`
+                    self.cc.explain_merge(m, t, self.builtins.false_)
+                }
+            },
+            ast::View::App {f, args:_} if f == self.builtins.distinct => {
+                panic!("cannot explain propagations of `distinct`")
+            },
+            _ if sign => {
+                self.cc.explain_merge(m, t, self.builtins.true_)
+            },
+            _ => {
+                self.cc.explain_merge(m, t, self.builtins.false_)
+            }
+        }
     }
 }
