@@ -3,16 +3,14 @@
 
 use {
     batsmt_core::{
-        ast::{self,AST,View,iter_dag::State as AstIter},
-        Symbol,
+        ast_u32,
+        ast::{self, Manager, View, iter_dag::State as AstIter},
     },
     batsmt_theory::{TheoryLit,TheoryClauseSet,TheoryClauseRef},
     batsmt_solver::{
         lit_map::LitMap, BLit,
     },
 };
-
-type M<S> = ast::Manager<S>;
 
 /// Tseitin transformation
 #[derive(Clone)]

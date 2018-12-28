@@ -17,17 +17,34 @@ use {
     batsmt_pretty as pp,
 };
 
+pub mod lit_map;
+
+// re-exports for litmap
+pub use {
+    crate::lit_map::{LitMap, Builtins as LitMapBuiltins, },
+};
+
 /// Abstract notion of boolean literals.
 ///
 /// A literal must be copyable, printable, comparable, hashable,
 /// and have a notion of negation.
 ///
 /// It must be the case that `!!b` is the same as `b`.
-pub trait BoolLit : fmt::Debug + Eq + Ord + Hash + Copy + Not<Output=Self> {}
+pub trait BoolLit : fmt::Debug + Eq + Ord + Hash + Copy + Not<Output=Self> {
+
+    /// Identity or negation depending on `sign` being true or false.
+    #[inline(always)]
+    fn apply_sign(&self, sign: bool) -> Self {
+        if sign { *self } else { ! *self }
+    }
+}
 
 /// Context that has a notion of boolean literals.
 pub trait BoolLitCtx {
     type B : BoolLit;
+
+    /// Access boolean builtins.
+    fn lit_map_builtins(&self) -> LitMapBuiltins;
 }
 
 /// A theory is parametrized by a `HManager` (with its AST, symbol, etc.) and boolean literals.
