@@ -17,7 +17,6 @@ pub use {
 };
 
 /// Bidirectional mapping between SAT literals (`BLit`) and terms.
-#[derive(Clone)]
 pub struct SatLitMap {
     b: Builtins,
     term_to_lit: ast::HashMap<AST,BLit>,
@@ -35,6 +34,9 @@ impl theory::LitMap<BLit> for SatLitMap {
             theory_lits: vec!(),
         }
     }
+
+    #[inline(always)]
+    fn b(&self) -> &Builtins { &self.b }
 
     fn get_term<M>(&self, m: &M, t: &AST, sign: bool) -> Option<BLit>
         where M: ManagerU32
@@ -72,6 +74,7 @@ impl theory::LitMap<BLit> for SatLitMap {
     }
 
     fn map_lit(&self, lit: BLit) -> Option<(AST, bool)> {
+        trace!("solver.map-lit {:?}", lit);
         if self.lit_to_term.has(lit.0) {
             let pair = self.lit_to_term[lit.0];
             // is it a real value?
@@ -89,6 +92,7 @@ impl SatLitMap {
     fn add_term_normalized<M>(&mut self, m: &M, t: AST, lit: BLit, bidir: bool)
         where M: ManagerU32
     {
+        assert_ne!(t, AST::SENTINEL); // breaks invariants
         debug_assert_eq!(t, self.b.unfold_not(m,&t,true).0);
         debug_assert!(! self.term_to_lit.contains(&t));
         if bidir {

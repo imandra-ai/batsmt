@@ -57,7 +57,6 @@ pub struct Solver<C: Ctx<B=BLit>, Th: Theory<C>> {
 struct Solver0<C: Ctx<B=BLit>, Th: Theory<C>> {
     c: CoreTheory<C, Th>,
     sat: batsat::Solver<solver::Cb>,
-    lit_map: SatLitMap,
 }
 
 /// Result of a call to `solve`
@@ -76,12 +75,12 @@ mod solver {
         where C: Ctx<B=BLit>, Th: Theory<C>
     {
         /// New Solver, using the given theory `th` and AST manager.
-        pub fn new(m: &C, b: Builtins, th: Th) -> Self {
+        pub fn new(b: Builtins, th: Th) -> Self {
             let lit_map = SatLitMap::new(b.clone());
             let c = CoreTheory {
-                lit_map: lit_map.clone(),
                 lits: Vec::new(),
                 th,
+                lit_map, 
                 acts: theory::Actions::new(),
                 trail_offset: backtrack::Ref::new(0),
                 th_trail: Vec::new(),
@@ -94,7 +93,7 @@ mod solver {
             // create SAT solver
             let sat = batsat::Solver::new_with(opts, cb);
             let mut s = Solver {
-                s0: Solver0 { sat, lit_map, c, },
+                s0: Solver0 { sat, c, },
                 lits: Vec::new(),
             };
             s.init_logic();
@@ -108,7 +107,11 @@ mod solver {
 
         /// Access literal map of this solver.
         #[inline(always)]
-        pub fn lit_map(&self) -> &SatLitMap { & self.s0.lit_map }
+        pub fn lit_map(&self) -> &SatLitMap { & self.s0.c.lit_map }
+
+        /// Access literal map of this solver.
+        #[inline(always)]
+        pub fn lit_map_mut(&mut self) -> &mut SatLitMap { &mut self.s0.c.lit_map }
 
         /// Add a boolean clause.
         pub fn add_bool_clause_reuse(&mut self, c: &mut Vec<sat::Lit>) {
@@ -136,7 +139,7 @@ mod solver {
         fn add_initial_literals(&mut self, m: &mut C) {
             debug!("solver.theory.add-lits");
             let core = &mut self.s0.c;
-            for (t,blit) in self.s0.lit_map.iter_theory_lits() {
+            for (t,blit) in core.lit_map.iter_theory_lits() {
                 core.th.add_literal(m,t,blit);
             }
             let acts = &mut core.acts;
@@ -218,7 +221,7 @@ mod solver {
             trace!("solver.{}-check ({} level(s), \
                 {} elt(s) in trail, among which {} from theory)",
                 if partial {"partial"} else {"final"},
-                self.th.n_levels(), a.model().len(), self.th_trail.len());
+                self.th.n_levels(), model.len(), self.th_trail.len());
 
             if self.th_trail.len() == 0 {
                 // nothing to do
@@ -323,7 +326,7 @@ mod solver {
                     let newlit = || {
                         BLit::from_var(sat.new_var_default(), true)
                     };
-                    self.lit_map.get_term_or_else(ctx, &t, sign, bidir, newlit)
+                    self.c.lit_map.get_term_or_else(ctx, &t, sign, bidir, newlit)
                 },
                 TheoryLit::T(t,sign) => {
                     let sat = &mut self.sat;
@@ -331,7 +334,7 @@ mod solver {
                     let newlit = || {
                         BLit::from_var(sat.new_var_default(), true)
                     };
-                    self.lit_map.get_term_or_else(ctx, &t, sign, bidir, newlit)
+                    self.c.lit_map.get_term_or_else(ctx, &t, sign, bidir, newlit)
                 },
             }
         }

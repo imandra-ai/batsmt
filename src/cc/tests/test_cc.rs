@@ -8,7 +8,7 @@ use {
     batsmt_cc::*,
     batsmt_hast::*,
     batsmt_pretty::{self as pp, Pretty1},
-    batsmt_theory::{BoolLit, self as theory},
+    batsmt_theory::{BoolLit, self as theory, lit_map},
 };
 
 type M = HManager<StrSymbolManager>;
@@ -52,10 +52,6 @@ mod term_lit {
 }
 
 struct Ctx(M);
-
-impl Ctx {
-    fn new(m: M) -> Self { Ctx(m) }
-}
 
 mod ctx {
     use super::*;
@@ -107,8 +103,9 @@ mod prop_cc {
     }
 
     impl AstGen {
-        fn new(m: Ctx) -> Self {
+        fn new(m: M) -> Self {
             let consts = FxHashMap::default();
+            let m = Ctx(m);
             let mut cell = AstGenCell { m, consts, b: None, };
             // make builtins
             let b = batsmt_cc::Builtins{
@@ -141,7 +138,7 @@ mod prop_cc {
     fn with_astgen<F,T>(mut f: F) -> BoxedStrategy<(AstGen,T)>
         where F: FnMut(&AstGen) -> BoxedStrategy<T>, T: 'static+fmt::Debug
     {
-        let m = AstGen::new(Ctx::new(HManager::new()));
+        let m = AstGen::new(HManager::new());
         f(&m)
             .prop_map(move |t| (m.clone(), t))
             .boxed()

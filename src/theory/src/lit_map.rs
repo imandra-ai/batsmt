@@ -52,6 +52,17 @@ pub trait LitMap<B:BoolLit> {
     /// Create a new `LitMap`.
     fn new(b: Builtins) -> Self where Self : Sized;
 
+    /// Access the set of builtins.
+    fn b(&self) -> &Builtins;
+
+    /// Shortcut: unfold negation.
+    #[inline(always)]
+    fn unfold_not<M>(&self, m: &M, t: &AST, sign: bool) -> (AST, bool)
+        where M: ManagerU32
+    {
+        self.b().unfold_not(m, t, sign)
+    }
+
     /// Find which literal this term maps to, if any.
     fn get_term<M>(&self, m: &M, t: &AST, sign: bool) -> Option<B>
         where M: ManagerU32;

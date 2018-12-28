@@ -42,9 +42,6 @@ pub trait BoolLit : fmt::Debug + Eq + Ord + Hash + Copy + Not<Output=Self> {
 /// Context that has a notion of boolean literals.
 pub trait BoolLitCtx {
     type B : BoolLit;
-
-    /// Access boolean builtins.
-    fn lit_map_builtins(&self) -> LitMapBuiltins;
 }
 
 /// A theory is parametrized by a `HManager` (with its AST, symbol, etc.) and boolean literals.
@@ -178,6 +175,8 @@ mod theory_lit {
             }
         }
     }
+
+    impl<C:Ctx> Copy for TheoryLit<C> where C::B: Copy, C::AST: Copy {}
 
     impl<C:Ctx> TheoryLit<C> {
         /// Make a theory literal.

@@ -192,7 +192,6 @@ pub fn pp_ast<M, F>(m: &M, t: &M::AST, f: &mut F, ctx: &mut pp::Ctx)
         View::App{f: f0,args} => {
             ctx.sexp(|ctx| {
                 pp_ast(m, &f0, f, ctx);
-                ctx.space();
                 for u in args.iter() {
                     ctx.space();
                     pp_ast(m, u, f, ctx);
@@ -500,38 +499,9 @@ pub mod iter_dag {
         State {seen, st: Vec::new(), }
     }
 
-    impl<AST, S> State<AST, S> where AST:HasID+Debug+Eq+Hash+Clone, S: AstSet<AST> {
-        /// Iterate over the given AST `t`, calling `f` on every subterm once.
-        ///
-        /// ## Params
-        /// - `self` is the set of already seen terms, and will be mutated.
-        /// - `t` is the term to recursively explore
-        /// - `f` is the function to call once on every subterm, also given the manager
-        pub fn iter<M, F>(&mut self, m: &M, t: &M::AST, mut f: F)
-            where F: FnMut(&M, &M::AST),
-                  M: Manager<AST=AST>
-        {
-            if self.seen.len() > 0 && self.seen.contains(&t) { return }
-
-            self.push(t.clone());
-            while let Some(t) = self.st.pop() {
-                if self.seen.contains(&t) {
-                    continue
-                } else {
-                    self.seen.add(t.clone());
-                    f(m, &t); // process `t`
-
-                    match m.view(&t) {
-                        View::Const(_) => (),
-                        View::App{f,args} => {
-                            self.st.push(f);
-                            for a in args.iter() { self.st.push(a.clone()) }
-                        },
-                    }
-                }
-            }
-        }
-
+    impl<AST,S> State<AST,S>
+        where AST:HasID+Debug+Eq+Hash+Clone, S: AstSet<AST>
+    {
         /// local conditional push
         #[inline(always)]
         fn push(&mut self, t: AST) {
@@ -544,6 +514,62 @@ pub mod iter_dag {
         pub fn clear(&mut self) {
             self.st.clear();
             self.seen.clear();
+        }
+    }
+
+    macro_rules! iter_impl {
+        ($self:ident, $m:ident, $t:ident, $f:ident) => {
+            if $self.seen.len() > 0 && $self.seen.contains(& $t) { return }
+
+            $self.push($t.clone());
+            while let Some(t) = $self.st.pop() {
+                if $self.seen.contains(&t) {
+                    continue
+                } else {
+                    $self.seen.add(t.clone());
+                    $f($m, &t); // process `t`
+
+                    match $m.view(&t) {
+                        View::Const(_) => (),
+                        View::App{f,args} => {
+                            $self.st.push(f);
+                            for a in args.iter() {
+                                $self.st.push(a.clone())
+                            }
+                        },
+                    }
+                }
+            }
+        }
+    }
+
+    impl<AST, S> State<AST, S> where AST:HasID+Debug+Eq+Hash+Clone, S: AstSet<AST> {
+        /// Iterate over the given AST `t`, calling `f` on every subterm once.
+        ///
+        /// ## Params
+        /// - `self` is the set of already seen terms, and will be mutated.
+        /// - `t` is the term to recursively explore
+        /// - `f` is the function to call once on every subterm, also given the manager
+        pub fn iter<M, F>(&mut self, m: &M, t: &M::AST, mut f: F)
+            where F: FnMut(&M, &M::AST),
+                  M: Manager<AST=AST>
+        {
+            iter_impl!(self, m, t, f);
+        }
+
+        /// Iterate over the given AST `t`, calling `f` on every subterm once.
+        /// 
+        /// This version threads a mutable context `&mut M`.
+        ///
+        /// ## Params
+        /// - `self` is the set of already seen terms, and will be mutated.
+        /// - `t` is the term to recursively explore
+        /// - `f` is the function to call once on every subterm, also given the manager
+        pub fn iter_mut<M, F>(&mut self, m: &mut M, t: &M::AST, mut f: F)
+            where F: FnMut(&mut M, &M::AST),
+                  M: Manager<AST=AST>
+        {
+            iter_impl!(self, m, t, f);
         }
     }
 
