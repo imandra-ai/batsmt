@@ -318,6 +318,18 @@ impl<'a> Pretty for Sexp<'a> {
 /// Print the given arguments as a S-expression
 pub fn sexp_slice<'a>(v: &'a[&'a dyn Pretty]) -> impl Pretty + 'a { Sexp(v) }
 
+impl<T> Pretty for Tmp<Vec<T>> where T: Pretty {
+    fn pp_into(&self, ctx: &mut Ctx) {
+        ctx.sexp(|ctx| { ctx.array(space(), &self.0[..]); });
+    }
+}
+
+/// Print the given arguments as a S-expression
+pub fn sexp_iter<I,T>(i: I) -> impl Pretty where I: Iterator<Item=T>, T: Pretty {
+    let v: Vec<T> = i.collect();
+    Tmp(v)
+}
+
 impl<A:Pretty,B:Pretty> Pretty for (A,B) {
     fn pp_into(&self, ctx: &mut Ctx) { ctx.pp(&self.0).pp(&self.1); }
 }

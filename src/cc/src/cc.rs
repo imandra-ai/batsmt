@@ -10,15 +10,8 @@
 // - rule for `not` (t == true |- not t == false, and conversely)
 // - rule for `ite` (t == true |- not t == false, and conversely)
 
-// TODO(perf): faster union find
-//     - lazy path compression in `find`, without undo action
-//     - when undoing, keep a set of terms that are root again.
-//       After undoing the whole stack, for each such term, traverse their class only once.
-//       (better than undoing each merge separately)
-// TODO(perf): backtrackable allocator for signatures
-// TODO(perf): somehow, store parent list in the representative (avoid traversing the whole class)
-
-// TODO(perf): sparse map for nodes (using a second dense array)
+// TODO(perf): backtrackable array allocator for signatures
+// TODO(perf): sparse map for nodes (using a second dense array)?
 
 use {
     std::{ u32, ptr, collections::VecDeque, hash::Hash, fmt::Debug, },
@@ -52,7 +45,6 @@ struct CC1<C:Ctx> {
     alloc_parent_list: ListAlloc<C::AST>,
     nodes: Nodes<C>,
     confl: Vec<C::B>, // local for conflict
-    repr_on_undo: Vec<Repr<C::AST>>, // terms that are representatives again after backtrack
 }
 
 type DMap<B> = ast_u32::DenseMap<Node<ast_u32::AST, B>>;
@@ -493,7 +485,6 @@ impl<C:Ctx> CC1<C> {
             ok: true,
             alloc_parent_list: backtrack::Alloc::new(),
             confl: vec!(),
-            repr_on_undo: vec!(),
         }
     }
 
@@ -515,10 +506,10 @@ impl<C:Ctx> CC1<C> {
             UndoOp::Unmerge {root: a, old_root: b} => {
                 assert_ne!(a.0,b.0); // crucial invariant
 
+                let (na, nb) = self.nodes.map.get2(a.0, b.0);
+
                 // inverse switcharoo for the class linked lists
                 {
-                    let (na, nb) = self.nodes.map.get2(a.0, b.0);
-
                     let next_a = na.next;
                     let next_b = nb.next;
 
@@ -528,9 +519,12 @@ impl<C:Ctx> CC1<C> {
                     na.parents.un_append(&mut nb.parents);
                 }
 
-                // will restore root pointer of all members of `b.class` after we finish
-                // backtracking
-                self.repr_on_undo.push(b);
+                // reset `root` pointer for `nb`
+                // reset root for the classes of terms that are now repr again,
+                // if they haven't been removed.
+                self.nodes.iter_class(b, |nb1| {
+                    nb1.root = b;
+                });
             },
             UndoOp::RemoveExplLink(a,b) => {
                 // one of {a,b} points to the other, explanation wise.
@@ -661,25 +655,12 @@ impl<C:Ctx> backtrack::Backtrackable<C> for CC<C> {
     fn pop_levels(&mut self, m: &mut C, n: usize) {
         debug_assert_eq!(self.undo.n_levels(), self.sig_tbl.n_levels());
         let cc1 = &mut self.cc1;
-        cc1.repr_on_undo.clear();
         self.undo.pop_levels(n, |op| cc1.perform_undo(m, op));
         self.sig_tbl.pop_levels(n);
         if n > 0 {
             trace!("pop-levels {}", n);
             self.props.clear();
             self.tasks.clear(); // changes are invalidated
-
-            // reset root for the classes of terms that are now repr again,
-            // if they haven't been removed.
-            let CC1 {nodes, repr_on_undo, ..} = &mut self.cc1;
-            for r in repr_on_undo.drain(..) {
-                if nodes.contains(&r.0) {
-                    // restore `root` pointer of all members of `r.class`
-                    nodes.iter_class(r, |nb1| {
-                        nb1.root = r;
-                    });
-                }
-            }
         }
     }
 
@@ -783,15 +764,34 @@ impl<C:Ctx> Nodes<C> {
         if root.0 == t {
             root // fast path
         } else {
-            let root = self.find_rec(root.0);
+            let root = self.find_rec(root.0, 16); // use recursion
             self[t].root = root; // update this pointer
             root
         }
     }
 
-    // find + path compression
-    fn find_rec(&mut self, mut t: C::AST) -> Repr<C::AST> {
-        self.find_stack.clear();
+    // find + path compression, using recursion up to `limit`
+    fn find_rec(&mut self, t: C::AST, limit: usize) -> Repr<C::AST> {
+        let root = self[t].root;
+        if root.0 == t {
+            root
+        } else {
+            // recurse
+            let root = {
+                if limit == 0 {
+                    self.find_loop(root.0)
+                } else {
+                    self.find_rec(root.0, limit-1)
+                }
+            };
+            self[t].root = root;
+            root
+        }
+    }
+
+    // find + path compression, using a loop
+    fn find_loop(&mut self, mut t: C::AST) -> Repr<C::AST> {
+        debug_assert_eq!(self.find_stack.len(), 0);
 
         let root = loop {
             let root = self[t].root;
@@ -805,9 +805,10 @@ impl<C:Ctx> Nodes<C> {
         };
 
         // update root pointers (path compression)
-        for u in self.find_stack.drain(..) {
+        for &u in self.find_stack.iter() {
             self.map[u].root = root;
         }
+        self.find_stack.clear();
 
         root
     }

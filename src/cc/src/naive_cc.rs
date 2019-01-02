@@ -226,6 +226,7 @@ impl<'a, C:Ctx> Solve<'a, C> {
                         self.add_term(u);
                         self.parents.get_mut(&self.find(u)).unwrap().push(t);
                     }
+                    self.update_term(t);
                 },
                 View::Const(_) => (),
             };

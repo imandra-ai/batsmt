@@ -4,7 +4,7 @@
 use {
     std::{rc::Rc, fmt},
     fxhash::FxHashMap,
-    batsmt_core::{ast::{self, HasManager, Manager},backtrack::*, ast_u32::AST},
+    batsmt_core::{ast::{self, HasManager, Manager},backtrack::*, ast_u32::{self, AST}},
     batsmt_cc::*,
     batsmt_hast::*,
     batsmt_pretty::{self as pp, Pretty1},
@@ -43,7 +43,7 @@ mod term_lit {
 
     impl BoolLit for TermLit {}
 
-    impl pp::Pretty1<M> for TermLit {
+    impl<M:ast_u32::ManagerU32> pp::Pretty1<M> for TermLit {
         fn pp_with(&self, m: &M, ctx: &mut pp::Ctx) {
             let s = if self.sign() {" = "} else {" != "};
             ctx.pp(&ast::pp(m,&self.1)).str(s).pp(&ast::pp(m,&self.2));
@@ -266,7 +266,7 @@ mod prop_cc {
                         let lit = TermLit::mk_neq(t1,t2);
                         let eqn = m.app(b.eq, &[t1,t2]); // term `t1=t2`
                         st.push((eqn, b.false_, lit));
-                        
+
                         let ctx = &mut m.0.borrow_mut().m;
                         ncc.merge(ctx, eqn, b.false_, lit);
                     },
@@ -363,7 +363,6 @@ mod prop_cc {
                             // conflict clause is a tautology,
                             // so assert its negation and check for "unsat"
                             for &lit in confl.0.iter() {
-                                let lit = !lit;
                                 let TermLit(sign,t1,t2) = lit;
                                 if sign {
                                     let ctx = &mut m.0.borrow_mut().m;
@@ -377,9 +376,10 @@ mod prop_cc {
 
                             let ctx = &mut m.0.borrow_mut().m;
                             let r = ncc2.final_check(ctx);
-                            prop_assert!(r.is_err(), "conflict should be unsat");
-                            // prop_assert!(r.is_err(), "conflict {:?} should be unsat",
-                            //              pp::sexp(confl.0.iter().map(|x| x.pp(m))));
+                            //prop_assert!(r.is_err(), "conflict should be unsat");
+                            prop_assert!(r.is_err(), "conflict {:?} should be unsat, but naive cc returned {:?}",
+                                         pp::debug(pp::sexp_iter(confl.0.iter().map(|x| x.pp(ctx)))),
+                                         if r.is_ok() {"sat"} else {"unsat"});
                         }
                     }
                 };
