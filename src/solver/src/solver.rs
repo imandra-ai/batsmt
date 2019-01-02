@@ -81,7 +81,7 @@ mod solver {
             let c = CoreTheory {
                 lits: Vec::new(),
                 th,
-                lit_map, 
+                lit_map,
                 acts: theory::Actions::new(),
                 trail_offset: backtrack::Ref::new(0),
                 th_trail: Vec::new(),
@@ -91,6 +91,7 @@ mod solver {
             opts.luby_restart = false;
             opts.restart_first = 1000;
             opts.restart_inc = 15.;
+            opts.min_learnts_lim = 1_200; // min number of learnt clauses
             // create SAT solver
             let sat = batsat::Solver::new_with(opts, cb);
             let mut s = Solver {
@@ -202,7 +203,7 @@ mod solver {
             // do we use the full model, or just what's not been examined last?
             let model = {
                 if partial {
-                    let offset = *self.trail_offset.get();
+                    let offset = *self.trail_offset;
                     let tr = a.model();
                     &tr[offset..]
                 } else if Th::has_partial_check() {
@@ -225,6 +226,11 @@ mod solver {
                 if partial {"partial"} else {"final"},
                 self.th.n_levels(), model.len(), self.th_trail.len());
 
+
+            // update which section of the trail we've checked so far, so
+            // that the theory won't see this section again in `partial_check`
+            *self.trail_offset = a.model().len();
+
             if self.th_trail.len() == 0 {
                 // nothing to do
                 trace!("no theory lits in the model, return Done");
@@ -234,10 +240,6 @@ mod solver {
             self.acts.clear(); // reset
             if partial {
                 self.th.partial_check(m, &mut self.acts, &Trail::from_slice(&self.th_trail));
-
-                // update which section of the trail we've checked so far, so
-                // that the theory won't see this section again in `final_check`
-                *self.trail_offset = a.model().len();
             } else {
                 self.th.final_check(m, &mut self.acts, &Trail::from_slice(&self.th_trail));
             }
