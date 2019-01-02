@@ -795,14 +795,14 @@ mod cc {
         type Output = Node<C::AST, C::B>;
         #[inline(always)]
         fn index(&self, id: C::AST) -> &Self::Output {
-            self.0.get(&id).unwrap()
+            self.0.get_unchecked(&id)
         }
     }
 
     impl<C:Ctx> std::ops::IndexMut<C::AST> for Nodes<C> {
         #[inline(always)]
         fn index_mut(&mut self, id: C::AST) -> &mut Self::Output {
-            self.0.get_mut(&id).unwrap()
+            self.0.get_mut_unchecked(&id)
         }
     }
 

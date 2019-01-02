@@ -143,6 +143,7 @@ mod dense_map {
         }
 
         /// Does the map contain this key?
+        #[inline(always)]
         fn contains(&self, ast: &AST) -> bool {
             let i = ast.0 as usize;
             self.mem.contains(i)
@@ -212,6 +213,18 @@ mod dense_map {
 
     impl<V : Clone> ast::DenseMap<AST, V> for DenseMap<V> {
         fn new(v: V) -> Self { DenseMap::new(v) }
+
+        #[inline(always)]
+        fn get_unchecked(&self, t: &AST) -> &V {
+            debug_assert!(self.mem.contains(t.0 as usize));
+            &self.vec[t.0 as usize]
+        }
+
+        #[inline(always)]
+        fn get_mut_unchecked(&mut self, t: &AST) -> &mut V {
+            debug_assert!(self.mem.contains(t.0 as usize));
+            &mut self.vec[t.0 as usize]
+        }
 
         fn get2(&mut self, t1: AST, t2: AST) -> (&mut V, &mut V) {
             let t1 = t1.0 as usize;

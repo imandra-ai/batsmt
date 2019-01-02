@@ -341,6 +341,12 @@ pub trait DenseMap<AST, V> : AstMap<AST, V> {
     /// It is best if `sentinel` is efficient to clone.
     fn new(sentinel: V) -> Self;
 
+    /// Access the given key. It must be present.
+    fn get_unchecked(&self, ast: &AST) -> &V;
+
+    /// Access the given key, return a mutable reference to its value. It must be present.
+    fn get_mut_unchecked(&mut self, ast: &AST) -> &mut V;
+
     /// Access two disjoint locations, mutably.
     ///
     /// Precondition: the ASTs are distinct and in the map (panics otherwise).
