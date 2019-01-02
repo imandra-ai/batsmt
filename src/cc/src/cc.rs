@@ -21,8 +21,8 @@
 // TODO(perf): sparse map for nodes (using a second dense array)
 
 use {
-    std::{ u32, collections::VecDeque, hash::Hash, fmt::Debug, },
-    batsmt_core::{ast::{self,AstMap,DenseMap,View},backtrack, ast_u32, },
+    std::{ u32, ptr, collections::VecDeque, hash::Hash, fmt::Debug, },
+    batsmt_core::{ast::{self,AstMap,DenseMap,View}, backtrack, ast_u32, },
     batsmt_pretty::{self as pp, Pretty1},
     crate::{
         types::{Ctx },
@@ -38,7 +38,6 @@ pub struct CC<C:Ctx> {
     b: Builtins<C::AST>,
     tasks: VecDeque<Task<C>>, // operations to perform
     undo: backtrack::Stack<UndoOp<C::AST>>,
-    confl: Vec<C::B>, // local for conflict
     props: PropagationSet<C::B>, // local for propagations
     expl_st: Vec<Expl<C::AST, C::B>>, // to expand explanations
     tmp_sig: Signature<C::AST>, // for computing signatures
@@ -50,9 +49,9 @@ pub struct CC<C:Ctx> {
 /// internal state, with just the core structure for nodes and parent sets
 struct CC1<C:Ctx> {
     ok: bool, // no conflict?
-    // NOTE: here we need to work on `hast` because the lack of HKT prevents
-    // us from abstracting over the notion of a DenseMap
+    alloc_parent_list: ListAlloc<C::AST>,
     nodes: Nodes<C>,
+    confl: Vec<C::B>, // local for conflict
     repr_on_undo: Vec<Repr<C::AST>>, // terms that are representatives again after backtrack
 }
 
@@ -60,7 +59,7 @@ type DMap<B> = ast_u32::DenseMap<Node<ast_u32::AST, B>>;
 
 /// Map terms into the corresponding node.
 struct Nodes<C:Ctx>{
-    map: DMap<C::B>, 
+    map: DMap<C::B>,
     find_stack: Vec<C::AST>,
 }
 
@@ -76,14 +75,25 @@ struct Nodes<C:Ctx>{
 struct Node<AST, B> where AST : Sized, B : Sized {
     id: AST,
     next: AST, // next elt in class
-    size: u32, // number of elements in class
     expl: Option<(AST, Expl<AST,B>)>, // proof forest
     as_lit: Option<B>, // if this term corresponds to a boolean literal
     root: Repr<AST>, // current representative (initially, itself)
-    parents: ParentList<AST>, // parents of the given term
+    parents: List<AST>,
 }
 
-type ParentList<AST> = SVec<AST>;
+/// A node in a singly-linked list of objects.
+#[derive(Copy,Clone)]
+struct ListC<T>(T, *mut ListC<T>);
+
+type ListAlloc<T> = backtrack::Alloc<ListC<T>>;
+
+/// A singly-linked list of T.
+#[derive(Clone)]
+struct List<T> {
+    first: *mut ListC<T>, // first node (null iff len==0)
+    last: *mut ListC<T>, // last node (null iff len==0)
+    len: u32, // number of nodes
+}
 
 /// A representative
 #[derive(Debug,Clone,Copy,Eq,PartialEq,Hash,Ord,PartialOrd)]
@@ -167,8 +177,8 @@ impl<C:Ctx> CCInterface<C> for CC<C> {
         let mut er = ExplResolve::new(self);
         er.explain_eq(m,t,u);
         er.fixpoint(m);
-        trace!("... explanation: {:?}", &self.confl[..]);
-        &self.confl[..]
+        trace!("... explanation: {:?}", &self.cc1.confl[..]);
+        &self.cc1.confl[..]
     }
 
     // TODO: fix that
@@ -185,8 +195,8 @@ impl<C:Ctx> CC<C> {
         if self.cc1.ok {
             Ok(&self.props)
         } else {
-            debug_assert!(self.confl.len() >= 1); // must have some conflict
-            Err(Conflict(&self.confl))
+            debug_assert!(self.cc1.confl.len() >= 1); // must have some conflict
+            Err(Conflict(&self.cc1.confl))
         }
     }
 
@@ -231,7 +241,6 @@ impl<C:Ctx> CC<C> {
         CC{
             b,
             tasks: VecDeque::new(),
-            confl: vec!(),
             props: PropagationSet::new(),
             undo: backtrack::Stack::new(),
             traverse: vec!(),
@@ -275,10 +284,11 @@ impl<C:Ctx> CC<C> {
                 },
                 TraverseTask::Exit => {
                     // now add itself to its children's list of parents.
-                    for u in m.view(&t).subterms() {
-                        debug_assert!(cc1.nodes.contains(u)); // postfix order
-                        let parents = cc1.nodes.parents_mut(*u);
-                        parents.push(t);
+                    for &u in m.view(&t).subterms() {
+                        debug_assert!(cc1.nodes.contains(&u)); // postfix order
+                        let ur = cc1.find(u);
+                        let parents = cc1.nodes.parents_mut(ur.0);
+                        parents.add(&mut cc1.alloc_parent_list, t);
                     }
                     // remove `t` before its children
                     undo.push_if_nonzero(UndoOp::RemoveTerm(t));
@@ -325,7 +335,7 @@ impl<C:Ctx> CC<C> {
         let (na, nb) = self.cc1.nodes.map.get2(ra.0, rb.0);
 
         // NOTE: would be nice to put `unlikely` there once it stabilizes
-        if (na.size as usize) + (nb.size as usize) > u32::MAX as usize {
+        if na.len() + nb.len() > u32::MAX as usize {
             panic!("too many terms in one class")
         }
 
@@ -346,7 +356,7 @@ impl<C:Ctx> CC<C> {
                     er.explain_eq(m, b, rb.0);
                     er.fixpoint(m);
                 }
-                trace!("inconsistent set of explanations: {:?}", &self.confl);
+                trace!("inconsistent set of explanations: {:?}", &self.cc1.confl);
                 return;
             } else {
                 // merge into true/false
@@ -354,7 +364,7 @@ impl<C:Ctx> CC<C> {
             }
         } else if ra.0 == self.b.true_ || ra.0 == self.b.false_ {
             // `ra` must be repr
-        } else if na.size < nb.size {
+        } else if na.len() < nb.len() {
             // swap a and b
             std::mem::swap(&mut ra, &mut rb);
         }
@@ -385,8 +395,8 @@ impl<C:Ctx> CC<C> {
         {
             let CC {cc1, tasks, ..} = self;
             cc1.nodes.iter_parents(rb, |p_b| {
-                if needs_signature(m, &p_b) {
-                    tasks.push_back(Task::UpdateSig(p_b));
+                if needs_signature(m, p_b) {
+                    tasks.push_back(Task::UpdateSig(*p_b));
                 }
             });
         }
@@ -408,6 +418,7 @@ impl<C:Ctx> CC<C> {
                         props.propagate(lit);
                     } else {
                         debug_assert_eq!(ra.0, bs.false_);
+                        let lit = !lit;
                         trace!("propagate literal {:?} (for false≡{})", lit, ast::pp(m,&n.id));
                         props.propagate(lit);
                     }
@@ -430,16 +441,11 @@ impl<C:Ctx> CC<C> {
             let next_a = na.next;
             let next_b = nb.next;
 
-            na.size += nb.size;
             na.next = next_b;
             nb.next = next_a;
-        }
 
-        // check that the merge went well
-        if cfg!(debug) {
-            self.cc1.nodes.iter_class(ra, |n| {
-                debug_assert_eq!(n.root, ra, "root of cls({:?})", ast::pp(m,&ra.0))
-            });
+            // also merge parent lists
+            na.parents.append(&mut nb.parents)
         }
     }
 
@@ -485,6 +491,8 @@ impl<C:Ctx> CC1<C> {
         CC1 {
             nodes: Nodes::new(map),
             ok: true,
+            alloc_parent_list: backtrack::Alloc::new(),
+            confl: vec!(),
             repr_on_undo: vec!(),
         }
     }
@@ -502,29 +510,23 @@ impl<C:Ctx> CC1<C> {
             UndoOp::SetOk => {
                 debug_assert!(! self.ok);
                 self.ok = true;
+                self.confl.clear();
             },
             UndoOp::Unmerge {root: a, old_root: b} => {
                 assert_ne!(a.0,b.0); // crucial invariant
 
-                let (na, nb) = self.nodes.map.get2(a.0, b.0);
-
-                debug_assert_eq!(na.root, a, "root: {}, repr: {}",
-                                 ast::pp(m,&na.root.0), ast::pp(m,&a.0));
-                debug_assert_eq!(nb.root, a);
-
-                debug_assert!(na.size > nb.size);
-                na.size -= nb.size;
-
                 // inverse switcharoo for the class linked lists
                 {
+                    let (na, nb) = self.nodes.map.get2(a.0, b.0);
+
                     let next_a = na.next;
                     let next_b = nb.next;
 
                     na.next = next_b;
                     nb.next = next_a;
+
+                    na.parents.un_append(&mut nb.parents);
                 }
-                drop(na);
-                drop(nb);
 
                 // will restore root pointer of all members of `b.class` after we finish
                 // backtracking
@@ -551,10 +553,11 @@ impl<C:Ctx> CC1<C> {
                 self.nodes.remove(&t);
 
                 // remove from children's parents' lists
-                for u in m.view(&t).subterms() {
-                    let parents = self.nodes.parents_mut(*u);
-                    debug_assert_eq!(parents.last().cloned(), Some(t));
-                    parents.pop();
+                for &u in m.view(&t).subterms() {
+                    let ur = self.find(u);
+                    let parents = self.nodes.parents_mut(ur.0);
+                    let _t = parents.remove();
+                    debug_assert_eq!(_t, t);
                 }
             }
             UndoOp::UnmapLit(t) => {
@@ -686,17 +689,15 @@ impl<C:Ctx> backtrack::Backtrackable<C> for CC<C> {
 /// Temporary structure to resolve explanations.
 struct ExplResolve<'a,C:Ctx> {
     cc1: &'a mut CC1<C>,
-    confl: &'a mut Vec<C::B>, // conflict clause to produce
     expl_st: &'a mut Vec<Expl<C::AST, C::B>>,
 }
 
 impl<'a,C:Ctx> ExplResolve<'a,C> {
     /// Create the temporary structure.
     fn new(cc: &'a mut CC<C>, ) -> Self {
-        let CC { cc1, confl, expl_st, ..} = cc;
-        confl.clear();
+        let CC { cc1, expl_st, ..} = cc;
         expl_st.clear();
-        ExplResolve { confl, cc1, expl_st }
+        ExplResolve { cc1, expl_st }
     }
 
     fn add_expl(&mut self, e: Expl<C::AST, C::B>) {
@@ -709,7 +710,7 @@ impl<'a,C:Ctx> ExplResolve<'a,C> {
             trace!("expand-expl: {}", e.pp(m));
             match e {
                 Expl::Lit(lit) => {
-                    self.confl.push(lit);
+                    self.cc1.confl.push(lit);
                 },
                 Expl::AreEq(a,b) => {
                     self.explain_eq(m, a, b);
@@ -731,9 +732,9 @@ impl<'a,C:Ctx> ExplResolve<'a,C> {
             }
         }
         // cleanup conflict
-        self.confl.sort_unstable();
-        self.confl.dedup();
-        self.confl
+        self.cc1.confl.sort_unstable();
+        self.cc1.confl.dedup();
+        &self.cc1.confl
     }
 
     /// Explain why `a` and `b` were merged, pushing some sub-tasks
@@ -818,7 +819,7 @@ impl<C:Ctx> Nodes<C> {
     }
 
     #[inline(always)]
-    fn parents_mut(&mut self, t: C::AST) -> &mut ParentList<C::AST> { &mut self[t].parents }
+    fn parents_mut(&mut self, t: C::AST) -> &mut List<C::AST> { &mut self[t].parents }
 
     #[inline(always)]
     fn remove(&mut self, t: &C::AST) {
@@ -840,14 +841,11 @@ impl<C:Ctx> Nodes<C> {
     }
 
     /// Call `f` on all parents of all nodes of the class of `r`
-    fn iter_parents<F>(&mut self, r: Repr<C::AST>, mut f: F)
-        where F: FnMut(C::AST)
+    #[inline]
+    fn iter_parents<F>(&mut self, r: Repr<C::AST>, f: F)
+        where F: FnMut(&C::AST)
     {
-        self.iter_class(r, |n| {
-            for &p_b in n.parents.iter() {
-                f(p_b)
-            }
-        });
+        self[r.0].parents.for_each(f);
     }
 }
 
@@ -896,18 +894,23 @@ mod node {
     impl<B> Node<ast_u32::AST, B> {
         /// Create a new node
         pub fn new(id: ast_u32::AST) -> Self {
-            let parents = ParentList::new();
+            let parents = List::new();
             Node {
-                id, next: id, expl: None, size: 1,
+                id, next: id, expl: None,
                 root: Repr(id), as_lit: None, parents,
             }
         }
 
         /// The default `node` object
+        #[inline(always)]
         pub(super) fn sentinel() -> Self {
             Node::new(ast_u32::AST::SENTINEL)
         }
 
+        #[inline(always)]
+        pub fn len(&self) -> usize {
+            self.parents.len()
+        }
     }
 }
 
@@ -947,6 +950,123 @@ mod expl {
                     ctx.str("remove-term(").pp(&ast::pp(m,t)).str(")");
                 }
             }
+        }
+    }
+}
+
+impl<T:Clone> List<T> {
+    /// New list
+    #[inline]
+    fn new() -> Self {
+        List { first: ptr::null_mut(), last: ptr::null_mut(), len: 0 }
+    }
+
+    /// Length of the list.
+    #[inline(always)]
+    fn len(&self) -> usize { self.len as usize }
+
+    /// Iterate over the elements of the list.
+    #[inline(always)]
+    fn for_each<F>(&self, f: F) where F: FnMut(&T) {
+        if self.len > 0 {
+            self.for_each_loop(f)
+        }
+    }
+
+    fn for_each_loop<F>(&self, mut f: F) where F: FnMut(&T) {
+        debug_assert!(self.len() > 0);
+
+        let mut ptr = self.first;
+        loop {
+            let cell = unsafe{ &* ptr };
+            f(&cell.0);
+
+            ptr = cell.1;
+            if ptr.is_null() {
+                break // done
+            }
+        }
+    }
+
+    /// Add `x` into the list.
+    fn add(&mut self, alloc: &mut ListAlloc<T>, x: T) {
+        // allocate new node
+        let ptr = alloc.alloc(ListC(x, self.first));
+        self.first = ptr;
+
+        if self.len == 0 {
+            // also last element
+            self.last = ptr
+        }
+        self.len += 1;
+    }
+
+    /// Remove last added element and return it.
+    fn remove(&mut self) -> T {
+        debug_assert!(self.len > 0);
+        debug_assert!(! self.first.is_null());
+
+        self.len -= 1;
+        let ListC(x,next) = unsafe{ self.first.read() };
+
+        if self.len == 0 {
+            debug_assert!(next.is_null());
+            // list is now empty
+            self.first = ptr::null_mut();
+            self.last = ptr::null_mut();
+        } else {
+            // remove first element
+            self.first = next;
+        }
+        x
+    }
+
+    /// Append `other` into `self`.
+    ///
+    /// This modifies `self`, but also possibly `other`.
+    fn append(&mut self, other: &mut List<T>) {
+        if other.first.is_null() {
+            // nothing to do
+            debug_assert_eq!(other.len, 0);
+        } else if self.first.is_null() {
+            // copy other into self
+            debug_assert_eq!(self.len, 0);
+            self.first = other.first;
+            self.last = other.last;
+            self.len = other.len;
+        } else {
+            // make `self.last` point to `other.first`;
+            // make `other.first` point to the former `self.last`
+            self.len += other.len;
+
+            let n = unsafe{ &mut * self.last };
+            debug_assert!(n.1.is_null());
+            n.1 = other.first;
+
+            other.first = self.last; // useful when undoing.
+            self.last = other.last;
+        }
+    }
+
+    /// Assuming `self.append(other)` was done earlier, this reverts the operation.
+    fn un_append(&mut self, other: &mut List<T>) {
+        if other.len == 0 {
+            return;
+        } else if self.len == other.len {
+            // self used to be empty
+            self.first = ptr::null_mut();
+            self.last = ptr::null_mut();
+            self.len = 0;
+        } else {
+            // `other.first` points to the old `self.last`, so swap them back
+            debug_assert!(self.len > other.len);
+            self.len -= other.len;
+
+            let last = other.first;
+            self.last = last;
+            let n = unsafe{ &mut * last };
+            other.first = n.1;
+            n.1 = ptr::null_mut();
         }
     }
 }
