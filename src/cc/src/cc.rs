@@ -10,6 +10,16 @@
 // - rule for `not` (t == true |- not t == false, and conversely)
 // - rule for `ite` (t == true |- not t == false, and conversely)
 
+// TODO(perf): unchecked access in densemap
+// TODO(perf): faster union find
+//     - lazy path compression in `find`, without undo action
+//     - when undoing, keep a set of terms that are root again.
+//       After undoing the whole stack, for each such term, traverse their class only once.
+//       (better than undoing each merge separately)
+// TODO(perf): backtrackable allocator for signatures
+
+// TODO(perf): sparse map for nodes (using a second dense array)
+
 use {
     std::{ u32, collections::VecDeque, hash::Hash, fmt::Debug, },
     batsmt_core::{ast::{self,AstMap,DenseMap,View},backtrack, ast_u32, },
@@ -19,25 +29,6 @@ use {
         PropagationSet,Conflict,Builtins,CCInterface,SVec,
     },
 };
-
-/* FIXME: need associated type constructor?
-/// Public interface
-pub trait Ctx: ThCtx + Sized {
-    type Map : AstMap<Self::AST, Node<Self>> + Sized;
-
-    fn new_map(sentinel: Node<Self>) -> Self::Map;
-}
-
-// auto impl
-impl<C> Ctx for C
-    where C: ThCtx, C::M : ast::WithDenseMap<C::AST, Node<C>>
-{
-    type Map = <C::M as ast::WithDenseMap<C::AST, Node<C>>>::DenseMap;
-    fn new_map(sentinel: Node<C>) -> Self::Map {
-        <C::M as ast::WithDenseMap<C::AST, Node<C>>>::new_dense_map()
-    }
-}
-*/
 
 /// The congruence closure.
 pub struct CC<C:Ctx> {
