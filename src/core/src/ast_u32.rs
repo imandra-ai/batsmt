@@ -226,13 +226,14 @@ mod dense_map {
             &mut self.vec[t.0 as usize]
         }
 
+        #[inline]
         fn get2(&mut self, t1: AST, t2: AST) -> (&mut V, &mut V) {
             let t1 = t1.0 as usize;
             let t2 = t2.0 as usize;
 
-            if t1 == t2 || !self.mem.contains(t1) || !self.mem.contains(t2) {
-                panic!("dense_map.get2: invalid access");
-            }
+            assert_ne!(t1, t2, "get2: aliased access");
+            debug_assert!(self.mem.contains(t1) && self.mem.contains(t2),
+                          "get2: doesn't contain one of the keys");
 
             let ref1 = (&mut self.vec[t1]) as *mut V;
             let ref2 = (&mut self.vec[t2]) as *mut V;
