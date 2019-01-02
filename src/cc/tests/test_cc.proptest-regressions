@@ -6,3 +6,6 @@
 # everyone who runs the test benefits from these saved cases.
 xs 719704829 2274256562 4032051777 3388503857 # shrinks to ref tup = (astgen, [AssertNeq(AST(7), AST(7)), PushLevel, PushLevel, PopLevels(1), FinalCheck])
 xs 185213926 175564579 3510326437 1427448471 # shrinks to ref tup = (astgen, [PushLevel, PushLevel, PushLevel, PushLevel, PushLevel, PushLevel, PushLevel, AssertNeq(AST(6), AST(6)), AssertNeq(AST(6), AST(5)), PushLevel])
+xs 3441306365 264541192 423753224 3555562555 # shrinks to ref tup = (astgen, [PushLevel, AssertNeq(AST(6), AST(15872)), AssertEq(AST(8), AST(338)), FinalCheck, PopLevels(1)])
+xs 2966805909 1600208879 14906988 571949072 # shrinks to ref tup = (astgen, [AssertNeq(AST(5), AST(5)), PushLevel, PushLevel, PushLevel, PushLevel, PushLevel, PushLevel, FinalCheck])
+xs 2778239217 4248740877 433086675 4108080546 # shrinks to ref tup = (astgen, [AssertEq(AST(9), AST(6)), PushLevel, PushLevel, PushLevel, AssertNeq(AST(6), AST(103)), AssertEq(AST(37362), AST(6)), PushLevel, PopLevels(2)])
