@@ -60,7 +60,8 @@ struct Nodes<C:Ctx>{
 /// It contains:
 /// - the term itself
 /// - a direct pointer to the class' root
-/// - double-linked list pointers for iterating the class, along with the class' size
+/// - pointer to next element of the class (circular list)
+/// - a linked list of parent terms
 /// - the proof forest pointer
 /// - an optional mapping from the term to a boolean literal (for propagation)
 #[derive(Clone)]

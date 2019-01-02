@@ -13,7 +13,6 @@ use {
     crate::{*, types::*},
 };
 
-#[derive(Clone)]
 enum Op<C:Ctx> {
     Merge(C::AST, C::AST, C::B),
 }
@@ -367,6 +366,24 @@ impl<C:Ctx> fmt::Debug for Op<C> {
     fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Op::Merge(a,b,lit) => write!(out, "merge({:?},{:?},{:?})",a,b,lit),
+        }
+    }
+}
+
+impl<C:Ctx> Clone for Op<C> {
+    fn clone(&self) -> Self {
+        match self {
+            Op::Merge(a,b,c) => Op::Merge(*a,*b,*c),
+        }
+    }
+}
+
+impl<C:Ctx> Clone for NaiveCC<C> {
+    fn clone(&self) -> Self {
+        let NaiveCC {b, props, confl, ops} = self;
+        NaiveCC {
+            b: b.clone(), props: props.clone(),
+            confl: confl.clone(), ops: ops.clone()
         }
     }
 }

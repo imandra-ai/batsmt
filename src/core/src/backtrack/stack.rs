@@ -9,6 +9,7 @@ use std::u32;
 ///
 /// It can also be used as a normal stack of objects where `push` is undone
 /// upon backtracking.
+#[derive(Clone)]
 pub struct Stack<T> {
     st: Vec<T>,
     levels: Vec<u32>, // we assume the stack never goes over u32
