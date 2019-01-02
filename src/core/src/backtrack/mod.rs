@@ -2,6 +2,7 @@
 pub mod cell;
 pub mod stack;
 pub mod hashmap;
+pub mod vec;
 
 /// A backtrackable component.
 ///
@@ -22,6 +23,7 @@ pub use {
     self::cell::Ref,
     self::stack::Stack,
     self::hashmap::HashMap,
+    self::vec::BVec,
 };
 
 /// Trivial backtracking implementation, which doesn't do anything.
