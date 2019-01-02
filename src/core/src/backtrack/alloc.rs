@@ -13,7 +13,6 @@ use {
 pub struct Alloc<T:Clone> {
     slices: Vec<Slice<T>>, // slices
     offset: Ref<Offset>, // slice+offset in slice
-    sentinel: T,
 }
 
 // size of a slice
@@ -35,23 +34,22 @@ impl<T:Clone> Alloc<T> {
     ///
     /// This allocator provides methods to allocate objects and arrays of
     /// type `T` with a stack discipline.
-    pub fn new(sentinel: T) -> Self {
+    pub fn new() -> Self {
         Alloc{
             slices: vec!(),
             offset: Ref::new(Offset::new()),
-            sentinel,
         }
     }
 
     /// Allocate one single object.
     ///
     /// The object reference will be invalidated upon backtracking.
-    pub fn alloc(&mut self) -> *mut T {
+    pub fn alloc(&mut self, x: T) -> *mut T {
         let off = &mut self.offset;
 
         if off.sl_i == self.slices.len() {
             // allocate new slice
-            let sl = Slice::new(self.sentinel.clone(), SLICE_SIZE);
+            let sl = Slice::new(x.clone(), SLICE_SIZE);
             self.slices.push(sl);
         }
         debug_assert!(off.sl_i < self.slices.len());
@@ -59,7 +57,11 @@ impl<T:Clone> Alloc<T> {
         // current slice
         let sl = &mut self.slices[off.sl_i];
         debug_assert!(off.i < sl.len());
-        let ptr = &mut sl.sl[off.i] as *mut T;
+        let ptr = {
+            let n = &mut sl.sl[off.i];
+            *n = x; // assign slot to `x` // assign slot to `x`
+            n as *mut T
+        };
         off.i += 1;
 
         if off.i == sl.len() {
@@ -88,10 +90,11 @@ impl<T:Clone> Alloc<T> {
     }
 }
 
-impl<T:Default+Clone> Default for Alloc<T> {
-    /// New allocator with a default `T` as a sentinel.
-    fn default() -> Self {
-        Self::new(Default::default())
+impl<T:Default+Clone> Alloc<T> {
+    /// Allocate a new slot, filling it with the `default` value.
+    #[inline(always)]
+    pub fn alloc_default(&mut self) -> *mut T {
+        self.alloc(Default::default())
     }
 }
 
