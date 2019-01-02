@@ -30,6 +30,9 @@ use {
     },
 };
 
+#[repr(u8)]
+enum TraverseTask { Enter, Exit }
+
 /// The congruence closure.
 pub struct CC<C:Ctx> {
     b: Builtins<C::AST>,
@@ -37,9 +40,9 @@ pub struct CC<C:Ctx> {
     undo: backtrack::Stack<UndoOp<C::AST>>,
     confl: Vec<C::B>, // local for conflict
     props: PropagationSet<C::B>, // local for propagations
-    traverse: ast::iter_suffix::State<C::AST, ast::HashSet<C::AST>>, // for recursive traversal
     expl_st: Vec<Expl<C::AST, C::B>>, // to expand explanations
     tmp_sig: Signature<C::AST>, // for computing signatures
+    traverse: Vec<(TraverseTask,C::AST)>, // for adding terms
     sig_tbl: backtrack::HashMap<Signature<C::AST>, C::AST>,
     cc1: CC1<C>,
 }
@@ -204,6 +207,7 @@ impl<C:Ctx> CC<C> {
 }
 
 /// Does `t` need to be entered in the signature table?
+#[inline]
 fn needs_signature<C:Ctx>(m: &C, t: &C::AST) -> bool {
     match m.view(t) {
         View::Const(_) => false,
@@ -226,7 +230,7 @@ impl<C:Ctx> CC<C> {
             confl: vec!(),
             props: PropagationSet::new(),
             undo: backtrack::Stack::new(),
-            traverse: ast::iter_suffix::State::new(),
+            traverse: vec!(),
             tmp_sig: Signature::new(),
             sig_tbl: backtrack::HashMap::new(),
             expl_st: vec!(),
@@ -250,34 +254,37 @@ impl<C:Ctx> CC<C> {
 
         let CC {traverse, undo, cc1, tasks, ..} = self;
         // traverse in postfix order (shared context: `cc1`)
-        traverse.iter(
-            m, &t0, cc1,
-            |_,cc1,t| {
-                let enter = !cc1.nodes.contains(t);
-                if enter {
-                    // avoid entering twice
-                    cc1.nodes.insert(*t, Node::new(*t));
-                }
-                enter
-            },
-            |m,cc1,t| {
-                debug_assert!(cc1.nodes.contains(t));
-                trace!("add-term {}", ast::pp(m,t));
-                cc1.nodes.insert(*t, Node::new(*t));
 
-                // now add itself to its children's list of parents.
-                for u in m.view(t).subterms() {
-                    debug_assert!(cc1.nodes.contains(u)); // postfix order
-                    let parents = cc1.nodes.parents_mut(*u);
-                    parents.push(*t);
-                }
-                // remove `t` before its children
-                undo.push_if_nonzero(UndoOp::RemoveTerm(*t));
+        traverse.push((TraverseTask::Enter, t0));
+        while let Some((task,t)) = traverse.pop() {
+            match task {
+                TraverseTask::Enter => {
+                    if ! cc1.nodes.contains(&t) {
+                        cc1.nodes.insert(t, Node::new(t));
 
-                if needs_signature(m, t) {
-                    tasks.push_back(Task::UpdateSig(*t));
-                }
-            });
+                        traverse.push((TraverseTask::Exit, t));
+                        // add subterms
+                        for u in m.view(&t).subterms() {
+                            traverse.push((TraverseTask::Enter,*u))
+                        }
+                    }
+                },
+                TraverseTask::Exit => {
+                    // now add itself to its children's list of parents.
+                    for u in m.view(&t).subterms() {
+                        debug_assert!(cc1.nodes.contains(u)); // postfix order
+                        let parents = cc1.nodes.parents_mut(*u);
+                        parents.push(t);
+                    }
+                    // remove `t` before its children
+                    undo.push_if_nonzero(UndoOp::RemoveTerm(t));
+
+                    if needs_signature(m, &t) {
+                        tasks.push_back(Task::UpdateSig(t));
+                    }
+                },
+            }
+        }
     }
 
     fn map_to_lit(&mut self, m: &C, t: C::AST, lit: C::B) {
