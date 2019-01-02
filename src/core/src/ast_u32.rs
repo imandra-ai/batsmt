@@ -118,6 +118,7 @@ pub struct DenseMap<V : Clone> {
 mod dense_map {
     use super::*;
     use ::bit_set::BitSet;
+    use self::ast::DenseMap as AstDenseMap;
 
     impl<V : Clone> ast::AstMap<AST, V> for DenseMap<V> {
         /// Access the given key
@@ -211,7 +212,7 @@ mod dense_map {
         }
     }
 
-    impl<V : Clone> ast::DenseMap<AST, V> for DenseMap<V> {
+    impl<V : Clone> AstDenseMap<AST, V> for DenseMap<V> {
         fn new(v: V) -> Self { DenseMap::new(v) }
 
         #[inline(always)]
@@ -239,6 +240,21 @@ mod dense_map {
             let ref2 = (&mut self.vec[t2]) as *mut V;
             // this is correct because t1 != t2, so the pointers are disjoint.
             unsafe { (&mut* ref1, &mut *ref2) }
+        }
+    }
+
+    impl<V: Clone> std::ops::Index<AST> for DenseMap<V> {
+        type Output = V;
+        #[inline(always)]
+        fn index(&self, id: AST) -> &Self::Output {
+            self.get_unchecked(&id)
+        }
+    }
+
+    impl<V: Clone> std::ops::IndexMut<AST> for DenseMap<V> {
+        #[inline(always)]
+        fn index_mut(&mut self, id: AST) -> &mut Self::Output {
+            self.get_mut_unchecked(&id)
         }
     }
 }
