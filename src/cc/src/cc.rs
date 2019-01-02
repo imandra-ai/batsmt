@@ -401,7 +401,6 @@ impl<C:Ctx> CC<C> {
             trace!("{}.class: look for propagations", ast::pp(m,&rb.0));
             cc1.nodes.iter_class(rb, |n| {
                 trace!("... {}.iter_class: check {}", ast::pp(m,&rb.0), ast::pp(m,&n.id));
-                debug_assert_eq!(n.root, rb);
                 n.root = ra; // while we're there, we can merge eagerly.
 
                 // if a=true/false, and `n` has a literal, propagate the literal
@@ -651,20 +650,24 @@ impl<C:Ctx> backtrack::Backtrackable<C> for CC<C> {
         self.run_tasks(m); // be sure to commit changes before saving
         self.undo.push_level();
         self.sig_tbl.push_level();
+        self.cc1.alloc_parent_list.push_level();
     }
 
     fn pop_levels(&mut self, m: &mut C, n: usize) {
         debug_assert_eq!(self.undo.n_levels(), self.sig_tbl.n_levels());
-        let cc1 = &mut self.cc1;
-        self.undo.pop_levels(n, |op| cc1.perform_undo(m, op));
-        self.sig_tbl.pop_levels(n);
+        debug_assert_eq!(self.undo.n_levels(), self.cc1.alloc_parent_list.n_levels());
         if n > 0 {
+            let cc1 = &mut self.cc1;
+            self.undo.pop_levels(n, |op| cc1.perform_undo(m, op));
+            self.sig_tbl.pop_levels(n);
+            cc1.alloc_parent_list.pop_levels(n);
             trace!("pop-levels {}", n);
             self.props.clear();
             self.tasks.clear(); // changes are invalidated
         }
     }
 
+    #[inline(always)]
     fn n_levels(&self) -> usize { self.undo.n_levels() }
 }
 
