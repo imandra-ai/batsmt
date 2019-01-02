@@ -174,6 +174,7 @@ mod prop_cc {
         PopLevels(usize),
         AssertEq(AST,AST),
         AssertNeq(AST,AST),
+        PartialCheck,
         FinalCheck,
     }
 
@@ -187,12 +188,14 @@ mod prop_cc {
         })
     }
 
+    // FIXME: first, allocate a vec of terms, then use `prop_flat_map` to sample terms
     fn cc_op(m: &AstGen) -> BoxedStrategy<Op> {
         prop_oneof![
             2 => Just(Op::PushLevel),
             1 => (1..5usize).prop_map(Op::PopLevels),
-            6 => gen_term2(m).prop_map(|(t1,t2)| Op::AssertEq(t1,t2)),
+            7 => gen_term2(m).prop_map(|(t1,t2)| Op::AssertEq(t1,t2)),
             3 => gen_term2(m).prop_map(|(t1,t2)| Op::AssertNeq(t1,t2)),
+            1 => Just(Op::PartialCheck),
             1 => Just(Op::FinalCheck),
         ].boxed()
     }
@@ -270,6 +273,7 @@ mod prop_cc {
                         let ctx = &mut m.0.borrow_mut().m;
                         ncc.merge(ctx, eqn, b.false_, lit);
                     },
+                    Op::PartialCheck => (), // do nothing
                     Op::FinalCheck => {
                         // here be the main check
                         let mut mr = m.0.borrow_mut();
@@ -343,6 +347,25 @@ mod prop_cc {
                         cc.merge(ctx,eqn, b.false_, lit);
                         ncc.merge(ctx,eqn, b.false_, lit);
                     },
+                    Op::PartialCheck => {
+                        let mut mr = m.0.borrow_mut();
+                        let ctx = &mut mr.m;
+                        let r1 = cc.partial_check(ctx);
+
+                        match r1 {
+                            Ok(props) => {
+                                // check each propagation using a copy of `ncc`
+                                for lit in props.iter() {
+                                    check_propagation(m, ncc.clone(), lit);
+                                }
+                            },
+                            Err(confl) => {
+                                // check conflict, using a fresh new naiveCC
+                                drop(mr); // release refcell
+                                check_confl(m, &confl.0);
+                            }
+                        }
+                    },
                     Op::FinalCheck => {
                         // here be the main check
                         let mut mr = m.0.borrow_mut();
@@ -355,35 +378,74 @@ mod prop_cc {
                         let sat2 = r2.is_ok();
                         prop_assert_eq!(sat1, sat2, "cc.sat: {}, ncc.sat: {}", sat1, sat2);
 
-                        // check conflict, too, using a fresh new naiveCC
-                        if let Err(confl) = r1 {
-                            drop(mr); // release refcell
-                            let mut ncc2 = NaiveCC0::new(b.clone());
-
-                            // conflict clause is a tautology,
-                            // so assert its negation and check for "unsat"
-                            for &lit in confl.0.iter() {
-                                let TermLit(sign,t1,t2) = lit;
-                                if sign {
-                                    let ctx = &mut m.0.borrow_mut().m;
-                                    ncc2.merge(ctx,t1,t2,lit)
-                                } else {
-                                    let eqn = m.app(b.eq, &[t1,t2]); // `t1=t2`
-                                    let ctx = &mut m.0.borrow_mut().m;
-                                    ncc2.merge(ctx,eqn, b.false_, lit)
+                        match r1 {
+                            Ok(props) => {
+                                // check each propagation using a copy of `ncc`
+                                for lit in props.iter() {
+                                    check_propagation(m, ncc.clone(), lit);
                                 }
+                            },
+                            Err(confl) => {
+                                // check conflict, using a fresh new naiveCC
+                                drop(mr); // release refcell
+                                check_confl(m, &confl.0);
                             }
-
-                            let ctx = &mut m.0.borrow_mut().m;
-                            let r = ncc2.final_check(ctx);
-                            //prop_assert!(r.is_err(), "conflict should be unsat");
-                            prop_assert!(r.is_err(), "conflict {:?} should be unsat, but naive cc returned {:?}",
-                                         pp::debug(pp::sexp_iter(confl.0.iter().map(|x| x.pp(ctx)))),
-                                         if r.is_ok() {"sat"} else {"unsat"});
                         }
                     }
                 };
             }
         }
+    }
+
+    // check that the propagation is valid (ie. ¬b is inconsistent with current trail)
+    fn check_propagation(m: &AstGen, mut ncc: NaiveCC0, lit: TermLit) {
+        let b = m.b();
+
+        // `trail => lit` is a tautology, so assert `¬lit` and check for "unsat"
+        {
+            let TermLit(sign,t1,t2) = ! lit;
+            if sign {
+                let ctx = &mut m.0.borrow_mut().m;
+                ncc.merge(ctx,t1,t2,lit)
+            } else {
+                let eqn = m.app(b.eq, &[t1,t2]); // `t1=t2`
+                let ctx = &mut m.0.borrow_mut().m;
+                ncc.merge(ctx,eqn, b.false_, lit)
+            }
+        }
+
+        let ctx = &mut m.0.borrow_mut().m;
+        let r = ncc.final_check(ctx);
+        //prop_assert!(r.is_err(), "¬lit where lit was propagated should be unsat");
+        assert!(
+            r.is_err(), "prop {:?} should be a tauto, but naive cc returned {:?}",
+            pp::debug(lit.pp(ctx)), if r.is_ok() {"sat"} else {"unsat"});
+    }
+
+    // check that the conflict is valid
+    fn check_confl(m: &AstGen, confl: &[TermLit]) {
+        let b = m.b();
+        let mut ncc2 = NaiveCC0::new(b.clone());
+
+        // conflict clause is a tautology,
+        for &lit in confl.iter() {
+            let TermLit(sign,t1,t2) = lit;
+            if sign {
+                let ctx = &mut m.0.borrow_mut().m;
+                ncc2.merge(ctx,t1,t2,lit)
+            } else {
+                let eqn = m.app(b.eq, &[t1,t2]); // `t1=t2`
+                let ctx = &mut m.0.borrow_mut().m;
+                ncc2.merge(ctx,eqn, b.false_, lit)
+            }
+        }
+
+        let ctx = &mut m.0.borrow_mut().m;
+        let r = ncc2.final_check(ctx);
+        //assert!(r.is_err(), "conflict should be unsat");
+        assert!(
+            r.is_err(), "conflict {:?} should be unsat, but naive cc returned {:?}",
+            pp::debug(pp::sexp_iter(confl.iter().map(|x| x.pp(ctx)))),
+            if r.is_ok() {"sat"} else {"unsat"});
     }
 }
