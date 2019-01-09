@@ -116,6 +116,7 @@ mod solver {
         pub fn lit_map_mut(&mut self) -> &mut SatLitMap { &mut self.s0.c.lit_map }
 
         /// Add a boolean clause.
+        #[inline]
         pub fn add_bool_clause_reuse(&mut self, c: &mut Vec<sat::Lit>) {
             trace!("solver.add-bool-clause {:?}", c);
             self.s0.sat.add_clause_reuse(c);

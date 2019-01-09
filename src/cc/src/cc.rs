@@ -132,7 +132,8 @@ struct Signature<AST:Eq+Hash+Debug>(SVec<Repr<AST>>);
 
 // implement main interface
 impl<C:Ctx> CCInterface<C> for CC<C> {
-    fn merge(&mut self, _m: &C, t1: C::AST, t2: C::AST, lit: C::B) {
+    fn merge(&mut self, m: &C, t1: C::AST, t2: C::AST, lit: C::B) {
+        debug!("merge {} and {} (expl {:?})", ast::pp(m,&t1), ast::pp(m,&t2), lit);
         let expl = Expl::Lit(lit);
         self.tasks.push_back(Task::AddTerm(t1));
         self.tasks.push_back(Task::AddTerm(t2));
@@ -151,16 +152,16 @@ impl<C:Ctx> CCInterface<C> for CC<C> {
         self.tasks.push_back(Task::MapToLit(t, lit));
     }
 
+    #[inline]
     fn final_check<'a>(&'a mut self, m: &C)
         -> Result<&'a PropagationSet<C::B>, Conflict<'a, C::B>>
     {
-        debug!("cc.final-check()");
         self.check_internal(m)
     }
 
+    #[inline]
     fn partial_check<'a>(&'a mut self, m: &C)
         -> Result<&'a PropagationSet<C::B>, Conflict<'a, C::B>> {
-        debug!("cc.partial-check()");
         self.check_internal(m)
     }
 
@@ -174,8 +175,7 @@ impl<C:Ctx> CCInterface<C> for CC<C> {
         &self.cc1.confl[..]
     }
 
-    // TODO: fix that
-    fn has_partial_check() -> bool { false }
+    fn has_partial_check() -> bool { true }
 
     fn impl_descr() -> &'static str { "fast congruence closure"}
 }

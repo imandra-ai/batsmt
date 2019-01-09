@@ -44,7 +44,7 @@ impl<T:Clone> Ref<T> {
 
         let idx = self.st.len() - n;
         std::mem::swap(&mut self.cur, &mut self.st[idx]); // restore
-        self.st.resize(idx, self.cur.clone());
+        self.st.truncate(idx);
     }
 
     /// Number of levels.

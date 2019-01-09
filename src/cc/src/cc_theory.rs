@@ -114,6 +114,7 @@ impl<C:Ctx> theory::Theory<C> for CCTheory<C> {
             return; // doesn't handle partial checks
         }
         debug!("cc.partial-check");
+        trace!("trail: {:?}", trail.as_slice());
 
         // TODO: shouldn't this shortcut be done in main solver already?
         let do_sth = self.add_trail_to_cc(ctx, trail);

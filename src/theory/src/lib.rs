@@ -447,6 +447,7 @@ impl<C:Ctx> Actions<C> {
     /// Reset actions
     pub fn clear(&mut self) {
         self.cs.clear();
+        self.propagations.clear();
         self.conflict = false;
         self.costly_conflict = false;
     }
@@ -472,8 +473,10 @@ impl<C:Ctx> Actions<C> {
     /// Propagate the given boolean literal.
     #[inline(always)]
     pub fn propagate(&mut self, p: C::B) {
-        self.propagations.push(p);
-        self.stats.propagations += 1;
+        if ! self.conflict {
+            self.propagations.push(p);
+            self.stats.propagations += 1;
+        }
     }
 
     /// Instantiate the given lemma
