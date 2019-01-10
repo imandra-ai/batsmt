@@ -9,8 +9,6 @@
 //! enumerator such as a BDD.
 //! For this reason, it abstracts over the type of boolean literals (`BoolLit`).
 
-#[macro_use] extern crate log;
-
 use {
     std::{ops::{Deref,Not}, hash::Hash, fmt},
     batsmt_core::{ backtrack::Backtrackable, ast, ast_u32, gc, },
@@ -66,7 +64,7 @@ pub enum TheoryLit<C:Ctx> {
     B(C::B),
 }
 
-/// A temporary theory-level clause, such as a lemma or theory conflict
+/// A temporary theory-level clause, such as a lemma or theory conflict.
 ///
 /// It is composed of a set of `TheoryLit`.
 #[derive(Clone,Copy)]
@@ -74,7 +72,7 @@ pub struct TheoryClauseRef<'a,C:Ctx> {
     lits: &'a [TheoryLit<C>],
 }
 
-/// A set of theory clauses, with efficient append
+/// A set of theory clauses, with efficient append.
 #[derive(Clone)]
 pub struct TheoryClauseSet<C:Ctx> {
     lits: Vec<TheoryLit<C>>, // clause lits
@@ -86,31 +84,36 @@ pub struct TheoryClauseSet<C:Ctx> {
 /// A theory can use these actions to signal its caller that some
 /// literals can be propagated, or that the current set of literals
 /// is T-inconsistent.
-pub struct Actions<C:Ctx> {
-    cs: TheoryClauseSet<C>,
-    propagations: Vec<C::B>,
-    conflict: bool,
-    costly_conflict: bool,
-    stats: Stats,
-}
+pub trait Actions<C:Ctx> {
+    /// Add a lemma-on-demand.
+    ///
+    /// NOTE: this is not well supported yet.
+    fn add_lemma(&mut self, c: &[C::B]);
 
-/// State of the `Actions` structure.
-///
-/// After passing some assumptions to a theory, using
-/// `theory::partial_check` or `theory::final_check`, the actions
-/// structure will contain
-#[derive(Clone,Debug)]
-pub enum ActState<'a, C:Ctx> {
-    /// propagations and new lemmas
-    Props {
-        props: &'a [C::B],
-        lemmas: &'a TheoryClauseSet<C>
-    },
-    /// conflict reached
-    Conflict {
-        c: TheoryClauseRef<'a, C>,
-        costly: bool,
-    }
+    /// Propagate the given boolean literal.
+    ///
+    /// The boolean solver is allowed to ask for an explanation
+    /// using `explain_propagation` later.
+    fn propagate(&mut self, p: C::B);
+
+    /// Add a conflit clause.
+    ///
+    /// This clause should be a valid theory lemma (a valid tautology) that
+    /// is false in the current model.
+    ///
+    /// ## Params
+    /// - `costly`, if true, ask that the boolean solver keeps this conflict
+    ///     instead of throwing it away immediately after conflict analysis.
+    ///     The solver might still garbage collect it later.
+    fn raise_conflict(&mut self, c: &[C::B], costly: bool);
+
+    /// Map a theory literal into a proper boolean literal.
+    fn map_lit(&mut self, m: &C, lit: TheoryLit<C>) -> C::B;
+
+    /// Check if a conflict was found yet.
+    ///
+    /// This is useful to interrupt work early.
+    fn has_conflict(&self) -> bool;
 }
 
 /// The theory subset of the (partial) model picked by the SAT solver.
@@ -131,7 +134,7 @@ pub trait Theory<C:Ctx> : Backtrackable<C>{
     /// - `trail` contains triples `(term, bool, literal)` where `literal`
     ///     is `term <=> bool` and the current model contains `literal`
     /// - `acts` is a set of actions available to the theory.
-    fn final_check(&mut self, _ctx: &mut C, acts: &mut Actions<C>, trail: &Trail<C>);
+    fn final_check<A:Actions<C>>(&mut self, _ctx: &mut C, acts: &mut A, trail: &Trail<C>);
 
     /// Check a partial model.
     ///
@@ -141,7 +144,7 @@ pub trait Theory<C:Ctx> : Backtrackable<C>{
     /// this function is allowed to not fully check the model, and `trail`
     /// only contains _new_ literals (since the last call to `partial_check`).
     /// It will be called more often than `final_check` so it should be efficient.
-    fn partial_check(&mut self, _ctx: &mut C, _acts: &mut Actions<C>, _trail: &Trail<C>) {}
+    fn partial_check<A:Actions<C>>(&mut self, _ctx: &mut C, _acts: &mut A, _trail: &Trail<C>) {}
 
     /// Does the theory handle partial checks?
     ///
@@ -174,9 +177,9 @@ pub trait Theory<C:Ctx> : Backtrackable<C>{
 /// Statistics.
 #[derive(Clone,Debug)]
 pub struct Stats {
-    conflicts: u64,
-    propagations: u64,
-    lemmas: u64,
+    pub conflicts: u64,
+    pub propagations: u64,
+    pub lemmas: u64,
 }
 
 mod stats {
@@ -438,119 +441,6 @@ impl<'a, C:Ctx> Trail<'a, C> {
     /// Number of literals assigned.
     #[inline(always)]
     pub fn len(&self) -> usize { self.0.len() }
-}
-
-impl<C:Ctx> Actions<C> {
-    /// Create a new set of actions
-    pub fn new() -> Self {
-        Self {
-            conflict: false,
-            costly_conflict: false,
-            stats: Stats::new(),
-            propagations: vec!(),
-            cs: TheoryClauseSet::new(),
-        }
-    }
-
-    /// Reset actions
-    pub fn clear(&mut self) {
-        self.cs.clear();
-        self.propagations.clear();
-        self.conflict = false;
-        self.costly_conflict = false;
-    }
-
-    /// Return current state.
-    ///
-    /// Either a set of propagated clauses, or a single conflict clause
-    pub fn state<'a>(&'a self) -> ActState<'a, C> {
-        if self.conflict {
-            let c = self.cs.iter().next().expect("conflict but no conflict clause");
-            ActState::Conflict {c, costly: self.costly_conflict}
-        } else {
-            ActState::Props{
-                props: &self.propagations,
-                lemmas: &self.cs
-            }
-        }
-    }
-
-    pub fn is_sat(&self) -> bool { ! self.conflict }
-    pub fn is_unsat(&self) -> bool { self.conflict }
-
-    /// Propagate the given boolean literal.
-    #[inline(always)]
-    pub fn propagate(&mut self, p: C::B) {
-        if ! self.conflict {
-            self.propagations.push(p);
-            self.stats.propagations += 1;
-        }
-    }
-
-    /// Instantiate the given lemma
-    pub fn add_lemma(&mut self, c: &[TheoryLit<C>]) {
-        if ! self.conflict {
-            trace!("theory.add_lemma {:?}", c);
-            self.cs.push(c.into());
-            self.stats.lemmas += 1;
-        }
-    }
-
-    pub fn add_bool_lemma(&mut self, c: &[C::B]) {
-        if ! self.conflict {
-            trace!("theory.add-lemma {:?}", c);
-            let i = c.iter().map(|a| TheoryLit::from_blit(*a));
-            self.cs.push_iter(i);
-            self.stats.lemmas += 1;
-        }
-    }
-
-    pub fn add_lemma_iter<U, I>(&mut self, i: I)
-        where I: Iterator<Item=U>, U: Into<TheoryLit<C>>
-    {
-        if ! self.conflict {
-            trace!("theory.add-lemma-iter");
-            self.cs.push_iter(i);
-            self.stats.lemmas += 1;
-        }
-    }
-
-    /// Add a conflit clause.
-    ///
-    /// This clause should be a valid theory lemma (a valid tautology) that
-    /// is false in the current model.
-    pub fn raise_conflict(&mut self, c: &[TheoryLit<C>], costly: bool) {
-        // only create a conflict if there's not one already
-        if ! self.conflict {
-            trace!("theory.raise-conflict {:?} (costly: {})", c, costly);
-            self.conflict = true;
-            self.costly_conflict = costly;
-            self.propagations.clear();
-            self.cs.clear(); // remove propagated lemmas
-            self.cs.push(c);
-            self.stats.conflicts += 1;
-        }
-    }
-
-    /// Add a conflict clause.
-    ///
-    /// The clause is built from an iterator over theory lits
-    pub fn raise_conflict_iter<U, I>(&mut self, i: I, costly: bool)
-        where I: Iterator<Item=U>, U: Into<TheoryLit<C>>
-    {
-        if ! self.conflict {
-            trace!("theory.raise-conflict-iter (costly: {})", costly);
-            self.conflict = true;
-            self.costly_conflict = costly;
-            self.propagations.clear();
-            self.cs.clear(); // remove propagated lemmas
-            self.cs.push_iter(i);
-            self.stats.conflicts += 1;
-        }
-    }
-
-    /// Access statistics.
-    pub fn stats(&self) -> &Stats { &self.stats }
 }
 
 /// A basic implementation of boolean literals using signed integers

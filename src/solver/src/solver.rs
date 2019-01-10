@@ -2,19 +2,13 @@
 //! Main SMT solver
 
 use {
-    std::{fmt, },
-    batsat::{
-        self as sat, lbool,
-    },
+    std::{fmt, marker::PhantomData, },
+    batsat::{ self as sat, lbool, SolverInterface, },
     batsmt_theory::{ self as theory,
-        Ctx, Theory, TheoryLit, TheoryClauseRef, Trail,
-    },
-    batsmt_core::{
-        backtrack, ast_u32::{AST, },
-    },
-    crate::{
-        lit_map::{SatLitMap},
-    },
+        Ctx, Theory, TheoryLit, TheoryClauseRef, Trail, LitMap},
+    batsmt_pretty::{self as pp, Pretty1},
+    batsmt_core::{ backtrack, ast_u32::{AST, }, },
+    crate::{ lit_map::{SatLitMap}, },
 };
 
 pub use {
@@ -33,14 +27,24 @@ struct BClauseBuild<'a,F:FnMut() -> sat::Var> {
 struct CoreTheory<C: Ctx<B=BLit>, Th: Theory<C>> {
     th: Th,
     lit_map: SatLitMap,
-    acts: theory::Actions<C>,
     lits: Vec<sat::Lit>,
     trail_offset: backtrack::Ref<usize>, // current offset in the trail for the theory
     th_trail: Vec<(AST,bool,BLit)>, // temporary for trail slices
+    th_stats: theory::Stats,
+    _m: PhantomData<C>,
 }
 
 /// Temporary bundle of theory + context, to be passed to the SAT solver.
 struct TheoryTmp<'a, C: Ctx<B=BLit>, Th: Theory<C>>(&'a mut CoreTheory<C,Th>, &'a mut C);
+
+/// Temporary structure passed to the theory.
+struct TmpAct<'a, A: sat::TheoryArgument> {
+    ok: bool,
+    stats: &'a mut theory::Stats,
+    acts: &'a mut A,
+    lits: &'a mut Vec<sat::Lit>,
+    lit_map: &'a mut SatLitMap,
+}
 
 /// A SMT solver.
 ///
@@ -63,6 +67,28 @@ pub enum Res {
     UNSAT,
 }
 
+/// Map theory literals into boolean literals.
+fn get_or_create_lit_<C, F>(
+    ctx: &C,
+    lit_map: &mut SatLitMap,
+    l: TheoryLit<C>,
+    f: F
+) -> BLit
+    where C: Ctx<B=BLit>, F: FnOnce() -> BLit
+{
+    match l {
+        TheoryLit::B(l) => l,
+        TheoryLit::BLazy(t,sign) => {
+            let bidir = false;
+            lit_map.get_term_or_else(ctx, &t, sign, bidir, f)
+        },
+        TheoryLit::T(t,sign) => {
+            let bidir = true; // theory lit
+            lit_map.get_term_or_else(ctx, &t, sign, bidir, f)
+        },
+    }
+}
+
 mod solver {
     use {
         super::*, batsat::SolverInterface,
@@ -80,8 +106,9 @@ mod solver {
             let c = CoreTheory {
                 lits: Vec::new(),
                 th,
+                _m: PhantomData,
+                th_stats: theory::Stats::new(),
                 lit_map,
-                acts: theory::Actions::new(),
                 trail_offset: backtrack::Ref::new(0),
                 th_trail: Vec::new(),
             };
@@ -105,6 +132,9 @@ mod solver {
         fn init_logic(&mut self) {
             trace!("solver.init-logic")
         }
+
+        /// Access statistics.
+        pub fn th_stats(&self) -> &theory::Stats { &self.s0.c.th_stats }
 
         /// Access literal map of this solver.
         #[inline(always)]
@@ -144,9 +174,6 @@ mod solver {
             for (t,blit) in core.lit_map.iter_theory_lits() {
                 core.th.add_literal(m,t,blit);
             }
-            let acts = &mut core.acts;
-            core.th.final_check(m, acts, &Trail::empty());
-            assert!(acts.is_sat()); // no conflict by just addings lits
         }
 
         /// Solve the set of constraints added with `add_clause` until now
@@ -163,7 +190,7 @@ mod solver {
                 sat.solve_limited_th(&mut th, assumptions)
             };
             info!("{}, sat.conflicts {}, sat.decisions {}, sat.propagations {}, {}",
-                  self.s0.c.acts.stats(),
+                  self.s0.c.th_stats,
                   sat.num_conflicts(), sat.num_decisions(),
                   sat.num_propagations(), sat.cb().stats());
             // convert result
@@ -237,41 +264,12 @@ mod solver {
                 return; // trivial
             }
 
-            self.acts.clear(); // reset
+            let CoreTheory{lits, th, lit_map, th_trail, th_stats: stats, ..} = self;
+            let mut acts = TmpAct{ok: true, acts: a, lits, lit_map, stats};
             if partial {
-                self.th.partial_check(m, &mut self.acts, &Trail::from_slice(&self.th_trail));
+                th.partial_check(m, &mut acts, &Trail::from_slice(&th_trail));
             } else {
-                self.th.final_check(m, &mut self.acts, &Trail::from_slice(&self.th_trail));
-            }
-
-            // TODO: do this on the fly in checks above, do not store intermediate state
-            // used to convert theory clauses into boolean clauses
-            match self.acts.state() {
-                theory::ActState::Props {lemmas, props} => {
-                    for &p in props.iter() {
-                        trace!("propagate literal {:?}", p);
-                        a.propagate(p.0)
-                    }
-                    for c in lemmas.iter() {
-                        trace!("add theory lemma {}", pp::display(&c.pp(m)));
-                        let mut cbuild =
-                            BClauseBuild::new(&mut self.lits, &mut self.lit_map,
-                                              || { a.mk_new_lit().var() });
-                        cbuild.convert_th_clause(m, c);
-                        a.add_theory_lemma(&mut self.lits);
-                    }
-                    trace!("check: done");
-                },
-                theory::ActState::Conflict{c, costly} => {
-                    trace!("build conflict clause {} (costly {})", pp::display(c.pp(m)), costly);
-                    let mut cbuild =
-                        BClauseBuild::new(&mut self.lits, &mut self.lit_map,
-                                          || { a.mk_new_lit().var() });
-                    cbuild.convert_th_clause(m, c);
-                    drop(cbuild); // to borrow `a`
-                    a.raise_conflict(&mut self.lits, costly);
-                    trace!("check: conflict {:?}", self.lits);
-                }
+                th.final_check(m, &mut acts, &Trail::from_slice(&th_trail));
             }
         }
     }
@@ -287,7 +285,6 @@ mod solver {
         fn pop_levels(&mut self, n: usize) {
             self.0.trail_offset.pop_levels(n);
             self.0.th.pop_levels(self.1, n);
-            self.0.acts.clear();
         }
         fn n_levels(&self) -> usize {
             let n = self.0.th.n_levels();
@@ -296,7 +293,7 @@ mod solver {
         }
 
         // main check
-        fn final_check<A>(&mut self, a: &mut A) 
+        fn final_check<A>(&mut self, a: &mut A)
             where A: sat::theory::TheoryArgument
         {
             self.0.check(self.1, false, a)
@@ -328,26 +325,13 @@ mod solver {
         where C: Ctx<B=BLit>, Th: Theory<C>
     {
         // find or make a literal for `t`
+        #[inline]
         fn get_or_create_lit(&mut self, ctx: &C, l: TheoryLit<C>) -> BLit {
-            match l {
-                TheoryLit::B(l) => l,
-                TheoryLit::BLazy(t,sign) => {
-                    let sat = &mut self.sat;
-                    let bidir = false;
-                    let newlit = || {
-                        BLit::from_var(sat.new_var_default(), true)
-                    };
-                    self.c.lit_map.get_term_or_else(ctx, &t, sign, bidir, newlit)
-                },
-                TheoryLit::T(t,sign) => {
-                    let sat = &mut self.sat;
-                    let bidir = true; // theory lit
-                    let newlit = || {
-                        BLit::from_var(sat.new_var_default(), true)
-                    };
-                    self.c.lit_map.get_term_or_else(ctx, &t, sign, bidir, newlit)
-                },
-            }
+            let sat = &mut self.sat;
+            let f = || {
+                BLit::from_var(sat.new_var_default(), true)
+            };
+            get_or_create_lit_(ctx, &mut self.c.lit_map, l, f)
         }
     }
 
@@ -361,28 +345,20 @@ mod solver {
             where C: Ctx<B=BLit>
         {
             let f = &mut self.f;
-            match lit {
-                TheoryLit::B(l) => l,
-                TheoryLit::BLazy(t,sign) => {
-                    let bidir = false;
-                    self.lit_map.get_term_or_else(ctx, &t, sign, bidir, || BLit::from_var(f(), true))
-                },
-                TheoryLit::T(t,sign) => {
-                    let bidir = true; // theory lit
-                    self.lit_map.get_term_or_else(ctx, &t, sign, bidir, || BLit::from_var(f(), true))
-                },
-            }
+            let new_lit = || BLit::from_var(f(), true);
+            get_or_create_lit_(ctx, self.lit_map, lit, new_lit)
         }
 
         /// Convert the given theory clause into an array of boolean literals.
         ///
         /// The result is stored in `lits`
-        fn convert_th_clause<C>(&mut self, m: &C, c: TheoryClauseRef<C>)
-            where C: Ctx<B=BLit>
+        fn convert_th_clause<C, Clause>(&mut self, m: &C, c: Clause)
+            where C: Ctx<B=BLit>,
+                  Clause: std::ops::Deref<Target=[TheoryLit<C>]>
         {
             self.lits.clear();
             for lit in c.iter() {
-                let lit = self.convert_th_lit(m, lit);
+                let lit = self.convert_th_lit(m, *lit);
                 self.lits.push(lit.0);
             }
         }
@@ -396,9 +372,7 @@ mod solver {
 
     impl Cb {
         fn new() -> Self {
-            Cb {
-                n_restarts: 0, n_gc_calls: 0,
-            }
+            Cb { n_restarts: 0, n_gc_calls: 0, }
         }
 
         fn stats<'a>(&'a self) -> impl fmt::Display+'a { self }
@@ -417,4 +391,54 @@ mod solver {
         #[inline(always)]
         fn on_gc(&mut self, _: usize, _: usize) { self.n_gc_calls += 1; }
     }
+}
+
+impl<'a,C,A> theory::Actions<C> for TmpAct<'a,A>
+    where C: Ctx<B=BLit>,
+          A: sat::TheoryArgument
+{
+    #[inline(always)]
+    fn propagate(&mut self, b: C::B) {
+        if self.ok {
+            self.stats.propagations += 1;
+            self.acts.propagate(b.0)
+        }
+    }
+
+    #[inline]
+    fn add_lemma(&mut self, c: &[C::B]) {
+        if self.ok {
+            self.stats.lemmas += 1;
+            self.lits.clear();
+            self.lits.reserve(c.len());
+            // convert `BLit -> sat::Lit`
+            for BLit(a) in c.iter() { self.lits.push(*a) }
+            self.acts.add_theory_lemma(&self.lits)
+        }
+    }
+
+    #[inline]
+    fn raise_conflict(&mut self, c: &[BLit], costly: bool) {
+        if self.ok {
+            trace!("theory.raise-conflict {:?} (costly: {})", c, costly);
+            self.ok = false;
+            self.stats.conflicts += 1;
+
+            self.lits.clear();
+            self.lits.reserve(c.len());
+            // convert `BLit -> sat::Lit`
+            for BLit(a) in c.iter() { self.lits.push(*a) }
+
+            self.acts.raise_conflict(&self.lits, costly);
+        }
+    }
+
+    #[inline]
+    fn map_lit(&mut self, m: &C, lit: TheoryLit<C>) -> BLit {
+        let TmpAct{acts,lit_map,..} = self;
+        let f = || BLit(acts.mk_new_lit());
+        get_or_create_lit_(m, lit_map, lit, f)
+    }
+
+    fn has_conflict(&self) -> bool { !self.ok }
 }

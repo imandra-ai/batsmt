@@ -19,8 +19,7 @@ use {
     batsmt_theory::BoolLit,
     batsmt_pretty::{self as pp, Pretty1},
     crate::{
-        types::{Ctx },
-        PropagationSet,Conflict,Builtins,CCInterface,SVec,
+        types::{Ctx, Actions }, Builtins, CCInterface, SVec,
     },
 };
 
@@ -33,7 +32,7 @@ pub struct CC<C:Ctx> {
     pending: Vec<C::AST>, // update signatures
     combine: Vec<(C::AST,C::AST,Expl<C::AST,C::B>)>, // merge
     undo: backtrack::Stack<UndoOp<C::AST>>,
-    props: PropagationSet<C::B>, // local for propagations
+    props: Vec<C::B>, // local for propagations
     expl_st: Vec<Expl<C::AST, C::B>>, // to expand explanations
     tmp_sig: Signature<C::AST>, // for computing signatures
     traverse: Vec<(TraverseTask,C::AST)>, // for adding terms
@@ -159,16 +158,17 @@ impl<C:Ctx> CCInterface<C> for CC<C> {
     }
 
     #[inline]
-    fn final_check<'a>(&'a mut self, m: &C)
-        -> Result<&'a PropagationSet<C::B>, Conflict<'a, C::B>>
+    fn final_check<A>(&mut self, m: &C, acts: &mut A)
+        where A: Actions<C>
     {
-        self.check_internal(m)
+        self.check_internal(m, acts)
     }
 
     #[inline]
-    fn partial_check<'a>(&'a mut self, m: &C)
-        -> Result<&'a PropagationSet<C::B>, Conflict<'a, C::B>> {
-        self.check_internal(m)
+    fn partial_check<A>(&mut self, m: &C, acts: &mut A)
+        where A: Actions<C>
+    {
+        self.check_internal(m, acts)
     }
 
     fn explain_prop(&mut self, m: &C, p: C::B) -> &[C::B] {
@@ -196,16 +196,22 @@ impl<C:Ctx> CCInterface<C> for CC<C> {
 
 impl<C:Ctx> CC<C> {
     // main `check` function, performs the fixpoint
-    fn check_internal(&mut self, m: &C) -> Result<&PropagationSet<C::B>, Conflict<C::B>> {
+    fn check_internal<A>(&mut self, m: &C, acts: &mut A)
+        where A: Actions<C>
+    {
         debug!("check-internal (pending: {}, combine: {})",
             self.pending.len(), self.combine.len());
         self.fixpoint(m);
         if self.cc1.ok {
-            Ok(&self.props)
+            for &p in &self.props {
+                acts.propagate(p)
+            }
         } else {
             debug_assert!(self.cc1.confl.len() >= 1); // must have some conflict
-            Err(Conflict(&self.cc1.confl))
+            let costly = true;
+            acts.raise_conflict(&self.cc1.confl, costly)
         }
+        self.props.clear();
     }
 
     /// Main CC algorithm.
@@ -254,7 +260,7 @@ impl<C:Ctx> CC<C> {
             b,
             pending: vec!(),
             combine: vec!(),
-            props: PropagationSet::new(),
+            props: vec!(),
             undo: backtrack::Stack::new(),
             traverse: vec!(),
             tmp_sig: Signature::new(),
@@ -327,7 +333,7 @@ struct MergePhase<'a,C:Ctx> {
     pending: &'a mut Vec<C::AST>,
     expl_st: &'a mut Vec<Expl<C::AST, C::B>>,
     undo: &'a mut backtrack::Stack<UndoOp<C::AST>>,
-    props: &'a mut PropagationSet<C::B>, // local for propagations
+    props: &'a mut Vec<C::B>, // local for propagations
     lit_expl: &'a mut backtrack::HashMap<C::B, LitExpl<C::AST,C::B>>, // pre-explanations for propagations
 }
 
@@ -379,6 +385,8 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
                     er.explain_eq(m, b, rb.0);
                     er.fixpoint(m);
                 }
+                // negation
+                for lit in self.cc1.confl.iter_mut() { *lit = ! *lit }
                 trace!("inconsistent set of explanations: {:?}", &self.cc1.confl);
                 return;
             } else {
@@ -444,13 +452,13 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
                         if ra.0 == bs.true_ {
                             trace!("propagate literal {:?} (for true≡{}, {:?})",
                                 lit, ast::pp(m,&n.id), &expl);
-                            props.propagate(lit);
+                            props.push(lit);
                         } else {
                             debug_assert_eq!(ra.0, bs.false_);
                             lit = !lit;
                             trace!("propagate literal {:?} (for false≡{}, {:?})",
                                 lit, ast::pp(m,&n.id), &expl);
-                            props.propagate(lit);
+                            props.push(lit);
                         }
                         lit_expl.insert(lit, e);
                     }

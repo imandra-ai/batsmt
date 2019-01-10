@@ -4,7 +4,7 @@
 use {
     batsmt_core::{ast::{self, }, backtrack, },
     batsmt_theory::{self as theory},
-    crate::{Builtins, CCInterface, PropagationSet, Conflict, Ctx},
+    crate::{Builtins, CCInterface, Ctx},
 };
 
 #[allow(unused_imports)]
@@ -75,41 +75,22 @@ impl<C:Ctx> backtrack::Backtrackable<C> for CCTheory<C> {
     fn n_levels(&self) -> usize { self.cc.n_levels() }
 }
 
-
-fn act_propagate<C:Ctx>(acts: &mut theory::Actions<C>, props: &PropagationSet<C::B>) {
-    if props.len() > 0 {
-        for p in props.iter() {
-            acts.propagate(p)
-        }
-    }
-}
-
-fn act_conflict<C:Ctx>(acts: &mut theory::Actions<C>, c: Conflict<C::B>) {
-    let costly = true;
-    // need to add negation
-    let iter = c.0.iter().map(|b| !theory::TheoryLit::B(*b));
-    acts.raise_conflict_iter(iter, costly)
-}
-
 impl<C:Ctx> theory::Theory<C> for CCTheory<C> {
-    fn final_check(
+    fn final_check<A>(
         &mut self, ctx: &mut C,
-        acts: &mut theory::Actions<C>, trail: &theory::Trail<C>
-    ) {
+        acts: &mut A, trail: &theory::Trail<C>
+    ) where A: theory::Actions<C>
+    {
         debug!("cc.final-check");
         self.add_trail_to_cc(ctx, trail);
-        let res = self.cc.final_check(ctx);
-
-        match res {
-            Ok(props) => act_propagate(acts, props),
-            Err(cls) => act_conflict(acts, cls),
-        };
+        self.cc.final_check(ctx, acts);
     }
 
-    fn partial_check(
+    fn partial_check<A>(
         &mut self, ctx: &mut C,
-        acts: &mut theory::Actions<C>, trail: &theory::Trail<C>
-    ) {
+        acts: &mut A, trail: &theory::Trail<C>
+    ) where A: theory::Actions<C>
+    {
         if ! CCI::<C>::has_partial_check() {
             return; // doesn't handle partial checks
         }
@@ -121,22 +102,20 @@ impl<C:Ctx> theory::Theory<C> for CCTheory<C> {
         if !do_sth {
             return; // nothing new
         }
-        let res = self.cc.partial_check(ctx);
-
-        match res {
-            Ok(props) => act_propagate(acts, props),
-            Err(cls) => act_conflict(acts, cls),
-        };
+        self.cc.partial_check(ctx, acts);
     }
 
+    #[inline(always)]
     fn has_partial_check() -> bool {
         CCI::<C>::has_partial_check()
     }
 
+    #[inline]
     fn add_literal(&mut self, ctx: &C, t: C::AST, lit: C::B) {
         self.cc.add_literal(ctx, t,lit);
     }
 
+    #[inline]
     fn explain_propagation(&mut self, m: &C, _t: C::AST, _sign: bool, p: C::B) -> &[C::B] {
         // what does `t=sign` correspond to?
         trace!("explain-prop {} sign={} (lit {:?})", ast::pp(m,&_t), _sign, p);

@@ -25,12 +25,10 @@ pub trait CC<C: Ctx> : backtrack::Backtrackable<C> {
     /// Returns `Ok(props)` if the result is safisfiable with propagations `props`,
     /// and `Err(c)` if `c` is a valid conflict clause that contradicts
     /// the current trail.
-    fn final_check<'a>(&'a mut self, m: &C) -> Result<&'a PropagationSet<C::B>, Conflict<'a, C::B>>;
+    fn final_check<A>(&mut self, m: &C, a: &mut A) where A: Actions<C>;
 
     /// Same as `final_check`, but never called if `has_partial_check() == false`.
-    fn partial_check<'a>(&'a mut self, _m: &C) -> Result<&'a PropagationSet<C::B>, Conflict<'a, C::B>> {
-        unimplemented!("partial check")  // FIXME: instead, return empty propagations
-    }
+    fn partial_check<A>(&mut self, _m: &C, _a: &mut A) where A: Actions<C> {}
 
     /// Can it handle partial checks?
     fn has_partial_check() -> bool { false }

@@ -13,10 +13,11 @@ pub mod intf;
 
 pub use {
     crate::{
-        types::{ Builtins, PropagationSet, SVec, Conflict, Ctx, },
+        types::{ Builtins, SVec, Ctx, },
         intf::{CC as CCInterface},
         cc::CC,
         naive_cc::NaiveCC,
         cc_theory::{CCTheory},
     },
 };
+

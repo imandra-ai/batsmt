@@ -20,7 +20,6 @@ enum Op<C:Ctx> {
 /// A naive implementation of the congruence closure
 pub struct NaiveCC<C:Ctx>{
     b: Builtins<C::AST>, // builtin terms
-    props: PropagationSet<C::B>,
     confl: Vec<C::B>,
     ops: backtrack::Stack<Op<C>>, // just keep the set of operations to do here
 }
@@ -34,7 +33,6 @@ struct Repr<AST>(AST);
 // It returns highly-non-minimal conflicts, that basically involve all
 // literals used so far.
 struct Solve<'a, C:Ctx> {
-    _props: &'a mut PropagationSet<C::B>,
     m: &'a C,
     confl: &'a mut Vec<C::B>,
     all_lits: FxHashSet<C::B>, // all literals used in ops so far
@@ -67,23 +65,18 @@ impl<C:Ctx> CCInterface<C> for NaiveCC<C> {
         unimplemented!("no handling of `distinct` in naiveCC")
     }
 
-    fn final_check<'a>(&'a mut self, m: &C)
-        -> Result<&'a PropagationSet<C::B>, Conflict<'a, C::B>>
+    fn final_check<A>(&mut self, m: &C, acts: &mut A)
+        where A: Actions<C>
     {
         debug!("cc.check()");
         // create local solver
-        self.props.clear();
         self.confl.clear();
-        let mut solve =
-            Solve::new(m, self.b.clone(),
-                &mut self.props,
-                &mut self.confl);
+        let mut solve = Solve::new(m, self.b.clone(), &mut self.confl);
         // here is where we do all the work
         let ok = solve.check_internal(self.ops.as_slice());
-        if ok {
-            Ok(&self.props)
-        } else {
-            Err(Conflict(&self.confl))
+        if !ok {
+            let costly = true;
+            acts.raise_conflict(&self.confl, costly);
         }
     }
 
@@ -101,7 +94,6 @@ impl<C:Ctx> NaiveCC<C> {
     pub fn new(b: Builtins<C::AST>) -> Self {
         NaiveCC {
             b,
-            props: PropagationSet::new(),
             confl: vec!(),
             ops: backtrack::Stack::new(),
         }
@@ -119,13 +111,13 @@ impl<C:Ctx> backtrack::Backtrackable<C> for NaiveCC<C> {
 
 // main algorithm
 impl<'a, C:Ctx> Solve<'a, C> {
-    fn new(m: &'a C, b: Builtins<C::AST>,
-           props: &'a mut PropagationSet<C::B>,
-           confl: &'a mut Vec<C::B>) -> Self
+    fn new(
+        m: &'a C, b: Builtins<C::AST>,
+        confl: &'a mut Vec<C::B>,
+    ) -> Self
     {
         let mut s = Solve {
             m, b: b.clone(),
-            _props: props,
             confl,
             root: FxHashMap::default(),
             parents: FxHashMap::default(),
@@ -380,10 +372,9 @@ impl<C:Ctx> Clone for Op<C> {
 
 impl<C:Ctx> Clone for NaiveCC<C> {
     fn clone(&self) -> Self {
-        let NaiveCC {b, props, confl, ops} = self;
+        let NaiveCC {b, confl, ops} = self;
         NaiveCC {
-            b: b.clone(), props: props.clone(),
-            confl: confl.clone(), ops: ops.clone()
+            b: b.clone(), confl: confl.clone(), ops: ops.clone()
         }
     }
 }

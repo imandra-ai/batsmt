@@ -103,7 +103,6 @@ version = "0.1.0"
 dependencies = [
  "batsmt-core 0.1.0",
  "batsmt-pretty 0.1.0",
- "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
