@@ -13,7 +13,6 @@ use {
     crate::{*, types::*},
 };
 
-#[derive(Clone)]
 enum Op<C:Ctx> {
     Merge(C::AST, C::AST, C::B),
 }
@@ -92,7 +91,7 @@ impl<C:Ctx> CCInterface<C> for NaiveCC<C> {
 
     fn impl_descr() -> &'static str { "naive congruence closure"}
 
-    fn explain_merge(&mut self, _m: &C, _t: C::AST, _u: C::AST) -> &[C::B] {
+    fn explain_prop(&mut self, _m: &C, _p: C::B) -> &[C::B] {
         unreachable!() // never propagated anything
     }
 }
@@ -226,6 +225,7 @@ impl<'a, C:Ctx> Solve<'a, C> {
                         self.add_term(u);
                         self.parents.get_mut(&self.find(u)).unwrap().push(t);
                     }
+                    self.update_term(t);
                 },
                 View::Const(_) => (),
             };
@@ -366,6 +366,24 @@ impl<C:Ctx> fmt::Debug for Op<C> {
     fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Op::Merge(a,b,lit) => write!(out, "merge({:?},{:?},{:?})",a,b,lit),
+        }
+    }
+}
+
+impl<C:Ctx> Clone for Op<C> {
+    fn clone(&self) -> Self {
+        match self {
+            Op::Merge(a,b,c) => Op::Merge(*a,*b,*c),
+        }
+    }
+}
+
+impl<C:Ctx> Clone for NaiveCC<C> {
+    fn clone(&self) -> Self {
+        let NaiveCC {b, props, confl, ops} = self;
+        NaiveCC {
+            b: b.clone(), props: props.clone(),
+            confl: confl.clone(), ops: ops.clone()
         }
     }
 }

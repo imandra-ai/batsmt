@@ -4,8 +4,7 @@
 use {
     std::{fmt, },
     batsat::{
-        self as sat,lbool,
-        theory::CheckRes,
+        self as sat, lbool,
     },
     batsmt_theory::{ self as theory,
         Ctx, Theory, TheoryLit, TheoryClauseRef, Trail,
@@ -81,7 +80,7 @@ mod solver {
             let c = CoreTheory {
                 lits: Vec::new(),
                 th,
-                lit_map, 
+                lit_map,
                 acts: theory::Actions::new(),
                 trail_offset: backtrack::Ref::new(0),
                 th_trail: Vec::new(),
@@ -91,6 +90,7 @@ mod solver {
             opts.luby_restart = false;
             opts.restart_first = 1000;
             opts.restart_inc = 15.;
+            opts.min_learnts_lim = 1_200; // min number of learnt clauses
             // create SAT solver
             let sat = batsat::Solver::new_with(opts, cb);
             let mut s = Solver {
@@ -115,6 +115,7 @@ mod solver {
         pub fn lit_map_mut(&mut self) -> &mut SatLitMap { &mut self.s0.c.lit_map }
 
         /// Add a boolean clause.
+        #[inline]
         pub fn add_bool_clause_reuse(&mut self, c: &mut Vec<sat::Lit>) {
             trace!("solver.add-bool-clause {:?}", c);
             self.s0.sat.add_clause_reuse(c);
@@ -189,20 +190,20 @@ mod solver {
         }
 
         // internal checking
-        fn check<A>(&mut self, m: &mut C, partial: bool, a: &mut A) -> CheckRes<A::Conflict>
-            where A: batsat::theory::TheoryArgument
+        fn check<A>(&mut self, m: &mut C, partial: bool, a: &mut A)
+            where A: sat::theory::TheoryArgument
         {
             // no need to parse the trail or do anything, if the theory doesn't support partial
             // checks
             if partial && ! Th::has_partial_check() {
-                return CheckRes::Done;
+                return;
             }
 
             // obtain theory literals from `a`.
             // do we use the full model, or just what's not been examined last?
             let model = {
                 if partial {
-                    let offset = *self.trail_offset.get();
+                    let offset = *self.trail_offset;
                     let tr = a.model();
                     &tr[offset..]
                 } else if Th::has_partial_check() {
@@ -225,23 +226,25 @@ mod solver {
                 if partial {"partial"} else {"final"},
                 self.th.n_levels(), model.len(), self.th_trail.len());
 
-            if self.th_trail.len() == 0 {
+
+            // update which section of the trail we've checked so far, so
+            // that the theory won't see this section again in `partial_check`
+            *self.trail_offset = a.model().len();
+
+            if partial && self.th_trail.len() == 0 {
                 // nothing to do
-                trace!("no theory lits in the model, return Done");
-                return CheckRes::Done; // trivial
+                trace!("no theory lits in the model, nothing to do");
+                return; // trivial
             }
 
             self.acts.clear(); // reset
             if partial {
                 self.th.partial_check(m, &mut self.acts, &Trail::from_slice(&self.th_trail));
-
-                // update which section of the trail we've checked so far, so
-                // that the theory won't see this section again in `final_check`
-                *self.trail_offset = a.model().len();
             } else {
                 self.th.final_check(m, &mut self.acts, &Trail::from_slice(&self.th_trail));
             }
 
+            // TODO: do this on the fly in checks above, do not store intermediate state
             // used to convert theory clauses into boolean clauses
             match self.acts.state() {
                 theory::ActState::Props {lemmas, props} => {
@@ -258,7 +261,6 @@ mod solver {
                         a.add_theory_lemma(&mut self.lits);
                     }
                     trace!("check: done");
-                    CheckRes::Done
                 },
                 theory::ActState::Conflict{c, costly} => {
                     trace!("build conflict clause {} (costly {})", pp::display(c.pp(m)), costly);
@@ -267,9 +269,8 @@ mod solver {
                                           || { a.mk_new_lit().var() });
                     cbuild.convert_th_clause(m, c);
                     drop(cbuild); // to borrow `a`
-                    let confl = a.mk_conflict(&mut self.lits, costly);
-                    trace!("check: conflict");
-                    CheckRes::Conflict(confl)
+                    a.raise_conflict(&mut self.lits, costly);
+                    trace!("check: conflict {:?}", self.lits);
                 }
             }
         }
@@ -286,6 +287,7 @@ mod solver {
         fn pop_levels(&mut self, n: usize) {
             self.0.trail_offset.pop_levels(n);
             self.0.th.pop_levels(self.1, n);
+            self.0.acts.clear();
         }
         fn n_levels(&self) -> usize {
             let n = self.0.th.n_levels();
@@ -294,14 +296,14 @@ mod solver {
         }
 
         // main check
-        fn final_check<A>(&mut self, a: &mut A) -> CheckRes<A::Conflict>
-            where A: batsat::theory::TheoryArgument
+        fn final_check<A>(&mut self, a: &mut A) 
+            where A: sat::theory::TheoryArgument
         {
             self.0.check(self.1, false, a)
         }
 
-        fn partial_check<A>(&mut self, a: &mut A) -> CheckRes<A::Conflict>
-            where A: batsat::theory::TheoryArgument
+        fn partial_check<A>(&mut self, a: &mut A)
+            where A: sat::theory::TheoryArgument
         {
             self.0.check(self.1, true, a)
         }

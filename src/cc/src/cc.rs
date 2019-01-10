@@ -10,9 +10,13 @@
 // - rule for `not` (t == true |- not t == false, and conversely)
 // - rule for `ite` (t == true |- not t == false, and conversely)
 
+// TODO(perf): backtrackable array allocator for signatures
+// TODO(perf): sparse map for nodes (using a second dense array)?
+
 use {
-    std::{ u32, collections::VecDeque, hash::Hash, fmt::Debug, },
-    batsmt_core::{ast::{self,AstMap,DenseMap,View},backtrack, ast_u32, },
+    std::{ u32, ptr, hash::Hash, fmt::Debug, },
+    batsmt_core::{ast::{self,AstMap,DenseMap,View}, backtrack, ast_u32, },
+    batsmt_theory::BoolLit,
     batsmt_pretty::{self as pp, Pretty1},
     crate::{
         types::{Ctx },
@@ -20,72 +24,82 @@ use {
     },
 };
 
-/* FIXME: need associated type constructor?
-/// Public interface
-pub trait Ctx: ThCtx + Sized {
-    type Map : AstMap<Self::AST, Node<Self>> + Sized;
-
-    fn new_map(sentinel: Node<Self>) -> Self::Map;
-}
-
-// auto impl
-impl<C> Ctx for C
-    where C: ThCtx, C::M : ast::WithDenseMap<C::AST, Node<C>>
-{
-    type Map = <C::M as ast::WithDenseMap<C::AST, Node<C>>>::DenseMap;
-    fn new_map(sentinel: Node<C>) -> Self::Map {
-        <C::M as ast::WithDenseMap<C::AST, Node<C>>>::new_dense_map()
-    }
-}
-*/
+#[repr(u8)]
+enum TraverseTask { Enter, Exit }
 
 /// The congruence closure.
 pub struct CC<C:Ctx> {
     b: Builtins<C::AST>,
-    tasks: VecDeque<Task<C>>, // operations to perform
+    pending: Vec<C::AST>, // update signatures
+    combine: Vec<(C::AST,C::AST,Expl<C::AST,C::B>)>, // merge
     undo: backtrack::Stack<UndoOp<C::AST>>,
-    confl: Vec<C::B>, // local for conflict
     props: PropagationSet<C::B>, // local for propagations
-    traverse: ast::iter_suffix::State<C::AST, ast::HashSet<C::AST>>, // for recursive traversal
     expl_st: Vec<Expl<C::AST, C::B>>, // to expand explanations
     tmp_sig: Signature<C::AST>, // for computing signatures
+    traverse: Vec<(TraverseTask,C::AST)>, // for adding terms
     sig_tbl: backtrack::HashMap<Signature<C::AST>, C::AST>,
+    lit_expl: backtrack::HashMap<C::B, LitExpl<C::AST,C::B>>, // pre-explanations for propagations
     cc1: CC1<C>,
 }
 
 /// internal state, with just the core structure for nodes and parent sets
 struct CC1<C:Ctx> {
     ok: bool, // no conflict?
-    // NOTE: here we need to work on `hast` because the lack of HKT prevents
-    // us from abstracting over the notion of a DenseMap
+    alloc_parent_list: ListAlloc<C::AST>,
     nodes: Nodes<C>,
+    confl: Vec<C::B>, // local for conflict
+}
+
+/// Explanation for the propagation of a boolean literal.
+#[derive(Debug)]
+enum LitExpl<AST,B> {
+    Propagated {
+        // we propagated it from given merges
+        eqns: [(AST,AST); 2],
+        expl: Expl<AST,B>,
+    },
 }
 
 type DMap<B> = ast_u32::DenseMap<Node<ast_u32::AST, B>>;
 
 /// Map terms into the corresponding node.
-struct Nodes<C:Ctx>(DMap<C::B>);
+struct Nodes<C:Ctx>{
+    map: DMap<C::B>,
+    find_stack: Vec<C::AST>,
+}
 
 /// One node in the congruence closure's E-graph.
 ///
 /// It contains:
 /// - the term itself
 /// - a direct pointer to the class' root
-/// - double-linked list pointers for iterating the class, along with the class' size
+/// - pointer to next element of the class (circular list)
+/// - a linked list of parent terms
 /// - the proof forest pointer
 /// - an optional mapping from the term to a boolean literal (for propagation)
 #[derive(Clone)]
 struct Node<AST, B> where AST : Sized, B : Sized {
     id: AST,
     next: AST, // next elt in class
-    size: u32, // number of elements in class
     expl: Option<(AST, Expl<AST,B>)>, // proof forest
     as_lit: Option<B>, // if this term corresponds to a boolean literal
     root: Repr<AST>, // current representative (initially, itself)
-    parents: ParentList<AST>, // parents of the given term
+    parents: List<AST>,
 }
 
-type ParentList<AST> = SVec<AST>;
+/// A node in a singly-linked list of objects.
+#[derive(Copy,Clone)]
+struct ListC<T>(T, *mut ListC<T>);
+
+type ListAlloc<T> = backtrack::Alloc<ListC<T>>;
+
+/// A singly-linked list of T.
+#[derive(Clone)]
+struct List<T> {
+    first: *mut ListC<T>, // first node (null iff len==0)
+    last: *mut ListC<T>, // last node (null iff len==0)
+    len: u32, // number of nodes
+}
 
 /// A representative
 #[derive(Debug,Clone,Copy,Eq,PartialEq,Hash,Ord,PartialOrd)]
@@ -112,16 +126,6 @@ enum UndoOp<AST> {
     RemoveExplLink(AST,AST), // remove explanation link connecting these
 }
 
-/// Operation to perform in the main fixpoint
-#[derive(Debug)]
-enum Task<C:Ctx> {
-    AddTerm(C::AST), // add term if not present
-    MapToLit(C::AST,C::B), // map term to lit
-    UpdateSig(C::AST), // re-check signature
-    Merge(C::AST, C::AST, Expl<C::AST, C::B>), // merge the classes of these two terms
-    Distinct(SVec<C::AST>, Expl<C::AST, C::B>),
-}
-
 /// A signature for a term, obtained by replacing its subterms with their repr.
 ///
 /// Signatures have the properties that if two terms are congruent,
@@ -131,50 +135,61 @@ struct Signature<AST:Eq+Hash+Debug>(SVec<Repr<AST>>);
 
 // implement main interface
 impl<C:Ctx> CCInterface<C> for CC<C> {
-    fn merge(&mut self, _m: &C, t1: C::AST, t2: C::AST, lit: C::B) {
+    fn merge(&mut self, m: &C, t1: C::AST, t2: C::AST, lit: C::B) {
+        debug!("merge {} and {} (expl {:?})", ast::pp(m,&t1), ast::pp(m,&t2), lit);
+        self.add_term(m, t1);
+        self.add_term(m, t2);
         let expl = Expl::Lit(lit);
-        self.tasks.push_back(Task::AddTerm(t1));
-        self.tasks.push_back(Task::AddTerm(t2));
-        self.tasks.push_back(Task::Merge(t1,t2,expl))
+        self.combine.push((t1,t2,expl));
     }
 
-    fn distinct(&mut self, _m: &C, ts: &[C::AST], lit: C::B) {
+    fn distinct(&mut self, _m: &C, _ts: &[C::AST], _lit: C::B) {
+        unimplemented!("distinct is not supported yet")
+        /*
         let mut v = SVec::with_capacity(ts.len());
         v.extend_from_slice(ts);
         let expl = Expl::Lit(lit);
         self.tasks.push_back(Task::Distinct(v,expl))
+        */
     }
 
-    fn add_literal(&mut self, _m: &C, t: C::AST, lit: C::B) {
-        self.tasks.push_back(Task::AddTerm(t));
-        self.tasks.push_back(Task::MapToLit(t, lit));
+    fn add_literal(&mut self, m: &C, t: C::AST, lit: C::B) {
+        self.add_term(m, t);
+        self.map_to_lit(m, t, lit);
     }
 
+    #[inline]
     fn final_check<'a>(&'a mut self, m: &C)
         -> Result<&'a PropagationSet<C::B>, Conflict<'a, C::B>>
     {
-        debug!("cc.final-check()");
         self.check_internal(m)
     }
 
+    #[inline]
     fn partial_check<'a>(&'a mut self, m: &C)
         -> Result<&'a PropagationSet<C::B>, Conflict<'a, C::B>> {
-        debug!("cc.partial-check()");
         self.check_internal(m)
     }
 
-    fn explain_merge(&mut self, m: &C, t: C::AST, u: C::AST) -> &[C::B] {
-        trace!("explain merge {} = {}", ast::pp(m,&t), ast::pp(m,&u));
-        debug_assert!(self.cc1.nodes.is_eq(t,u)); // check that they are equal
-        let mut er = ExplResolve::new(self);
-        er.explain_eq(m,t,u);
-        er.fixpoint(m);
-        trace!("... explanation: {:?}", &self.confl[..]);
-        &self.confl[..]
+    fn explain_prop(&mut self, m: &C, p: C::B) -> &[C::B] {
+        trace!("explain prop {:?}", p);
+        let e = self.lit_expl.get(&p).expect("no explanation recorded");
+        trace!("pre-explanation is {:?}", e);
+        match e {
+            LitExpl::Propagated{eqns,expl} => {
+                let mut er = ExplResolve::new(&mut self.cc1, &mut self.expl_st);
+                er.add_expl(expl.clone());
+                for (a,b) in eqns.iter() {
+                    er.explain_eq(m, *a, *b)
+                }
+                er.fixpoint(m);
+                trace!("... final explanation: {:?}", &self.cc1.confl[..]);
+                &self.cc1.confl[..]
+            },
+        }
     }
 
-    // TODO: fix that
-    fn has_partial_check() -> bool { false }
+    fn has_partial_check() -> bool { true }
 
     fn impl_descr() -> &'static str { "fast congruence closure"}
 }
@@ -182,41 +197,47 @@ impl<C:Ctx> CCInterface<C> for CC<C> {
 impl<C:Ctx> CC<C> {
     // main `check` function, performs the fixpoint
     fn check_internal(&mut self, m: &C) -> Result<&PropagationSet<C::B>, Conflict<C::B>> {
-        debug!("check-internal ({} tasks)", self.tasks.len());
-        self.run_tasks(m);
+        debug!("check-internal (pending: {}, combine: {})",
+            self.pending.len(), self.combine.len());
+        self.fixpoint(m);
         if self.cc1.ok {
             Ok(&self.props)
         } else {
-            debug_assert!(self.confl.len() >= 1); // must have some conflict
-            Err(Conflict(&self.confl))
+            debug_assert!(self.cc1.confl.len() >= 1); // must have some conflict
+            Err(Conflict(&self.cc1.confl))
         }
     }
 
-    /// Run tasks (add term, merges, etc.) until fixpoint.
-    fn run_tasks(&mut self, m: &C) {
-        while let Some(task) = self.tasks.pop_front() {
-            if ! self.cc1.ok {
-                self.tasks.clear();
-                break; // conflict detected, no need to continue
+    /// Main CC algorithm.
+    fn fixpoint(&mut self, m: &C) {
+        let CC{combine,cc1,b,pending,expl_st,undo,tmp_sig,sig_tbl,props,lit_expl,..} = self;
+        loop {
+            if !cc1.ok {
+                combine.clear();
+                pending.clear();
+                break
             }
-            match task {
-                Task::AddTerm(t) => self.add_term(m, t),
-                Task::UpdateSig(t) => self.update_signature(m, t),
-                Task::Merge(a,b,expl) => self.merge(m, a, b, expl),
-                Task::MapToLit(t,lit) => self.map_to_lit(m, t, lit),
-                Task::Distinct(..) => {
-                    unimplemented!("cannot handle distinct yet")
-                },
+
+            {
+                let mut updsig = UpdateSigPhase{cc1,combine,b,sig_tbl,tmp_sig};
+                for &t in pending.iter() {
+                    updsig.update_signature(m, t);
+                }
+                pending.clear();
+            }
+
+            {
+                let mut merger = MergePhase{cc1,b,pending,expl_st,undo,props,lit_expl};
+                for (t,u,expl) in combine.iter() {
+                    merger.merge(m,*t,*u,expl.clone())
+                }
+                combine.clear();
+            }
+
+            if pending.is_empty() {
+                break; // done
             }
         }
-    }
-}
-
-/// Does `t` need to be entered in the signature table?
-fn needs_signature<C:Ctx>(m: &C, t: &C::AST) -> bool {
-    match m.view(t) {
-        View::Const(_) => false,
-        View::App{..} => true,
     }
 }
 
@@ -231,23 +252,18 @@ impl<C:Ctx> CC<C> {
         cc1.nodes.insert(b.false_, Node::new(b.false_));
         CC{
             b,
-            tasks: VecDeque::new(),
-            confl: vec!(),
+            pending: vec!(),
+            combine: vec!(),
             props: PropagationSet::new(),
             undo: backtrack::Stack::new(),
-            traverse: ast::iter_suffix::State::new(),
+            traverse: vec!(),
             tmp_sig: Signature::new(),
             sig_tbl: backtrack::HashMap::new(),
             expl_st: vec!(),
+            lit_expl: backtrack::HashMap::new(),
             cc1,
         }
     }
-
-    #[inline(always)]
-    fn find(&self, id: C::AST) -> Repr<C::AST> { self.cc1.find(id) }
-
-    #[inline(always)]
-    fn is_root(&self, id: C::AST) -> bool { self.find(id).0 == id }
 
     /// Add this term to the congruence closure, if not present already.
     fn add_term(&mut self, m: &C, t0: C::AST) {
@@ -257,36 +273,37 @@ impl<C:Ctx> CC<C> {
 
         self.traverse.clear();
 
-        let CC {traverse, undo, cc1, tasks, ..} = self;
+        let CC {traverse, undo, cc1, pending, ..} = self;
         // traverse in postfix order (shared context: `cc1`)
-        traverse.iter(
-            m, &t0, cc1,
-            |_,cc1,t| {
-                let enter = !cc1.nodes.contains(t);
-                if enter {
-                    // avoid entering twice
-                    cc1.nodes.insert(*t, Node::new(*t));
-                }
-                enter
-            },
-            |m,cc1,t| {
-                debug_assert!(cc1.nodes.contains(t));
-                trace!("add-term {}", ast::pp(m,t));
-                cc1.nodes.insert(*t, Node::new(*t));
 
-                // now add itself to its children's list of parents.
-                for u in m.view(t).subterms() {
-                    debug_assert!(cc1.nodes.contains(u)); // postfix order
-                    let parents = cc1.nodes.parents_mut(*u);
-                    parents.push(*t);
-                }
-                // remove `t` before its children
-                undo.push_if_nonzero(UndoOp::RemoveTerm(*t));
+        traverse.push((TraverseTask::Enter, t0));
+        while let Some((task,t)) = traverse.pop() {
+            match task {
+                TraverseTask::Enter => {
+                    if ! cc1.nodes.contains(&t) {
+                        cc1.nodes.insert(t, Node::new(t));
 
-                if needs_signature(m, t) {
-                    tasks.push_back(Task::UpdateSig(*t));
-                }
-            });
+                        traverse.push((TraverseTask::Exit, t));
+                        // add subterms
+                        for u in m.view(&t).subterms() {
+                            traverse.push((TraverseTask::Enter,*u))
+                        }
+                    }
+                },
+                TraverseTask::Exit => {
+                    // now add itself to its children's list of parents.
+                    for &u in m.view(&t).subterms() {
+                        debug_assert!(cc1.nodes.contains(&u)); // postfix order
+                        let ur = cc1.find(u);
+                        let parents = cc1.nodes.parents_mut(ur.0);
+                        parents.add(&mut cc1.alloc_parent_list, t);
+                    }
+                    // remove `t` before its children
+                    undo.push_if_nonzero(UndoOp::RemoveTerm(t));
+                    pending.push(t)
+                },
+            }
+        }
     }
 
     fn map_to_lit(&mut self, m: &C, t: C::AST, lit: C::B) {
@@ -302,28 +319,46 @@ impl<C:Ctx> CC<C> {
             self.undo.push_if_nonzero(UndoOp::UnmapLit(t));
         }
     }
+}
 
+struct MergePhase<'a,C:Ctx> {
+    cc1: &'a mut CC1<C>,
+    b: &'a Builtins<C::AST>,
+    pending: &'a mut Vec<C::AST>,
+    expl_st: &'a mut Vec<Expl<C::AST, C::B>>,
+    undo: &'a mut backtrack::Stack<UndoOp<C::AST>>,
+    props: &'a mut PropagationSet<C::B>, // local for propagations
+    lit_expl: &'a mut backtrack::HashMap<C::B, LitExpl<C::AST,C::B>>, // pre-explanations for propagations
+}
+
+struct UpdateSigPhase<'a,C:Ctx> {
+    cc1: &'a mut CC1<C>,
+    b: &'a Builtins<C::AST>,
+    combine: &'a mut Vec<(C::AST,C::AST,Expl<C::AST,C::B>)>,
+    sig_tbl: &'a mut backtrack::HashMap<Signature<C::AST>, C::AST>,
+    tmp_sig: &'a mut Signature<C::AST>,
+}
+
+impl<'a, C:Ctx> MergePhase<'a,C> {
     /// Merge `a` and `b`, if they're not already equal.
-    fn merge(&mut self, m: &C, a: C::AST, b: C::AST, expl: Expl<C::AST, C::B>) {
+    fn merge(&mut self, m: &C, mut a: C::AST, mut b: C::AST, expl: Expl<C::AST, C::B>) {
         debug_assert!(self.cc1.contains_ast(a));
         debug_assert!(self.cc1.contains_ast(b));
 
         let mut ra = self.cc1.nodes.find(a);
         let mut rb = self.cc1.nodes.find(b);
-        debug_assert!(self.is_root(ra.0), "{}.repr = {}", ast::pp(m,&a), ast::pp(m,&ra.0));
-        debug_assert!(self.is_root(rb.0), "{}.repr = {}", ast::pp(m,&b), ast::pp(m,&rb.0));
-        drop(a);
-        drop(b);
+        debug_assert!(self.cc1.is_root(ra.0), "{}.repr = {}", ast::pp(m,&a), ast::pp(m,&ra.0));
+        debug_assert!(self.cc1.is_root(rb.0), "{}.repr = {}", ast::pp(m,&b), ast::pp(m,&rb.0));
 
         if ra == rb {
             return; // done already
         }
 
         // access the two nodes
-        let (na, nb) = self.cc1.nodes.0.get2(ra.0, rb.0);
+        let (na, nb) = self.cc1.nodes.map.get2(ra.0, rb.0);
 
         // NOTE: would be nice to put `unlikely` there once it stabilizes
-        if (na.size as usize) + (nb.size as usize) > u32::MAX as usize {
+        if na.len() + nb.len() > u32::MAX as usize {
             panic!("too many terms in one class")
         }
 
@@ -338,13 +373,13 @@ impl<C:Ctx> CC<C> {
                 self.cc1.ok = false;
                 self.undo.push_if_nonzero(UndoOp::SetOk);
                 {
-                    let mut er = ExplResolve::new(self);
+                    let mut er = ExplResolve::new(&mut self.cc1, &mut self.expl_st);
                     er.add_expl(expl);
                     er.explain_eq(m, a, ra.0);
                     er.explain_eq(m, b, rb.0);
                     er.fixpoint(m);
                 }
-                trace!("inconsistent set of explanations: {:?}", &self.confl);
+                trace!("inconsistent set of explanations: {:?}", &self.cc1.confl);
                 return;
             } else {
                 // merge into true/false
@@ -352,9 +387,10 @@ impl<C:Ctx> CC<C> {
             }
         } else if ra.0 == self.b.true_ || ra.0 == self.b.false_ {
             // `ra` must be repr
-        } else if na.size < nb.size {
+        } else if na.len() < nb.len() {
             // swap a and b
             std::mem::swap(&mut ra, &mut rb);
+            std::mem::swap(&mut a, &mut b);
         }
         drop(na);
         drop(nb);
@@ -369,7 +405,7 @@ impl<C:Ctx> CC<C> {
             self.cc1.reroot_forest(m, b);
             let nb = &mut self.cc1[b];
             debug_assert!(nb.expl.is_none());
-            nb.expl = Some((a, expl));
+            nb.expl = Some((a, expl.clone()));
         }
 
         // undo the merge on backtrack
@@ -381,33 +417,49 @@ impl<C:Ctx> CC<C> {
         // since one of their direct child (b) now has a different
         // representative
         {
-            let CC {cc1, tasks, ..} = self;
+            let MergePhase{cc1, pending, ..} = self;
             cc1.nodes.iter_parents(rb, |p_b| {
-                if needs_signature(m, &p_b) {
-                    tasks.push_back(Task::UpdateSig(p_b));
+                pending.push(*p_b)
+            });
+        }
+
+        let MergePhase{cc1, b: bs, props, lit_expl, ..} = self;
+
+        // if ra is {true,false}, propagate lits
+        if ra.0 == bs.true_ || ra.0 == bs.false_ {
+            trace!("{}.class: look for propagations", ast::pp(m,&rb.0));
+            cc1.nodes.iter_class(rb, |n| {
+                trace!("... {}.iter_class: check {}", ast::pp(m,&rb.0), ast::pp(m,&n.id));
+                n.root = ra; // while we're there, we can merge eagerly.
+
+                // if a=true/false, and `n` has a literal, propagate the literal
+                // assuming it's not known to be true already.
+                if let Some(mut lit) = n.as_lit {
+                    if !lit_expl.contains_key(&lit) {
+                        // future expl: `n=b=a=ra` (where ra∈{true,false})
+                        let e = LitExpl::Propagated {
+                            expl: expl.clone(),
+                            eqns:[(n.id, b), (a, ra.0)],
+                        };
+                        if ra.0 == bs.true_ {
+                            trace!("propagate literal {:?} (for true≡{}, {:?})",
+                                lit, ast::pp(m,&n.id), &expl);
+                            props.propagate(lit);
+                        } else {
+                            debug_assert_eq!(ra.0, bs.false_);
+                            lit = !lit;
+                            trace!("propagate literal {:?} (for false≡{}, {:?})",
+                                lit, ast::pp(m,&n.id), &expl);
+                            props.propagate(lit);
+                        }
+                        lit_expl.insert(lit, e);
+                    }
                 }
             });
         }
 
-        // perform actual merge of classes
-        // for x in b.class: x.root = a
-        let CC {cc1, b, props, ..} = self;
-        cc1.nodes.iter_class(rb, |n| {
-            trace!("{}.iter_class: update {}", ast::pp(m,&rb.0), ast::pp(m,&n.id));
-            debug_assert_eq!(n.root, rb);
-            n.root = ra;
-
-            // if a=true/false, and `n` has a literal, propagate the literal
-            if ra.0 == b.true_ && n.as_lit.is_some() {
-                let lit = n.as_lit.unwrap();
-                trace!("propagate literal {:?} (for true≡{})", lit, ast::pp(m,&n.id));
-                props.propagate(lit);
-            } else if ra.0 == b.false_ && n.as_lit.is_some() {
-                let lit = ! n.as_lit.unwrap();
-                trace!("propagate literal {:?} (for false≡{})", lit, ast::pp(m,&n.id));
-                props.propagate(lit);
-            }
-        });
+        // set `rb.root` to `ra`
+        cc1[rb.0].root = ra;
 
         // ye ole' switcharoo (of doubly linked lists for the equiv class)
         //
@@ -415,43 +467,40 @@ impl<C:Ctx> CC<C> {
         // have:  a --> next_b, b --> next_a
         //
         {
-            // access the two nodes
-            let (na, nb) = self.cc1.nodes.0.get2(ra.0, rb.0);
+            // access the two nodes, again
+            let (na, nb) = self.cc1.nodes.map.get2(ra.0, rb.0);
 
             let next_a = na.next;
             let next_b = nb.next;
 
-            na.size += nb.size;
             na.next = next_b;
             nb.next = next_a;
-        }
 
-        // check that the merge went well
-        if cfg!(debug) {
-            self.cc1.nodes.iter_class(ra, |n| {
-                debug_assert_eq!(n.root, ra, "root of cls({:?})", ast::pp(m,&ra.0))
-            });
+            // also merge parent lists
+            na.parents.append(&mut nb.parents)
         }
     }
+}
 
+impl<'a, C:Ctx> UpdateSigPhase<'a,C> {
     /// Check and update signature of `t`, possibly adding new merged by congruence.
     fn update_signature(&mut self, m: &C, t: C::AST) {
-        let CC {tmp_sig: ref mut sig, cc1, sig_tbl, tasks, ..} = self;
+        let UpdateSigPhase{tmp_sig: ref mut sig, ref mut cc1, sig_tbl, combine, b: bs, ..} = self;
         match m.view(&t) {
             View::Const(_) => (),
-            View::App {f, args} if f == self.b.eq => {
+            View::App {f, args} if f == bs.eq => {
                 // do not compute a signature, but check if `args[0]==args[1]`
                 let a = args[0];
                 let b = args[1];
                 if self.cc1.nodes.is_eq(a,b) {
                     trace!("merge {} with true by eq-rule", ast::pp(m,&t));
                     let expl = Expl::AreEq(a,b);
-                    self.tasks.push_back(Task::Merge(t, self.b.true_, expl));
+                    combine.push((t, bs.true_, expl))
                 }
             },
             View::App {f, args} => {
                 // compute signature and look for collisions
-                compute_app(sig, &cc1, &f, args);
+                sig.compute_app(cc1, &f, args);
                 match sig_tbl.get(sig) {
                     None => {
                         // insert into signature table
@@ -462,7 +511,7 @@ impl<C:Ctx> CC<C> {
                         // collision, merge `t` and `u` as they are congruent
                         trace!("merge by congruence: {} and {}", ast::pp(m,&t), ast::pp(m,u));
                         let expl = Expl::Congruence(t, *u);
-                        tasks.push_back(Task::Merge(t, *u, expl));
+                        combine.push((t, *u, expl))
                     }
                 }
             },
@@ -476,6 +525,8 @@ impl<C:Ctx> CC1<C> {
         CC1 {
             nodes: Nodes::new(map),
             ok: true,
+            alloc_parent_list: backtrack::Alloc::new(),
+            confl: vec!(),
         }
     }
 
@@ -483,42 +534,39 @@ impl<C:Ctx> CC1<C> {
     fn contains_ast(&self, t: C::AST) -> bool { self.nodes.contains(&t) }
 
     #[inline(always)]
-    fn find(&self, t: C::AST) -> Repr<C::AST> { self.nodes.find(t) }
+    fn find(&mut self, t: C::AST) -> Repr<C::AST> { self.nodes.find(t) }
+
+    #[inline(always)]
+    fn is_root(&mut self, id: C::AST) -> bool { self.find(id).0 == id }
 
     /// Undo one change.
     fn perform_undo(&mut self, m: &C, op: UndoOp<C::AST>) {
         trace!("perform-undo {}", op.pp(m));
         match op {
             UndoOp::SetOk => {
-                debug_assert!(! self.ok);
                 self.ok = true;
+                self.confl.clear();
             },
             UndoOp::Unmerge {root: a, old_root: b} => {
                 assert_ne!(a.0,b.0); // crucial invariant
 
-                let (na, nb) = self.nodes.0.get2(a.0, b.0);
+                let (na, nb) = self.nodes.map.get2(a.0, b.0);
 
-                debug_assert_eq!(na.root, a, "root: {}, repr: {}",
-                                 ast::pp(m,&na.root.0), ast::pp(m,&a.0));
-                debug_assert_eq!(nb.root, a);
-
-                debug_assert!(na.size > nb.size);
-                na.size -= nb.size;
-
-                // inverse switcharoo
+                // inverse switcharoo for the class linked lists
                 {
                     let next_a = na.next;
                     let next_b = nb.next;
 
                     na.next = next_b;
                     nb.next = next_a;
-                }
-                drop(na);
-                drop(nb);
 
-                // restore `root` pointer of all members of `b.class`
+                    na.parents.un_append(&mut nb.parents);
+                }
+
+                // reset `root` pointer for `nb`
+                // reset root for the classes of terms that are now repr again,
+                // if they haven't been removed.
                 self.nodes.iter_class(b, |nb1| {
-                    debug_assert_eq!(nb1.root, a);
                     nb1.root = b;
                 });
             },
@@ -527,7 +575,7 @@ impl<C:Ctx> CC1<C> {
                 // Be sure to remove this link from the proof forest.
                 {
                     assert_ne!(a,b);
-                    let (na, nb) = self.nodes.0.get2(a,b);
+                    let (na, nb) = self.nodes.map.get2(a,b);
                     match nb.expl {
                         Some((ra2,_)) if ra2 == a => nb.expl = None,
                         _ => ()
@@ -543,10 +591,11 @@ impl<C:Ctx> CC1<C> {
                 self.nodes.remove(&t);
 
                 // remove from children's parents' lists
-                for u in m.view(&t).subterms() {
-                    let parents = self.nodes.parents_mut(*u);
-                    debug_assert_eq!(parents.last().cloned(), Some(t));
-                    parents.pop();
+                for &u in m.view(&t).subterms() {
+                    let ur = self.find(u);
+                    let parents = self.nodes.parents_mut(ur.0);
+                    let _t = parents.remove();
+                    debug_assert_eq!(_t, t);
                 }
             }
             UndoOp::UnmapLit(t) => {
@@ -607,7 +656,7 @@ impl<C:Ctx> CC1<C> {
     /// Find the closest common ancestor of `a` and `b` in the proof
     /// forest.
     /// Precond: `is_eq(a,b)`.
-    fn find_expl_common_ancestor(&self, mut a: C::AST, mut b: C::AST) -> C::AST {
+    fn find_expl_common_ancestor(&mut self, mut a: C::AST, mut b: C::AST) -> C::AST {
         debug_assert!(self.nodes.is_eq(a,b));
 
         let dist_a = self.dist_to_expl_root(a);
@@ -642,53 +691,60 @@ impl<C:Ctx> CC1<C> {
 impl<C:Ctx> backtrack::Backtrackable<C> for CC<C> {
     fn push_level(&mut self, m: &mut C) {
         trace!("push-level");
-        self.run_tasks(m); // be sure to commit changes before saving
+        self.fixpoint(m); // be sure to commit changes before saving
         self.undo.push_level();
         self.sig_tbl.push_level();
+        self.cc1.alloc_parent_list.push_level();
+        self.lit_expl.push_level();
     }
 
     fn pop_levels(&mut self, m: &mut C, n: usize) {
         debug_assert_eq!(self.undo.n_levels(), self.sig_tbl.n_levels());
-        let cc1 = &mut self.cc1;
-        self.undo.pop_levels(n, |op| cc1.perform_undo(m, op));
-        self.sig_tbl.pop_levels(n);
+        debug_assert_eq!(self.undo.n_levels(), self.cc1.alloc_parent_list.n_levels());
         if n > 0 {
             trace!("pop-levels {}", n);
+            let cc1 = &mut self.cc1;
+            self.undo.pop_levels(n, |op| cc1.perform_undo(m, op));
+            self.sig_tbl.pop_levels(n);
+            cc1.alloc_parent_list.pop_levels(n);
+            self.lit_expl.pop_levels(n);
             self.props.clear();
-            self.tasks.clear(); // changes are invalidated
+            self.pending.clear();
+            self.combine.clear();
         }
     }
 
+    #[inline(always)]
     fn n_levels(&self) -> usize { self.undo.n_levels() }
 }
 
 /// Temporary structure to resolve explanations.
 struct ExplResolve<'a,C:Ctx> {
-    cc1: &'a CC1<C>,
-    confl: &'a mut Vec<C::B>, // conflict clause to produce
+    cc1: &'a mut CC1<C>,
     expl_st: &'a mut Vec<Expl<C::AST, C::B>>,
 }
 
 impl<'a,C:Ctx> ExplResolve<'a,C> {
     /// Create the temporary structure.
-    fn new(cc: &'a mut CC<C>, ) -> Self {
-        let CC { cc1, confl, expl_st, ..} = cc;
-        confl.clear();
+    fn new(cc1: &'a mut CC1<C>, expl_st: &'a mut Vec<Expl<C::AST,C::B>>) -> Self {
         expl_st.clear();
-        ExplResolve { confl, cc1, expl_st }
+        cc1.confl.clear();
+        ExplResolve { cc1, expl_st }
     }
 
     fn add_expl(&mut self, e: Expl<C::AST, C::B>) {
         self.expl_st.push(e)
     }
 
-    /// Main loop for turning explanations into a conflict
+    /// Main loop for turning explanations into a conflict.
+    ///
+    /// Pushes the resulting literals into `self.cc1.confl`.
     fn fixpoint(mut self, m: &C) -> &'a Vec<C::B> {
         while let Some(e) = self.expl_st.pop() {
             trace!("expand-expl: {}", e.pp(m));
             match e {
                 Expl::Lit(lit) => {
-                    self.confl.push(lit);
+                    self.cc1.confl.push(lit);
                 },
                 Expl::AreEq(a,b) => {
                     self.explain_eq(m, a, b);
@@ -710,9 +766,9 @@ impl<'a,C:Ctx> ExplResolve<'a,C> {
             }
         }
         // cleanup conflict
-        self.confl.sort_unstable();
-        self.confl.dedup();
-        self.confl
+        self.cc1.confl.sort_unstable();
+        self.cc1.confl.dedup();
+        &self.cc1.confl
     }
 
     /// Explain why `a` and `b` were merged, pushing some sub-tasks
@@ -742,33 +798,86 @@ impl<'a,C:Ctx> ExplResolve<'a,C> {
 
 impl<C:Ctx> Nodes<C> {
     fn new(map: DMap<C::B>) -> Self {
-        Nodes(map)
+        Nodes{ map, find_stack: vec!() }
     }
 
     #[inline(always)]
-    fn contains(&self, t: &C::AST) -> bool { self.0.contains(t) }
+    fn contains(&self, t: &C::AST) -> bool { self.map.contains(t) }
 
     #[inline(always)]
     fn insert(&mut self, t: C::AST, n: Node<C::AST, C::B>) {
-        self.0.insert(t, n)
+        self.map.insert(t, n)
     }
 
     /// Find representative of the given node
     #[inline(always)]
-    fn find(&self, id: C::AST) -> Repr<C::AST> { self[id].root }
+    fn find(&mut self, t: C::AST) -> Repr<C::AST> {
+        let root = self[t].root;
+
+        if root.0 == t {
+            root // fast path
+        } else {
+            let root = self.find_rec(root.0, 16); // use recursion
+            self[t].root = root; // update this pointer
+            root
+        }
+    }
+
+    // find + path compression, using recursion up to `limit`
+    fn find_rec(&mut self, t: C::AST, limit: usize) -> Repr<C::AST> {
+        let root = self[t].root;
+        if root.0 == t {
+            root
+        } else {
+            // recurse
+            let root = {
+                if limit == 0 {
+                    self.find_loop(root.0)
+                } else {
+                    self.find_rec(root.0, limit-1)
+                }
+            };
+            self[t].root = root;
+            root
+        }
+    }
+
+    // find + path compression, using a loop
+    fn find_loop(&mut self, mut t: C::AST) -> Repr<C::AST> {
+        debug_assert_eq!(self.find_stack.len(), 0);
+
+        let root = loop {
+            let root = self[t].root;
+            if t == root.0 {
+                break root
+            } else {
+                // seek further
+                self.find_stack.push(t);
+                t = root.0
+            }
+        };
+
+        // update root pointers (path compression)
+        for &u in self.find_stack.iter() {
+            self.map[u].root = root;
+        }
+        self.find_stack.clear();
+
+        root
+    }
 
     /// Are these two terms known to be equal?
     #[inline(always)]
-    fn is_eq(&self, a: C::AST, b: C::AST) -> bool {
+    fn is_eq(&mut self, a: C::AST, b: C::AST) -> bool {
         self.find(a) == self.find(b)
     }
 
     #[inline(always)]
-    fn parents_mut(&mut self, t: C::AST) -> &mut ParentList<C::AST> { &mut self[t].parents }
+    fn parents_mut(&mut self, t: C::AST) -> &mut List<C::AST> { &mut self[t].parents }
 
     #[inline(always)]
     fn remove(&mut self, t: &C::AST) {
-        self.0.remove(&t)
+        self.map.remove(&t)
     }
 
     /// Call `f` with a mutable ref on all nodes of the class of `r`
@@ -786,14 +895,11 @@ impl<C:Ctx> Nodes<C> {
     }
 
     /// Call `f` on all parents of all nodes of the class of `r`
-    fn iter_parents<F>(&mut self, r: Repr<C::AST>, mut f: F)
-        where F: FnMut(C::AST)
+    #[inline]
+    fn iter_parents<F>(&mut self, r: Repr<C::AST>, f: F)
+        where F: FnMut(&C::AST)
     {
-        self.iter_class(r, |n| {
-            for &p_b in n.parents.iter() {
-                f(p_b)
-            }
-        });
+        self[r.0].parents.for_each(f);
     }
 }
 
@@ -804,14 +910,14 @@ mod cc {
         type Output = Node<C::AST, C::B>;
         #[inline(always)]
         fn index(&self, id: C::AST) -> &Self::Output {
-            self.0.get(&id).unwrap()
+            self.map.get_unchecked(&id)
         }
     }
 
     impl<C:Ctx> std::ops::IndexMut<C::AST> for Nodes<C> {
         #[inline(always)]
         fn index_mut(&mut self, id: C::AST) -> &mut Self::Output {
-            self.0.get_mut(&id).unwrap()
+            self.map.get_mut_unchecked(&id)
         }
     }
 
@@ -842,18 +948,23 @@ mod node {
     impl<B> Node<ast_u32::AST, B> {
         /// Create a new node
         pub fn new(id: ast_u32::AST) -> Self {
-            let parents = ParentList::new();
+            let parents = List::new();
             Node {
-                id, next: id, expl: None, size: 1,
+                id, next: id, expl: None,
                 root: Repr(id), as_lit: None, parents,
             }
         }
 
         /// The default `node` object
+        #[inline(always)]
         pub(super) fn sentinel() -> Self {
             Node::new(ast_u32::AST::SENTINEL)
         }
 
+        #[inline(always)]
+        pub fn len(&self) -> usize {
+            self.parents.len()
+        }
     }
 }
 
@@ -897,6 +1008,123 @@ mod expl {
     }
 }
 
+impl<T:Clone> List<T> {
+    /// New list
+    #[inline]
+    fn new() -> Self {
+        List { first: ptr::null_mut(), last: ptr::null_mut(), len: 0 }
+    }
+
+    /// Length of the list.
+    #[inline(always)]
+    fn len(&self) -> usize { self.len as usize }
+
+    /// Iterate over the elements of the list.
+    #[inline(always)]
+    fn for_each<F>(&self, f: F) where F: FnMut(&T) {
+        if self.len > 0 {
+            self.for_each_loop(f)
+        }
+    }
+
+    fn for_each_loop<F>(&self, mut f: F) where F: FnMut(&T) {
+        debug_assert!(self.len() > 0);
+
+        let mut ptr = self.first;
+        loop {
+            let cell = unsafe{ &* ptr };
+            f(&cell.0);
+
+            ptr = cell.1;
+            if ptr.is_null() {
+                break // done
+            }
+        }
+    }
+
+    /// Add `x` into the list.
+    fn add(&mut self, alloc: &mut ListAlloc<T>, x: T) {
+        // allocate new node
+        let ptr = alloc.alloc(ListC(x, self.first));
+        self.first = ptr;
+
+        if self.len == 0 {
+            // also last element
+            self.last = ptr
+        }
+        self.len += 1;
+    }
+
+    /// Remove last added element and return it.
+    fn remove(&mut self) -> T {
+        debug_assert!(self.len > 0);
+        debug_assert!(! self.first.is_null());
+
+        self.len -= 1;
+        let ListC(x,next) = unsafe{ self.first.read() };
+
+        if self.len == 0 {
+            debug_assert!(next.is_null());
+            // list is now empty
+            self.first = ptr::null_mut();
+            self.last = ptr::null_mut();
+        } else {
+            // remove first element
+            self.first = next;
+        }
+        x
+    }
+
+    /// Append `other` into `self`.
+    ///
+    /// This modifies `self`, but also possibly `other`.
+    fn append(&mut self, other: &mut List<T>) {
+        if other.first.is_null() {
+            // nothing to do
+            debug_assert_eq!(other.len, 0);
+        } else if self.first.is_null() {
+            // copy other into self
+            debug_assert_eq!(self.len, 0);
+            self.first = other.first;
+            self.last = other.last;
+            self.len = other.len;
+        } else {
+            // make `self.last` point to `other.first`;
+            // make `other.first` point to the former `self.last`
+            self.len += other.len;
+
+            let n = unsafe{ &mut * self.last };
+            debug_assert!(n.1.is_null());
+            n.1 = other.first;
+
+            other.first = self.last; // useful when undoing.
+            self.last = other.last;
+        }
+    }
+
+    /// Assuming `self.append(other)` was done earlier, this reverts the operation.
+    fn un_append(&mut self, other: &mut List<T>) {
+        if other.len == 0 {
+            return;
+        } else if self.len == other.len {
+            // self used to be empty
+            self.first = ptr::null_mut();
+            self.last = ptr::null_mut();
+            self.len = 0;
+        } else {
+            // `other.first` points to the old `self.last`, so swap them back
+            debug_assert!(self.len > other.len);
+            self.len -= other.len;
+
+            let last = other.first;
+            self.last = last;
+            let n = unsafe{ &mut * last };
+            other.first = n.1;
+            n.1 = ptr::null_mut();
+        }
+    }
+}
+
 impl<AST:Eq+Hash+Debug> Signature<AST> {
     /// Create a new signature.
     fn new() -> Self { Signature(SVec::new()) }
@@ -906,13 +1134,15 @@ impl<AST:Eq+Hash+Debug> Signature<AST> {
     fn clear(&mut self) { self.0.clear() }
 }
 
-fn compute_app<C:Ctx>(
-    sig: &mut Signature<C::AST>, cc1: &CC1<C>, f: &C::AST, args: &[C::AST]
-) {
-    sig.clear();
-    sig.0.push(cc1.find(*f));
-    for &u in args {
-        sig.0.push(cc1.find(u));
+impl Signature<ast_u32::AST> {
+    /// Compute the signature of `f(args)`.
+    fn compute_app<C>(
+        &mut self, cc1: &mut CC1<C>, f: &C::AST, args: &[C::AST]
+    ) where C: Ctx {
+        self.clear();
+        self.0.push(cc1.find(*f));
+        for &u in args {
+            self.0.push(cc1.find(u));
+        }
     }
 }
-

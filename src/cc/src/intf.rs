@@ -38,6 +38,6 @@ pub trait CC<C: Ctx> : backtrack::Backtrackable<C> {
     /// Description of this particular implementation
     fn impl_descr() -> &'static str;
 
-    /// Explain why the merge of `t` and `u` was done.
-    fn explain_merge(&mut self, m: &C, t: C::AST, u: C::AST) -> &[C::B];
+    /// Explain why `p` was propagated
+    fn explain_prop(&mut self, m: &C, p: C::B) -> &[C::B];
 }

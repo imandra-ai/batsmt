@@ -187,6 +187,7 @@ union NodeStoredData<SPtr : Copy> {
 }
 
 // helper to make a view from a stored node
+#[inline]
 fn view_node<'a, S>(sym: &'a S, n: &'a NodeStored<S>)
     -> HView<'a, S> where S : SymbolManager
 {

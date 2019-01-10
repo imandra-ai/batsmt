@@ -118,6 +118,7 @@ pub struct DenseMap<V : Clone> {
 mod dense_map {
     use super::*;
     use ::bit_set::BitSet;
+    use self::ast::DenseMap as AstDenseMap;
 
     impl<V : Clone> ast::AstMap<AST, V> for DenseMap<V> {
         /// Access the given key
@@ -143,6 +144,7 @@ mod dense_map {
         }
 
         /// Does the map contain this key?
+        #[inline(always)]
         fn contains(&self, ast: &AST) -> bool {
             let i = ast.0 as usize;
             self.mem.contains(i)
@@ -210,21 +212,49 @@ mod dense_map {
         }
     }
 
-    impl<V : Clone> ast::DenseMap<AST, V> for DenseMap<V> {
+    impl<V : Clone> AstDenseMap<AST, V> for DenseMap<V> {
         fn new(v: V) -> Self { DenseMap::new(v) }
 
+        #[inline(always)]
+        fn get_unchecked(&self, t: &AST) -> &V {
+            debug_assert!(self.mem.contains(t.0 as usize));
+            &self.vec[t.0 as usize]
+        }
+
+        #[inline(always)]
+        fn get_mut_unchecked(&mut self, t: &AST) -> &mut V {
+            debug_assert!(self.mem.contains(t.0 as usize));
+            &mut self.vec[t.0 as usize]
+        }
+
+        #[inline]
         fn get2(&mut self, t1: AST, t2: AST) -> (&mut V, &mut V) {
             let t1 = t1.0 as usize;
             let t2 = t2.0 as usize;
 
-            if t1 == t2 || !self.mem.contains(t1) || !self.mem.contains(t2) {
-                panic!("dense_map.get2: invalid access");
-            }
+            assert_ne!(t1, t2, "get2: aliased access");
+            debug_assert!(self.mem.contains(t1) && self.mem.contains(t2),
+                          "get2: doesn't contain one of the keys");
 
             let ref1 = (&mut self.vec[t1]) as *mut V;
             let ref2 = (&mut self.vec[t2]) as *mut V;
             // this is correct because t1 != t2, so the pointers are disjoint.
             unsafe { (&mut* ref1, &mut *ref2) }
+        }
+    }
+
+    impl<V: Clone> std::ops::Index<AST> for DenseMap<V> {
+        type Output = V;
+        #[inline(always)]
+        fn index(&self, id: AST) -> &Self::Output {
+            self.get_unchecked(&id)
+        }
+    }
+
+    impl<V: Clone> std::ops::IndexMut<AST> for DenseMap<V> {
+        #[inline(always)]
+        fn index_mut(&mut self, id: AST) -> &mut Self::Output {
+            self.get_mut_unchecked(&id)
         }
     }
 }

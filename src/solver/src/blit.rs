@@ -14,7 +14,12 @@ impl std::ops::Not for BLit {
 }
 
 // BLit is a proper boolean literal
-impl BoolLit for BLit {}
+impl BoolLit for BLit {
+    #[inline(always)]
+    fn abs(&self) -> Self {
+        if self.0.sign() { *self } else { ! *self }
+    }
+}
 
 impl BLit {
     /// Create a literal.

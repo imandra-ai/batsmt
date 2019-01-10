@@ -9,6 +9,7 @@ use std::u32;
 ///
 /// It can also be used as a normal stack of objects where `push` is undone
 /// upon backtracking.
+#[derive(Clone)]
 pub struct Stack<T> {
     st: Vec<T>,
     levels: Vec<u32>, // we assume the stack never goes over u32
@@ -96,5 +97,20 @@ impl<T> Stack<T> {
     #[inline(always)]
     pub fn as_slice(&self) -> &[T] {
         &self.st
+    }
+
+    /// Pop all levels, consume all elements.
+    ///
+    /// After this operation, the stack is empty, as if new.
+    pub fn drain<'a>(&'a mut self) -> impl Iterator<Item=T> + 'a {
+        self.levels.clear();
+        self.st.drain(..)
+    }
+}
+
+impl<T> crate::gc::HasInternalMemory for Stack<T> {
+    fn reclaim_unused_memory(&mut self) {
+        self.st.shrink_to_fit();
+        self.levels.shrink_to_fit();
     }
 }

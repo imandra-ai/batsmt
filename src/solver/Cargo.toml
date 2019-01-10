@@ -9,5 +9,5 @@ edition = "2018"
 batsmt-core = { path = "../core" }
 batsmt-pretty = { path = "../pretty" }
 batsmt-theory = { path = "../theory" }
-batsat = { git="https://github.com/c-cube/batsat", version = "^0.2", features=["logging"] }
+batsat = { git="https://github.com/c-cube/batsat", version = "^0.3", features=["logging"] }
 log = "0.4"
