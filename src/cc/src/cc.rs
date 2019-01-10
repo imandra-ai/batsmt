@@ -16,6 +16,7 @@
 use {
     std::{ u32, ptr, collections::VecDeque, hash::Hash, fmt::Debug, },
     batsmt_core::{ast::{self,AstMap,DenseMap,View}, backtrack, ast_u32, },
+    batsmt_theory::BoolLit,
     batsmt_pretty::{self as pp, Pretty1},
     crate::{
         types::{Ctx },
@@ -36,6 +37,7 @@ pub struct CC<C:Ctx> {
     tmp_sig: Signature<C::AST>, // for computing signatures
     traverse: Vec<(TraverseTask,C::AST)>, // for adding terms
     sig_tbl: backtrack::HashMap<Signature<C::AST>, C::AST>,
+    lit_expl: backtrack::HashMap<C::B, LitExpl<C::AST,C::B>>, // pre-explanations for propagations
     cc1: CC1<C>,
 }
 
@@ -45,6 +47,16 @@ struct CC1<C:Ctx> {
     alloc_parent_list: ListAlloc<C::AST>,
     nodes: Nodes<C>,
     confl: Vec<C::B>, // local for conflict
+}
+
+#[derive(Debug)]
+enum LitExpl<AST,B> {
+    FromSat, // the solver asserted it
+    Propagated {
+        // we propagated it from given merges
+        eqns: [(AST,AST); 2],
+        expl: Expl<AST,B>,
+    },
 }
 
 type DMap<B> = ast_u32::DenseMap<Node<ast_u32::AST, B>>;
@@ -134,10 +146,13 @@ struct Signature<AST:Eq+Hash+Debug>(SVec<Repr<AST>>);
 impl<C:Ctx> CCInterface<C> for CC<C> {
     fn merge(&mut self, m: &C, t1: C::AST, t2: C::AST, lit: C::B) {
         debug!("merge {} and {} (expl {:?})", ast::pp(m,&t1), ast::pp(m,&t2), lit);
-        let expl = Expl::Lit(lit);
-        self.tasks.push_back(Task::AddTerm(t1));
-        self.tasks.push_back(Task::AddTerm(t2));
-        self.tasks.push_back(Task::Merge(t1,t2,expl))
+        if !self.lit_expl.contains_key(&lit.abs()) {
+            self.lit_expl.insert(lit.abs(), LitExpl::FromSat);
+            self.tasks.push_back(Task::AddTerm(t1));
+            self.tasks.push_back(Task::AddTerm(t2));
+            let expl = Expl::Lit(lit);
+            self.tasks.push_back(Task::Merge(t1,t2,expl))
+        }
     }
 
     fn distinct(&mut self, _m: &C, ts: &[C::AST], lit: C::B) {
@@ -165,14 +180,23 @@ impl<C:Ctx> CCInterface<C> for CC<C> {
         self.check_internal(m)
     }
 
-    fn explain_merge(&mut self, m: &C, t: C::AST, u: C::AST) -> &[C::B] {
-        trace!("explain merge {} = {}", ast::pp(m,&t), ast::pp(m,&u));
-        debug_assert!(self.cc1.nodes.is_eq(t,u)); // check that they are equal
-        let mut er = ExplResolve::new(self);
-        er.explain_eq(m,t,u);
-        er.fixpoint(m);
-        trace!("... explanation: {:?}", &self.cc1.confl[..]);
-        &self.cc1.confl[..]
+    fn explain_prop(&mut self, m: &C, p: C::B) -> &[C::B] {
+        trace!("explain prop {:?}", p);
+        let e = self.lit_expl.get(&p.abs()).expect("no explanation recorded");
+        trace!("pre-explanation is {:?}", e);
+        match e {
+            LitExpl::FromSat => panic!("shouldn't explain asserted lit"),
+            LitExpl::Propagated{eqns,expl} => {
+                let mut er = ExplResolve::new(&mut self.cc1, &mut self.expl_st);
+                er.add_expl(expl.clone());
+                for (a,b) in eqns.iter() {
+                    er.explain_eq(m, *a, *b)
+                }
+                er.fixpoint(m);
+                trace!("... final explanation: {:?}", &self.cc1.confl[..]);
+                &self.cc1.confl[..]
+            },
+        }
     }
 
     fn has_partial_check() -> bool { true }
@@ -240,6 +264,7 @@ impl<C:Ctx> CC<C> {
             tmp_sig: Signature::new(),
             sig_tbl: backtrack::HashMap::new(),
             expl_st: vec!(),
+            lit_expl: backtrack::HashMap::new(),
             cc1,
         }
     }
@@ -309,7 +334,7 @@ impl<C:Ctx> CC<C> {
     }
 
     /// Merge `a` and `b`, if they're not already equal.
-    fn merge(&mut self, m: &C, a: C::AST, b: C::AST, expl: Expl<C::AST, C::B>) {
+    fn merge(&mut self, m: &C, mut a: C::AST, mut b: C::AST, expl: Expl<C::AST, C::B>) {
         debug_assert!(self.cc1.contains_ast(a));
         debug_assert!(self.cc1.contains_ast(b));
 
@@ -317,8 +342,6 @@ impl<C:Ctx> CC<C> {
         let mut rb = self.cc1.nodes.find(b);
         debug_assert!(self.is_root(ra.0), "{}.repr = {}", ast::pp(m,&a), ast::pp(m,&ra.0));
         debug_assert!(self.is_root(rb.0), "{}.repr = {}", ast::pp(m,&b), ast::pp(m,&rb.0));
-        drop(a);
-        drop(b);
 
         if ra == rb {
             return; // done already
@@ -343,7 +366,7 @@ impl<C:Ctx> CC<C> {
                 self.cc1.ok = false;
                 self.undo.push_if_nonzero(UndoOp::SetOk);
                 {
-                    let mut er = ExplResolve::new(self);
+                    let mut er = ExplResolve::new(&mut self.cc1, &mut self.expl_st);
                     er.add_expl(expl);
                     er.explain_eq(m, a, ra.0);
                     er.explain_eq(m, b, rb.0);
@@ -360,6 +383,7 @@ impl<C:Ctx> CC<C> {
         } else if na.len() < nb.len() {
             // swap a and b
             std::mem::swap(&mut ra, &mut rb);
+            std::mem::swap(&mut a, &mut b);
         }
         drop(na);
         drop(nb);
@@ -374,7 +398,7 @@ impl<C:Ctx> CC<C> {
             self.cc1.reroot_forest(m, b);
             let nb = &mut self.cc1[b];
             debug_assert!(nb.expl.is_none());
-            nb.expl = Some((a, expl));
+            nb.expl = Some((a, expl.clone()));
         }
 
         // undo the merge on backtrack
@@ -394,7 +418,7 @@ impl<C:Ctx> CC<C> {
             });
         }
 
-        let CC {cc1, b: bs, props, ..} = self;
+        let CC {cc1, b: bs, props, lit_expl, ..} = self;
 
         // if ra is {true,false}, propagate lits
         if ra.0 == bs.true_ || ra.0 == bs.false_ {
@@ -404,15 +428,25 @@ impl<C:Ctx> CC<C> {
                 n.root = ra; // while we're there, we can merge eagerly.
 
                 // if a=true/false, and `n` has a literal, propagate the literal
+                // assuming it's not known to be true already.
                 if let Some(lit) = n.as_lit {
-                    if ra.0 == bs.true_ {
-                        trace!("propagate literal {:?} (for true≡{})", lit, ast::pp(m,&n.id));
-                        props.propagate(lit);
-                    } else {
-                        debug_assert_eq!(ra.0, bs.false_);
-                        let lit = !lit;
-                        trace!("propagate literal {:?} (for false≡{})", lit, ast::pp(m,&n.id));
-                        props.propagate(lit);
+                    if !lit_expl.contains_key(&lit.abs()) {
+                        let e = LitExpl::Propagated {
+                            expl: expl.clone(),
+                            eqns:[(n.id, b), (a, ra.0)],
+                        };
+                        if ra.0 == bs.true_ {
+                            trace!("propagate literal {:?} (for true≡{}, {:?})",
+                                lit, ast::pp(m,&n.id), &expl);
+                            props.propagate(lit);
+                        } else {
+                            debug_assert_eq!(ra.0, bs.false_);
+                            let lit = !lit;
+                            trace!("propagate literal {:?} (for false≡{}, {:?})",
+                                lit, ast::pp(m,&n.id), &expl);
+                            props.propagate(lit);
+                        }
+                        lit_expl.insert(lit.abs(), e);
                     }
                 }
             });
@@ -651,17 +685,19 @@ impl<C:Ctx> backtrack::Backtrackable<C> for CC<C> {
         self.undo.push_level();
         self.sig_tbl.push_level();
         self.cc1.alloc_parent_list.push_level();
+        self.lit_expl.push_level();
     }
 
     fn pop_levels(&mut self, m: &mut C, n: usize) {
         debug_assert_eq!(self.undo.n_levels(), self.sig_tbl.n_levels());
         debug_assert_eq!(self.undo.n_levels(), self.cc1.alloc_parent_list.n_levels());
         if n > 0 {
+            trace!("pop-levels {}", n);
             let cc1 = &mut self.cc1;
             self.undo.pop_levels(n, |op| cc1.perform_undo(m, op));
             self.sig_tbl.pop_levels(n);
             cc1.alloc_parent_list.pop_levels(n);
-            trace!("pop-levels {}", n);
+            self.lit_expl.pop_levels(n);
             self.props.clear();
             self.tasks.clear(); // changes are invalidated
         }
@@ -679,8 +715,7 @@ struct ExplResolve<'a,C:Ctx> {
 
 impl<'a,C:Ctx> ExplResolve<'a,C> {
     /// Create the temporary structure.
-    fn new(cc: &'a mut CC<C>, ) -> Self {
-        let CC { cc1, expl_st, ..} = cc;
+    fn new(cc1: &'a mut CC1<C>, expl_st: &'a mut Vec<Expl<C::AST,C::B>>) -> Self {
         expl_st.clear();
         ExplResolve { cc1, expl_st }
     }

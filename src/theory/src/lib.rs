@@ -31,6 +31,7 @@ pub use {
 ///
 /// It must be the case that `!!b` is the same as `b`.
 pub trait BoolLit : fmt::Debug + Eq + Ord + Hash + Copy + Not<Output=Self> {
+    fn abs(&self) -> Self;
 
     /// Identity or negation depending on `sign` being true or false.
     #[inline(always)]
@@ -558,7 +559,10 @@ pub mod int_lit {
         fn not(self) -> Self { debug_assert_ne!(self.0, 0); Lit(-self.0) }
     }
 
-    impl super::BoolLit for Lit {}
+    impl super::BoolLit for Lit {
+        #[inline(always)]
+        fn abs(&self) -> Self { Lit(self.0.abs()) }
+    }
 }
 
 pub type IntLit = int_lit::Lit;

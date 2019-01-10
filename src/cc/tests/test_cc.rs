@@ -41,7 +41,9 @@ mod term_lit {
         fn not(self) -> Self { TermLit(!self.0, self.1, self.2) }
     }
 
-    impl BoolLit for TermLit {}
+    impl BoolLit for TermLit {
+        fn abs(&self) -> Self { TermLit(true, self.1, self.2) }
+    }
 
     impl<M:ast_u32::ManagerU32> pp::Pretty1<M> for TermLit {
         fn pp_with(&self, m: &M, ctx: &mut pp::Ctx) {

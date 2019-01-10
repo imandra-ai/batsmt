@@ -137,28 +137,9 @@ impl<C:Ctx> theory::Theory<C> for CCTheory<C> {
         self.cc.add_literal(ctx, t,lit);
     }
 
-    fn explain_propagation(&mut self, m: &C, t: C::AST, sign: bool, _p: C::B) -> &[C::B] {
+    fn explain_propagation(&mut self, m: &C, _t: C::AST, _sign: bool, p: C::B) -> &[C::B] {
         // what does `t=sign` correspond to?
-        trace!("explain-prop {} sign={} (lit {:?})", ast::pp(m,&t), sign, _p);
-        match m.view(&t) {
-            ast::View::App {f, args} if f == self.builtins.eq => {
-                assert_eq!(2,args.len());
-                if sign {
-                    self.cc.explain_merge(m, args[0], args[1])
-                } else {
-                    // `(a=b)=false`
-                    self.cc.explain_merge(m, t, self.builtins.false_)
-                }
-            },
-            ast::View::App {f, args:_} if f == self.builtins.distinct => {
-                panic!("cannot explain propagations of `distinct`")
-            },
-            _ if sign => {
-                self.cc.explain_merge(m, t, self.builtins.true_)
-            },
-            _ => {
-                self.cc.explain_merge(m, t, self.builtins.false_)
-            }
-        }
+        trace!("explain-prop {} sign={} (lit {:?})", ast::pp(m,&_t), _sign, p);
+        self.cc.explain_prop(m, p)
     }
 }
