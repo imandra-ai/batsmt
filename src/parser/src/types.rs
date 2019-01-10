@@ -26,10 +26,6 @@ pub trait TermBuilder : SortBuilder {
     type Term : Clone + Debug;
     type Var : Clone + Debug; // bound variable
 
-    /// Builtins
-
-    fn get_builtin(&self, op: Op) -> Self::Fun;
-
     /// Term from a bound variable
     fn var(&mut self, v: Self::Var) -> Self::Term;
 
@@ -38,6 +34,9 @@ pub trait TermBuilder : SortBuilder {
 
     /// Build a term by function application
     fn app_fun(&mut self, f: Self::Fun, args: &[Self::Term]) -> Self::Term;
+
+    /// Apply a builtin to some arguments.
+    fn app_op(&mut self, op: Op, args: &[Self::Term]) -> Self::Term;
 
     /// Build a `ite` term
     fn ite(&mut self, _: Self::Term, _: Self::Term, _: Self::Term) -> Self::Term;

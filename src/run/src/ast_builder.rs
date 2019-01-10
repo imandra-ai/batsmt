@@ -53,9 +53,9 @@ mod ast_builder {
 
         fn var(&mut self, v: AST) -> AST { v }
 
-        fn get_builtin(&self, op: parser::BuiltinOp) -> AST {
+        fn app_op(&mut self, op: parser::BuiltinOp, args: &[AST]) -> AST {
             use crate::parser::BuiltinOp::*;
-            match op {
+            let f = match op {
                 True => self.b.true_,
                 False => self.b.false_,
                 Imply => self.b.imply_,
@@ -64,7 +64,8 @@ mod ast_builder {
                 Eq => self.b.eq,
                 Not => self.b.not_,
                 Distinct => self.b.distinct,
-            }
+            };
+            self.m.m.mk_app(f, args)
         }
 
         fn declare_fun(&mut self, f: Atom, args: &[AST], ret: AST) -> Self::Fun {

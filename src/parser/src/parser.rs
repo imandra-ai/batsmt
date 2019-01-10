@@ -251,20 +251,22 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
     }
 
     // find function with this name
-    fn find_fun(&self, s: &str) -> Result<B::Fun> {
+    fn find_fun_apply(&mut self, s: &str, args: &[B::Term]) -> Result<B::Term> {
         match s {
-            "true" => Ok(self.build.get_builtin(Op::True)),
-            "false" => Ok(self.build.get_builtin(Op::False)),
-            "and" => Ok(self.build.get_builtin(Op::And)),
-            "or" => Ok(self.build.get_builtin(Op::Or)),
-            "not" => Ok(self.build.get_builtin(Op::Not)),
-            "=>" => Ok(self.build.get_builtin(Op::Imply)),
-            "=" => Ok(self.build.get_builtin(Op::Eq)),
-            "distinct" => Ok(self.build.get_builtin(Op::Distinct)),
+            "true" => Ok(self.build.app_op(Op::True, args)),
+            "false" => Ok(self.build.app_op(Op::False, args)),
+            "and" => Ok(self.build.app_op(Op::And, args)),
+            "or" => Ok(self.build.app_op(Op::Or, args)),
+            "not" => Ok(self.build.app_op(Op::Not, args)),
+            "=>" => Ok(self.build.app_op(Op::Imply, args)),
+            "=" => Ok(self.build.app_op(Op::Eq, args)),
+            "distinct" => Ok(self.build.app_op(Op::Distinct, args)),
             _ => {
-                self.funs.get(s).ok_or_else(|| {
+                let f =
+                    self.funs.get(s).ok_or_else(|| {
                     mk_err(format!("{} is not a known function", &s))
-                }).map(|f| f.clone())
+                })?;
+                Ok(self.build.app_fun(f.clone(), args))
             }
         }
     }
@@ -342,9 +344,8 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
                     },
                     _ => {
                         // function application
-                        let f = self.find_fun(&a)?;
                         let args = self.many_until_paren(|m| m.term())?;
-                        Ok(self.build.app_fun(f.clone(), &args))
+                        self.find_fun_apply(&a, &args)
                     }
                 }
             },
@@ -355,8 +356,7 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
                         Ok(self.build.var(v.clone())) // term from bound var
                     },
                     None => {
-                        let f = self.find_fun(&a)?;
-                        Ok(self.build.app_fun(f.clone(), &[]))
+                        self.find_fun_apply(&a, &[])
                     }
                 }
             }

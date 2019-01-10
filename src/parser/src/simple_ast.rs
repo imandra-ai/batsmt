@@ -154,8 +154,8 @@ impl types::TermBuilder for Builder {
     type Term = Term;
     type Var = Term; // bind variable directly
 
-    fn get_builtin(&self, op: Op) -> Fun {
-        match op {
+    fn app_op(&mut self, op: Op, args: &[Term]) -> Term {
+        let f = match op {
             Op::True => self.true_.clone(),
             Op::False => self.false_.clone(),
             Op::And => self.and_.clone(),
@@ -164,7 +164,8 @@ impl types::TermBuilder for Builder {
             Op::Eq => self.eq.clone(),
             Op::Not => self.not_.clone(),
             Op::Distinct => self.distinct.clone(),
-        }
+        };
+        self.app_fun(f, args)
     }
 
     fn declare_fun(&mut self, name: Atom, args: &[Sort], ret: Sort) -> Fun {
