@@ -533,7 +533,6 @@ impl<C:Ctx> CC1<C> {
         trace!("perform-undo {}", op.pp(m));
         match op {
             UndoOp::SetOk => {
-                debug_assert!(! self.ok);
                 self.ok = true;
                 self.confl.clear();
             },
