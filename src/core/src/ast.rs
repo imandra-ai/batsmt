@@ -472,6 +472,15 @@ pub mod hash_map {
     impl<AST:Eq+Hash, V> SparseMap<AST, V> for HashMap<AST,V> {
         fn new() -> Self { HashMap(FxHashMap::default()) }
     }
+
+    impl<AST:Eq+Hash, V> HashMap<AST,V> {
+        /// New hashmap
+        pub fn new() -> Self { HashMap(FxHashMap::default()) }
+    }
+
+    impl<AST:Hash+Eq,V> gc::HasInternalMemory for HashMap<AST,V> {
+        fn reclaim_unused_memory(&mut self) { self.0.shrink_to_fit() }
+    }
 }
 
 /// Iterate over sub-terms, with an immutable borrow.

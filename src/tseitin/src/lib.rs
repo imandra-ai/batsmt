@@ -8,8 +8,8 @@
 
 use {
     batsmt_core::{
-        ast_u32::{self, AST, }, gc,
-        ast::{self, iter_dag::State as AstIter},
+        ast_u32::{self, AST, }, gc, AstView,
+        ast::{self, AstMap, iter_dag::State as AstIter},
     },
     batsmt_theory::{
         self as theory, TheoryLit, TheoryClauseSet, TheoryClauseRef,
@@ -28,12 +28,40 @@ pub enum View<'a, AST> {
     Atom(AST), // other
 }
 
+/// A relatively big small-vec
+type SVec<T> = smallvec::SmallVec<[T; 6]>;
+
 pub trait Ctx : theory::Ctx {
     /// How to view an AST.
     fn view_as_formula(&self, t: AST) -> View<AST>;
 
-    /// Make an equality.
-    fn mk_eq(&mut self, t: AST, u: AST) -> AST;
+    /// How to build an AST.
+    fn mk_formula(&mut self, v: View<AST>) -> AST;
+
+    fn is_bool(&self, t: AST) -> bool {
+        self.view_as_formula(t).is_bool()
+    }
+    fn is_true(&self, t: AST) -> bool {
+        self.view_as_formula(t).is_true()
+    }
+    fn is_false(&self, t: AST) -> bool {
+        self.view_as_formula(t).is_false()
+    }
+}
+
+impl<'a, AST> View<'a, AST> {
+    #[inline(always)]
+    pub fn is_bool(&self) -> bool {
+        match self { View::Bool(_) => true, _ => false }
+    }
+    #[inline(always)]
+    pub fn is_true(&self) -> bool {
+        match self { View::Bool(true) => true, _ => false }
+    }
+    #[inline(always)]
+    pub fn is_false(&self) -> bool {
+        match self { View::Bool(false) => true, _ => false }
+    }
 }
 
 /// Main state for the Tseitin transformation.
@@ -41,6 +69,7 @@ pub trait Ctx : theory::Ctx {
 /// The state remembers which formulas have been translated to clauses already.
 #[derive(Clone)]
 pub struct Tseitin<C:Ctx> {
+    simp_map: ast::HashMap<AST, AST>, // for simplify
     iter: AstIter<AST, ast_u32::HashSet>, // to traverse subterms
     tmp: Vec<TheoryLit<C>>, // temp clause
     tmp2: Vec<TheoryLit<C>>, // temp clause
@@ -73,7 +102,7 @@ impl<'a,C,LM> LitMapB<'a,C,LM>
                 let t0 = args[0];
                 let t1 = args[1];
                 drop(view_t);
-                let eqn = self.m.mk_eq(t0, t1);
+                let eqn = self.m.mk_formula(View::Eq(t0, t1));
                 ! TheoryLit::new_t(eqn, sign)
             },
             View::Distinct(..) => {
@@ -88,6 +117,109 @@ impl<'a,C,LM> LitMapB<'a,C,LM>
     }
 }
 
+#[derive(Copy,Clone,Debug,PartialEq)]
+enum Conn { And, Or, Imply }
+
+struct SimpStruct<'a, C:Ctx> {
+    m: &'a mut C,
+    map: &'a mut ast::HashMap<AST, AST>,
+}
+
+/// Push each element `t` of `args` into `v`, but if `t=conn(u1…un)` then flatten `u1…un` into `v`
+fn flatten_conn<C:Ctx>(m: &C, conn: Conn, v: &mut SVec<AST>, args: &[AST]) {
+    for (i,t) in args.iter().enumerate() {
+        match m.view_as_formula(*t) {
+            View::And(args2) if conn == Conn::And => {
+                flatten_conn(m, conn, v, args2)
+            },
+            View::Or(args2) if conn == Conn::Or => {
+                flatten_conn(m, conn, v, args2)
+            },
+            View::Imply(args2) if conn == Conn::Imply && i == args.len()-1 => {
+                // only flatten last term
+                flatten_conn(m, conn, v, args2)
+            },
+            View::Bool(true) if conn == Conn::And => (), // skip
+            View::Bool(false) if conn == Conn::Or => (), // skip
+            _ => {
+                v.push(*t)
+            }
+        }
+    }
+}
+
+impl<'a, C:Ctx> SimpStruct<'a, C> {
+    fn simplify_rec(&mut self, t: AST) -> AST {
+        if let Some(u) = self.map.get(&t) {
+            *u // in cache
+        } else {
+            //trace!("simplify-rec {}", ast::pp(self.m, &t));
+            let view_t = self.m.view_as_formula(t);
+            let u = match view_t {
+                View::Bool(..) => t,
+                View::Distinct(args) if args.len() == 1 => {
+                    self.m.mk_formula(View::Bool(true))
+                },
+                View::Eq(t, u) if t==u => {
+                    self.m.mk_formula(View::Bool(true))
+                }
+                View::Eq(..) | View::Atom(..) | View::Distinct(..) => {
+                    // just map one level.
+                    drop(view_t);
+                    match self.m.view(&t) {
+                        AstView::Const(_) => t,
+                        AstView::App{f, args} => {
+                            let mut args: SVec<AST> = args.iter().cloned().collect();
+                            let f = self.simplify_rec(f);
+                            for u in args.iter_mut() { *u = self.simplify_rec(*u) }
+                            self.m.mk_app(f, &args[..])
+                        }
+                    }
+                },
+                View::Not(u) => {
+                    let u = self.simplify_rec(u);
+                    self.m.mk_formula(View::Not(u))
+                }
+                View::And(args0) => {
+                    let mut args = SVec::new();
+                    flatten_conn(self.m, Conn::And, &mut args, args0);
+                    for u in args.iter_mut() { *u = self.simplify_rec(*u) }
+                    if args.iter().any(|u| self.m.is_false(*u)) {
+                        self.m.mk_formula(View::Bool(false)) // shortcut
+                    } else {
+                        self.m.mk_formula(View::And(&args))
+                    }
+                }
+                View::Or(args0) => {
+                    let mut args = SVec::new();
+                    flatten_conn(self.m, Conn::Or, &mut args, args0);
+                    for u in args.iter_mut() { *u = self.simplify_rec(*u) }
+                    if args.iter().any(|u| self.m.is_true(*u)) {
+                        self.m.mk_formula(View::Bool(true)) // shortcut
+                    } else {
+                        self.m.mk_formula(View::Or(&args))
+                    }
+                },
+                View::Imply(args0) => {
+                    assert!(args0.len() >= 1);
+                    let mut args = SVec::new();
+                    flatten_conn(self.m, Conn::Imply, &mut args, args0);
+                    for u in args.iter_mut() { *u = self.simplify_rec(*u) }
+
+                    let n = args.len();
+                    if self.m.is_true(args[n-1]) || args[..n-1].iter().any(|&u| self.m.is_false(u)) {
+                        self.m.mk_formula(View::Bool(true)) // shortcut
+                    } else {
+                        self.m.mk_formula(View::Imply(&args))
+                    }
+                },
+            };
+            self.map.insert(t, u);
+            u
+        }
+    }
+}
+
 impl<C> Tseitin<C> where C: Ctx {
     /// Create a new Tseitin transformation
     pub fn new() -> Self {
@@ -96,6 +228,7 @@ impl<C> Tseitin<C> where C: Ctx {
             tmp2: Vec::new(),
             tmp_ast: vec!(),
             iter: ast::iter_dag::new(),
+            simp_map: ast::HashMap::new(),
             cs: TheoryClauseSet::new(),
         }
     }
@@ -109,9 +242,12 @@ impl<C> Tseitin<C> where C: Ctx {
     }
 
     /// Simplify boolean expressions.
-    pub fn simplify(&mut self, _m: &mut C, t: AST) -> AST {
-        let u = t; // TODO
-        debug!("tseitin.simplify\nfrom {}\nto {}", ast::pp(_m,&t), ast::pp(_m,&u));
+    pub fn simplify(&mut self, m: &mut C, t: AST) -> AST {
+        let mut simp = SimpStruct{m, map: &mut self.simp_map};
+        let u = simp.simplify_rec(t);
+        if t != u {
+            debug!("tseitin.simplify\nfrom {}\nto {}", ast::pp(m,&t), ast::pp(m,&u));
+        }
         u
     }
 
@@ -238,7 +374,7 @@ impl<C> Tseitin<C> where C: Ctx {
                         for j in i+1 .. args.len() {
                             let t_j = args[j];
                             let eqn_i_j = {
-                                let t = m.mk_eq(t_i, t_j);
+                                let t = m.mk_formula(View::Eq(t_i, t_j));
                                 TheoryLit::new_t(t, true)
                             };
 
@@ -273,6 +409,7 @@ impl<C> gc::HasInternalMemory for Tseitin<C> where C: Ctx {
         self.tmp_ast.shrink_to_fit();
         self.cs.reclaim_unused_memory();
         self.iter.reclaim_unused_memory();
+        self.simp_map.reclaim_unused_memory();
     }
 }
 

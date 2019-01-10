@@ -57,7 +57,7 @@ pub mod ctx {
     }
 
     impl tseitin::Ctx for Ctx {
-        fn view_as_formula(&self, t: AST) -> tseitin::View<AST> {
+        fn view_as_formula(&self, t: AST) -> FView<AST> {
             if t == self.b.true_ { tseitin::View::Bool(true) }
             else if t == self.b.false_ { tseitin::View::Bool(true) }
             else {
@@ -87,8 +87,38 @@ pub mod ctx {
                 }
             }
         }
-        fn mk_eq(&mut self, t: AST, u: AST) -> AST {
-            self.m.mk_app(self.b.eq, &[t, u])
+        fn mk_formula(&mut self, v: FView<AST>) -> AST {
+            match v {
+                FView::Atom(t) => t,
+                FView::Bool(true) => self.b.true_,
+                FView::Bool(false) => self.b.false_,
+                FView::Eq(t,u) if t == u => self.b.true_,
+                FView::Eq(t,u) => self.m.mk_app(self.b.eq, &[t, u]),
+                FView::Distinct(args) => self.m.mk_app(self.b.distinct, args),
+                FView::Not(t) => {
+                    match self.view_as_formula(t) {
+                        FView::Bool(true) => self.b.false_,
+                        FView::Bool(false) => self.b.true_,
+                        FView::Not(u) => u,
+                        _ => self.m.mk_app(self.b.not_, &[t]),
+                    }
+                },
+                FView::And(args) => {
+                    if args.len() == 0 { self.b.true_ }
+                    else if args.len() == 1 { args[0] }
+                    else { self.m.mk_app(self.b.and_, args) }
+                },
+                FView::Or(args) => {
+                    if args.len() == 0 { self.b.false_ }
+                    else if args.len() == 1 { args[0] }
+                    else { self.m.mk_app(self.b.or_, args) }
+                },
+                FView::Imply(args) => {
+                    assert_ne!(args.len(), 0);
+                    if args.len() == 1 { args[0] }
+                    else { self.m.mk_app(self.b.imply_, args) }
+                },
+            }
         }
     }
 

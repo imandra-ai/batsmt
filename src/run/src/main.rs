@@ -9,7 +9,7 @@ mod ast_printer;
 
 use {
     std::{env,fs,error::Error},
-    batsmt_core::Chrono,
+    batsmt_core::{Chrono, gc::HasInternalMemory, },
     batsmt_cc as cc,
     batsmt_parser::{self as parser, Statement},
     batsmt_tseitin::Tseitin,
@@ -68,6 +68,7 @@ fn main() -> Result<(), Box<Error>> {
                 }
             },
             Statement::CheckSat => {
+                tseitin.reclaim_unused_memory();
                 let r = solver.solve(&mut c);
                 println!("{:?}", r)
             },
