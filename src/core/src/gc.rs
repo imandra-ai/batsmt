@@ -1,6 +1,8 @@
 
 //! Main Interface for GC
 
+use {std::collections::{HashMap, }};
+
 pub trait HasInternalMemory {
     /// Free unused internal memory, as much as possible.
     ///
@@ -29,3 +31,10 @@ pub trait GC : HasInternalMemory {
     fn collect(&mut self) -> usize;
 }
 
+impl<T> HasInternalMemory for Vec<T> {
+    fn reclaim_unused_memory(&mut self) { self.shrink_to_fit() }
+}
+
+impl<K:Eq+std::hash::Hash,V> HasInternalMemory for HashMap<K,V> {
+    fn reclaim_unused_memory(&mut self) { self.shrink_to_fit() }
+}

@@ -4,6 +4,8 @@
 //! See [wikipedia](https://en.wikipedia.org/wiki/Tseytin_transformation)
 //! for a primer.
 
+#[macro_use] extern crate log;
+
 use {
     batsmt_core::{
         ast_u32::{self, AST, }, gc,
@@ -61,7 +63,7 @@ struct LitMapB<'a, C:Ctx, LM: LitMap<C::B>> {
 }
 
 impl<'a,C,LM> LitMapB<'a,C,LM>
-    where C: Ctx, LM:LitMap<C::B> 
+    where C: Ctx, LM:LitMap<C::B>
 {
     /// Map `t,sign` to either a theory literal, or a lazy pure boolean literal
     fn term_to_lit(&mut self, t: &AST) -> TheoryLit<C> {
@@ -116,6 +118,13 @@ impl<C> Tseitin<C> where C: Ctx {
         self.iter.clear();
     }
 
+    /// Simplify boolean expressions.
+    pub fn simplify(&mut self, _m: &mut C, t: AST) -> AST {
+        let u = t; // TODO
+        debug!("tseitin.simplify\nfrom {}\nto {}", ast::pp(_m,&t), ast::pp(_m,&u));
+        u
+    }
+
     /// `tseitin.clauses(t)` turns the boolean term `t` into a set of clauses.
     ///
     /// The clauses define boolean connectives occurring inside `t`.
@@ -128,8 +137,7 @@ impl<C> Tseitin<C> where C: Ctx {
     {
         self.cs.clear();
 
-        let Tseitin {
-            b, ref mut tmp_ast, ref mut cs, ref mut tmp, ref mut tmp2, ..} = self;
+        let Tseitin { b, tmp_ast, cs, tmp, tmp2, ..} = self;
 
         {
             // traverse `t` as a DAG
@@ -276,6 +284,8 @@ impl<C> gc::HasInternalMemory for Tseitin<C> where C: Ctx {
         self.tmp.shrink_to_fit();
         self.tmp2.shrink_to_fit();
         self.tmp_ast.shrink_to_fit();
+        self.cs.reclaim_unused_memory();
+        self.iter.reclaim_unused_memory();
     }
 }
 

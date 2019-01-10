@@ -421,6 +421,10 @@ pub mod hash_set {
     }
 
     impl<AST:Clone+Hash+Eq> SparseSet<AST> for HashSet<AST> {}
+
+    impl<AST:Hash+Eq> gc::HasInternalMemory for HashSet<AST> {
+        fn reclaim_unused_memory(&mut self) { self.0.shrink_to_fit() }
+    }
 }
 
 /// A hashmap whose keys are AST nodes.
@@ -564,7 +568,7 @@ pub mod iter_dag {
         }
 
         /// Iterate over the given AST `t`, calling `f` on every subterm once.
-        /// 
+        ///
         /// This version threads a mutable context `&mut M`.
         ///
         /// ## Params

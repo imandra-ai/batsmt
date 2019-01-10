@@ -13,7 +13,7 @@
 
 use {
     std::{ops::{Deref,Not}, hash::Hash, fmt},
-    batsmt_core::{ backtrack::Backtrackable, ast, ast_u32, },
+    batsmt_core::{ backtrack::Backtrackable, ast, ast_u32, gc, },
     batsmt_pretty as pp,
 };
 
@@ -406,6 +406,13 @@ mod theory_clause_set {
                 self.idx += 1;
                 Some(TheoryClauseRef{lits: &cs.lits[off..off+len]})
             }
+        }
+    }
+
+    impl<C:Ctx> gc::HasInternalMemory for TheoryClauseSet<C> {
+        fn reclaim_unused_memory(&mut self) {
+            self.lits.shrink_to_fit();
+            self.offsets.shrink_to_fit();
         }
     }
 }
