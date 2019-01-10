@@ -1,11 +1,11 @@
 
 use {
-    batsmt_core::{ast, ast_u32::AST},
+    batsmt_core::{ast, ast_u32::AST, Manager, AstView},
     batsmt_hast::{HManager, StrSymbolManager},
     batsmt_theory::{self as theory, LitMapBuiltins},
     batsmt_cc as cc,
     batsmt_solver as solver,
-    batsmt_tseitin as tseitin,
+    batsmt_tseitin::{self as tseitin, View as FView, }
 };
 
 /// The Manager we use.
@@ -56,6 +56,42 @@ pub mod ctx {
         type B = solver::BLit;
     }
 
+    impl tseitin::Ctx for Ctx {
+        fn view_as_formula(&self, t: AST) -> tseitin::View<AST> {
+            if t == self.b.true_ { tseitin::View::Bool(true) }
+            else if t == self.b.false_ { tseitin::View::Bool(true) }
+            else {
+                match self.m.view(t) {
+                    AstView::Const(_) => FView::Atom(t),
+                    AstView::App{f, args} if f == self.b.not_ => {
+                        debug_assert_eq!(args.len(), 1);
+                        FView::Not(args[0])
+                    },
+                    AstView::App{f, args} if f == self.b.eq => {
+                        debug_assert_eq!(args.len(), 2);
+                        FView::Eq(args[0], args[1])
+                    },
+                    AstView::App{f, args} if f == self.b.distinct => {
+                        FView::Distinct(args)
+                    },
+                    AstView::App{f, args} if f == self.b.imply_ => {
+                        FView::Imply(args)
+                    },
+                    AstView::App{f, args} if f == self.b.and_ => {
+                        FView::And(args)
+                    },
+                    AstView::App{f, args} if f == self.b.or_ => {
+                        FView::Or(args)
+                    },
+                    AstView::App{..} => FView::Atom(t),
+                }
+            }
+        }
+        fn mk_eq(&mut self, t: AST, u: AST) -> AST {
+            self.m.mk_app(self.b.eq, &[t, u])
+        }
+    }
+
     impl ast::HasManager for Ctx {
         type M = M;
         fn m(&self) -> &Self::M { &self.m }
@@ -90,13 +126,6 @@ mod builtins {
         fn into(self) -> cc::Builtins<AST> {
             let Builtins {true_, false_, eq, distinct, not_, ..} = self;
             cc::Builtins {true_,false_,eq,distinct,not_}
-        }
-    }
-
-    impl Into<tseitin::Builtins> for Builtins {
-        fn into(self) -> tseitin::Builtins {
-            let Builtins {true_,false_,and_,or_,not_,imply_,eq,distinct, ..} = self;
-            tseitin::Builtins {true_,false_,and_,or_,not_,imply_,eq,distinct}
         }
     }
 

@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<Error>> {
     let mut solver = solver::Solver::new(c.builtins(), th);
 
     // Tseitin transformation, to handle formulas
-    let mut tseitin = Tseitin::new(c.builtins());
+    let mut tseitin = Tseitin::new();
 
     for s in &stmts {
         debug!("parsed statement {}", PP::new(&c, s.clone()));
