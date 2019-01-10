@@ -1,7 +1,7 @@
 [[package]]
 name = "batsat"
-version = "0.2.0"
-source = "git+https://github.com/c-cube/batsat#2a5e3c60eb3911b7638275991984690e8782413b"
+version = "0.3.0"
+source = "git+https://github.com/c-cube/batsat#1268e344922724d03ae192f8f70869644520c721"
 dependencies = [
  "bit-vec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -90,7 +90,7 @@ dependencies = [
 name = "batsmt-solver"
 version = "0.1.0"
 dependencies = [
- "batsat 0.2.0 (git+https://github.com/c-cube/batsat)",
+ "batsat 0.3.0 (git+https://github.com/c-cube/batsat)",
  "batsmt-core 0.1.0",
  "batsmt-pretty 0.1.0",
  "batsmt-theory 0.1.0",
@@ -448,7 +448,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [metadata]
-"checksum batsat 0.2.0 (git+https://github.com/c-cube/batsat)" = "<none>"
+"checksum batsat 0.3.0 (git+https://github.com/c-cube/batsat)" = "<none>"
 "checksum bit-set 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)" = "6f1efcc46c18245a69c38fcc5cc650f16d3a59d034f3106e9ed63748f695730a"
 "checksum bit-vec 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)" = "4440d5cb623bb7390ae27fec0bb6c61111969860f8e3ae198bfa0663645e67cf"
 "checksum bitflags 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)" = "228047a76f468627ca71776ecdebd732a3423081fcf5125585bcd7c49886ce12"
