@@ -215,6 +215,7 @@ mod prop_cc {
     {
         let b = m.b();
         let mut ncc = NaiveCC0::new(b.clone());
+        let mut acts = theory::SimpleActions::new(|| unimplemented!("new lit"));
 
         for lit in i {
             let lit = lit.into();
@@ -231,8 +232,8 @@ mod prop_cc {
         }
 
         let ctx = &mut m.0.borrow_mut().m;
-        let r = ncc.final_check(ctx);
-        r.is_ok()
+        ncc.final_check(ctx, &mut acts);
+        acts.get().is_ok()
     }
 
     fn check_cube_is_unsat(m: &AstGen, cube: &[TermLit]) -> bool {
@@ -251,6 +252,7 @@ mod prop_cc {
             let mut st = Stack::new(); // just accumulate lits
             let mut ncc = NaiveCC0::new(m.b());
             let b = m.b();
+            let mut acts = theory::SimpleActions::new(|| unimplemented!("new lit"));
 
             for &op in ops.iter() {
                 match op {
@@ -260,6 +262,7 @@ mod prop_cc {
                         ncc.push_level(ctx);
                     },
                     Op::PopLevels(n) => {
+                        acts.clear();
                         let ctx = &mut m.0.borrow_mut().m;
                         st.pop_levels(n, |_| ());
                         ncc.pop_levels(ctx, n);
@@ -284,7 +287,8 @@ mod prop_cc {
                         let r_ncc = {
                             let mut mr = m.0.borrow_mut();
                             let ctx = &mut mr.m;
-                            ncc.final_check(ctx)
+                            ncc.final_check(ctx, &mut acts);
+                            acts.get()
                         };
                         let sat1 = r_ncc.is_ok();
 
@@ -299,7 +303,7 @@ mod prop_cc {
 
                         // conflict returned by `ncc`, if any, must be valid
                         if let Err(confl) = r_ncc {
-                            let lits = confl.0.iter().map(|lit| ! *lit);
+                            let lits = confl.iter().map(|lit| ! *lit);
                             let confl_sat = check_lits_sat(m, lits);
 
                             prop_assert!(! confl_sat, "ncc-incremental.conflict is sat");
@@ -327,6 +331,8 @@ mod prop_cc {
                 CC0::new(m, b)
             };
             let mut ncc = NaiveCC0::new(m.b());
+            let mut acts = theory::SimpleActions::new(|| unimplemented!("new lit"));
+            let mut nacts = theory::SimpleActions::new(|| unimplemented!("new lit"));
             let b = m.b();
 
             // add literals, for propagations
@@ -352,6 +358,8 @@ mod prop_cc {
                         stack.push_level();
                     },
                     Op::PopLevels(n) => {
+                        acts.clear();
+                        nacts.clear();
                         let ctx = &mut m.0.borrow_mut().m;
                         cc.pop_levels(ctx,n);
                         ncc.pop_levels(ctx,n);
@@ -376,15 +384,16 @@ mod prop_cc {
                         let r1 = {
                             let mut mr = m.0.borrow_mut();
                             let ctx = &mut mr.m;
-                            cc.partial_check(ctx)
+                            cc.partial_check(ctx, &mut acts);
+                            acts.get()
                         };
 
                         match r1 {
-                            Ok(props) => {
+                            Ok((props,_)) => {
                                 let props = props.clone();
                                 drop(r1);
                                 // check each propagation using a copy of `ncc`
-                                for lit in props.iter() {
+                                for lit in props.iter().cloned() {
                                     check_propagation(m, lit, stack.as_slice());
                                     let expl = {
                                         let ctx = &mut m.0.borrow_mut().m;
@@ -397,7 +406,7 @@ mod prop_cc {
                             },
                             Err(confl) => {
                                 // check conflict, using a fresh new naiveCC
-                                check_confl(m, &confl.0);
+                                check_confl(m, &confl);
                             }
                         }
                     },
@@ -406,9 +415,9 @@ mod prop_cc {
                         let (r1,r2) = {
                             let mut mr = m.0.borrow_mut();
                             let ctx = &mut mr.m;
-                            let r1 = cc.final_check(ctx);
-                            let r2 = ncc.final_check(ctx);
-                            (r1,r2)
+                            cc.final_check(ctx, &mut acts);
+                            ncc.final_check(ctx, &mut nacts);
+                            (acts.get(),nacts.get())
                         };
 
                         // must agree on satisfiability
@@ -417,11 +426,11 @@ mod prop_cc {
                         prop_assert_eq!(sat1, sat2, "cc.sat: {}, ncc.sat: {}", sat1, sat2);
 
                         match r1 {
-                            Ok(props) => {
+                            Ok((props,_)) => {
                                 let props = props.clone();
                                 drop(r1);
                                 // check each propagation using a copy of `ncc`
-                                for lit in props.iter() {
+                                for lit in props.iter().cloned() {
                                     check_propagation(m, lit, &stack.as_slice());
                                     let expl = {
                                         let ctx = &mut m.0.borrow_mut().m;
@@ -434,7 +443,7 @@ mod prop_cc {
                             },
                             Err(confl) => {
                                 // check conflict, using a fresh new naiveCC
-                                check_confl(m, &confl.0);
+                                check_confl(m, &confl);
                             }
                         }
                     }
