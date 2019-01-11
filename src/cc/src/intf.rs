@@ -1,9 +1,34 @@
 
 use {
+    std::{hash::Hash, fmt, },
+    batsmt_theory::{self as theory, Actions},
     batsmt_core::{backtrack, },
-    batsmt_theory::Ctx,
-    crate::{types::*},
 };
+
+/// A view of terms adapted for the congruence closure.
+#[derive(Debug,Clone)]
+pub enum CCView<'a,Fun,AST> {
+    Bool(bool),
+    Apply(&'a Fun, &'a [AST]),
+    ApplyHO(&'a AST, &'a [AST]),
+    Eq(&'a AST, &'a AST),
+    Distinct(&'a [AST]),
+    Opaque(&'a AST), // a foreign term
+}
+
+/// The context needed by the congruence closure.
+///
+/// It provides a notion of boolean literals, functions, terms, as well as
+/// a way to deconstruct terms in the most convenient way.
+pub trait Ctx : theory::Ctx {
+    type Fun : Eq + Hash + Clone;
+
+    /// View a term as an equality or function application.
+    fn view_as_cc_term(&self, t: &Self::AST) -> CCView<Self::Fun, Self::AST>;
+
+    /// Obtain true/false terms.
+    fn get_bool_term(&self, b: bool) -> Self::AST;
+}
 
 /// Interface satisfied by implementations of the congruence closure.
 pub trait CC<C: Ctx> : backtrack::Backtrackable<C> {

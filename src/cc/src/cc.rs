@@ -16,12 +16,18 @@
 use {
     std::{ u32, ptr, hash::Hash, fmt::Debug, },
     batsmt_core::{ast::{self,AstMap,DenseMap,View}, backtrack, ast_u32, },
+<<<<<<< HEAD
     batsmt_theory::{Ctx as ThCtx,BoolLit},
     fxhash::FxHashMap,
     batsmt_pretty as pp,
     crate::{
         types::{Ctx, Actions }, Builtins, CCInterface, SVec,
     },
+=======
+    batsmt_theory::BoolLit,
+    batsmt_pretty::{self as pp, Pretty1},
+    crate::{ Ctx, Actions, CCInterface, SVec, },
+>>>>>>> wip: use custom view for CC
 };
 
 enum TraverseTask<AST> {
@@ -31,12 +37,18 @@ enum TraverseTask<AST> {
 
 /// The congruence closure.
 pub struct CC<C:Ctx> {
+<<<<<<< HEAD
     b: Builtins<C::AST>,
     n_true: NodeID,
     n_false: NodeID,
     pending: Vec<NodeID>, // update signatures
     combine: Vec<(NodeID,NodeID,Expl<C::B>)>, // merge
     undo: backtrack::Stack<UndoOp>,
+=======
+    pending: Vec<C::AST>, // update signatures
+    combine: Vec<(C::AST,C::AST,Expl<C::AST,C::B>)>, // merge
+    undo: backtrack::Stack<UndoOp<C::AST>>,
+>>>>>>> wip: use custom view for CC
     props: Vec<C::B>, // local for propagations
     expl_st: Vec<Expl<C::B>>, // to expand explanations
     tmp_sig: Signature, // for computing signatures
@@ -149,9 +161,15 @@ struct Signature(SVec<Repr>);
 // implement main interface
 impl<C:Ctx> CCInterface<C> for CC<C> {
     fn merge(&mut self, m: &C, t1: C::AST, t2: C::AST, lit: C::B) {
+<<<<<<< HEAD
         debug!("merge {} and {} (expl {:?})", pp::pp1(m,&t1), pp::pp1(m,&t2), lit);
         let n1 = self.add_term(m, t1);
         let n2 = self.add_term(m, t2);
+=======
+        debug!("merge {} and {} (expl {:?})", pp_term(m,&t1), pp_term(m,&t2), lit);
+        self.add_term(m, t1);
+        self.add_term(m, t2);
+>>>>>>> wip: use custom view for CC
         let expl = Expl::Lit(lit);
         self.combine.push((n1,n2,expl));
     }
@@ -268,6 +286,7 @@ impl<C:Ctx> CC<C> {
 // main congruence closure operations
 impl<C:Ctx> CC<C> {
     /// Create a new congruence closure.
+<<<<<<< HEAD
     pub fn new(_m: &mut C, b: Builtins<C::AST>) -> Self {
         let mut cc1 = CC1::new();
         // add builtins
@@ -278,6 +297,18 @@ impl<C:Ctx> CC<C> {
         CC{
             b,
             n_true, n_false,
+=======
+    pub fn new(m: &mut C) -> Self {
+        let map = ast_u32::DenseMap::new(Node::sentinel());
+        let mut cc1 = CC1::new(map);
+        // add builtins
+        let true_ = m.get_bool_term(true);
+        let false_ = m.get_bool_term(false);
+        debug_assert_ne!(true_, false_);
+        cc1.nodes.insert(true_, Node::new(true_));
+        cc1.nodes.insert(false_, Node::new(false_));
+        CC{
+>>>>>>> wip: use custom view for CC
             pending: vec!(),
             combine: vec!(),
             props: vec!(),
@@ -348,6 +379,10 @@ impl<C:Ctx> CC<C> {
 
         let n = &mut self.cc1[t];
         if n.as_lit.is_none() {
+<<<<<<< HEAD
+=======
+            debug!("map term {} to literal {:?}", pp_term(m,&t), lit);
+>>>>>>> wip: use custom view for CC
             n.as_lit = Some(lit);
             debug!("map term {} to literal {:?}", pp::pp2(self,m,&t), lit);
             self.undo.push_if_nonzero(UndoOp::UnmapLit(t));
@@ -380,10 +415,15 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
     fn merge(&mut self, m: &C, mut a: NodeID, mut b: NodeID, expl: Expl<C::B>) {
         let mut ra = self.cc1.nodes.find(a);
         let mut rb = self.cc1.nodes.find(b);
+<<<<<<< HEAD
         debug_assert!(self.cc1.is_root(ra.0), "{}.repr = {}",
             pp::pp2(self.cc1,m,&a), pp::pp2(self.cc1,m,&ra.0));
         debug_assert!(self.cc1.is_root(rb.0), "{}.repr = {}",
             pp::pp2(self.cc1,m,&b), pp::pp2(self.cc1,m,&rb.0));
+=======
+        debug_assert!(self.cc1.is_root(ra.0), "{}.repr = {}", pp_term(m,&a), pp_term(m,&ra.0));
+        debug_assert!(self.cc1.is_root(rb.0), "{}.repr = {}", pp_term(m,&b), pp_term(m,&rb.0));
+>>>>>>> wip: use custom view for CC
 
         if ra == rb {
             return; // done already
@@ -399,12 +439,24 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
 
         // merge smaller one into bigger one, except that booleans are
         // always representatives
+<<<<<<< HEAD
         if rb.0 == self.n_true || rb.0 == self.n_false {
             // conflict: merge true with false (since they are distinct)
             if ra.0 == self.n_true || ra.0 == self.n_false {
                 // generate conflict from `expl`, `a == ra`, `b == rb`
                 trace!("generate conflict from merge of true/false from {} and {}",
                        pp::pp2(self.cc1,m,&a), pp::pp2(self.cc1,m,&b));
+=======
+        let view_a = m.view_as_cc_term(ra.0);
+        let view_b = m.view_as_cc_term(rb.0);
+        if let CCView::Bool(rb_bool) = view_b {
+            // conflict: merge true with false (since they are distinct)
+            if let CCView::Bool(ra_bool) = view_a {
+                // generate conflict from `expl`, `a == ra`, `b == rb`
+                trace!("generate conflict from merge of true/false from {} and {}",
+                       pp_term(m,&a), pp_term(m,&b));
+                assert_ne!(ra_bool, rb_bool);
+>>>>>>> wip: use custom view for CC
                 self.cc1.ok = false;
                 self.undo.push_if_nonzero(UndoOp::SetOk);
                 {
@@ -419,10 +471,14 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
                 trace!("inconsistent set of explanations: {:?}", &self.cc1.confl);
                 return;
             } else {
-                // merge into true/false
+                // merge into true/false, not the other way around
                 std::mem::swap(&mut ra, &mut rb);
             }
+<<<<<<< HEAD
         } else if ra.0 == self.n_true || ra.0 == self.n_false {
+=======
+        } else if let CCView::Bool(_) = view_a {
+>>>>>>> wip: use custom view for CC
             // `ra` must be repr
         } else if na.len() < nb.len() {
             // swap a and b
@@ -432,7 +488,11 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
         drop(na);
         drop(nb);
 
+<<<<<<< HEAD
         trace!("merge {} into {}", pp::pp2(self.cc1,m,&rb.0), pp::pp2(self.cc1,m,&ra.0));
+=======
+        trace!("merge {} into {}", pp_term(m,&rb.0), pp_term(m,&ra.0));
+>>>>>>> wip: use custom view for CC
 
         // update forest tree so that `b --[expl]--> a`.
         // Note that here we link `a` and `b`, not their representatives.
@@ -463,11 +523,18 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
         let MergePhase{cc1, b: bs, props, lit_expl, n_true, n_false, ..} = self;
 
         // if ra is {true,false}, propagate lits
+<<<<<<< HEAD
         if ra.0 == cc1.nodes.n_true || ra.0 == cc1.nodes.n_false {
             trace!("{}.class: look for propagations", pp::pp2(*cc1,m,&rb.0));
             let rb_t = cc1[rb.0].ast;
             cc1.nodes.iter_class(rb, |n| {
                 trace!("... {}.iter_class: check {}", pp::pp1(m,&rb_t), pp::pp1(m,&n.ast));
+=======
+        if ra.0 == bs.true_ || ra.0 == bs.false_ {
+            trace!("{}.class: look for propagations", pp_term(m,&rb.0));
+            cc1.nodes.iter_class(rb, |n| {
+                trace!("... {}.iter_class: check {}", pp_term(m,&rb.0), pp_term(m,&n.id));
+>>>>>>> wip: use custom view for CC
                 n.root = ra; // while we're there, we can merge eagerly.
 
                 // if a=true/false, and `n` has a literal, propagate the literal
@@ -481,13 +548,21 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
                         };
                         if ra.0 == *n_true {
                             trace!("propagate literal {:?} (for true≡{}, {:?})",
+<<<<<<< HEAD
                                 lit, pp::pp1(m,&n.ast), &expl);
+=======
+                                lit, pp_term(m,&n.id), &expl);
+>>>>>>> wip: use custom view for CC
                             props.push(lit);
                         } else {
                             debug_assert_eq!(ra.0, *n_false);
                             lit = !lit;
                             trace!("propagate literal {:?} (for false≡{}, {:?})",
+<<<<<<< HEAD
                                 lit, pp::pp1(m,&n.ast), &expl);
+=======
+                                lit, pp_term(m,&n.id), &expl);
+>>>>>>> wip: use custom view for CC
                             props.push(lit);
                         }
                         lit_expl.insert(lit, e);
@@ -529,11 +604,18 @@ impl<'a, C:Ctx> UpdateSigPhase<'a,C> {
             View::Const(_) => (),
             View::App {f, args} if f == bs.eq => {
                 // do not compute a signature, but check if `args[0]==args[1]`
+<<<<<<< HEAD
                 // TODO: store View<NodeID> directly in the nodes, to avoid this step
                 let a = cc1.nodes.get_term_id(&args[0]);
                 let b = cc1.nodes.get_term_id(&args[1]);
                 if cc1.nodes.is_eq(a,b) {
                     trace!("merge {} with true by eq-rule", pp::pp1(m,&t));
+=======
+                let a = args[0];
+                let b = args[1];
+                if self.cc1.nodes.is_eq(a,b) {
+                    trace!("merge {} with true by eq-rule", pp_term(m,&t));
+>>>>>>> wip: use custom view for CC
                     let expl = Expl::AreEq(a,b);
                     combine.push((n, cc1.nodes.n_true, expl))
                 }
@@ -549,9 +631,15 @@ impl<'a, C:Ctx> UpdateSigPhase<'a,C> {
                     Some(u) if n == *u => (), // same node
                     Some(u) => {
                         // collision, merge `t` and `u` as they are congruent
+<<<<<<< HEAD
                         trace!("merge by congruence: {} and {}", pp::pp1(m,&t), pp::pp2(*cc1,m,u));
                         let expl = Expl::Congruence(n, *u);
                         combine.push((n, *u, expl))
+=======
+                        trace!("merge by congruence: {} and {}", pp_term(m,&t), pp_term(m,u));
+                        let expl = Expl::Congruence(t, *u);
+                        combine.push((t, *u, expl))
+>>>>>>> wip: use custom view for CC
                     }
                 }
             },
@@ -648,8 +736,13 @@ impl<C:Ctx> CC1<C> {
     }
 
     /// Reroot proof forest for the class of `r` so that `r` is the root.
+<<<<<<< HEAD
     fn reroot_forest(&mut self, m: &C, t: NodeID) {
         trace!("reroot-forest-to {}", pp::pp2(self,m,&t));
+=======
+    fn reroot_forest(&mut self, m: &C, t: C::AST) {
+        trace!("reroot-forest-to {}", pp_term(m,&t));
+>>>>>>> wip: use custom view for CC
         let (mut cur_t, mut expl) = {
             let n = &mut self[t];
             match &n.expl {
@@ -818,10 +911,17 @@ impl<'a,C:Ctx> ExplResolve<'a,C> {
     /// onto `self.expl_st`, and leaf literals onto `self.confl`.
     fn explain_eq(&mut self, m: &C, a: NodeID, b: NodeID) {
         if a == b { return }
+<<<<<<< HEAD
         trace!("explain eq of {} and {}", pp::pp2(self.cc1,m,&a), pp::pp2(self.cc1,m,&b));
 
         let common_ancestor = self.cc1.find_expl_common_ancestor(a, b);
         trace!("common ancestor: {}", pp::pp2(self.cc1,m,&common_ancestor));
+=======
+        trace!("explain eq of {} and {}", pp_term(m,&a), pp_term(m,&b));
+
+        let common_ancestor = self.cc1.find_expl_common_ancestor(a, b);
+        trace!("common ancestor: {}", pp_term(m,&common_ancestor));
+>>>>>>> wip: use custom view for CC
         self.explain_along_path(a, common_ancestor);
         self.explain_along_path(b, common_ancestor);
     }
@@ -1085,6 +1185,7 @@ mod expl {
                     ctx.str("lit(").debug(lit).str(")");
                 },
                 Expl::AreEq(a,b) => {
+<<<<<<< HEAD
                     let a = self[*a].ast;
                     let b = self[*b].ast;
                     ctx.str("are-eq(").pp1(m,&a).str(", ").pp1(m,&b).str(")");
@@ -1093,6 +1194,12 @@ mod expl {
                     let a = self[*a].ast;
                     let b = self[*b].ast;
                     ctx.str("congruence(").pp1(m,&a).str(", ").pp1(m,&b).str(")");
+=======
+                    ctx.str("are-eq(").pp(&pp_term(m,a)).str(", ").pp(&pp_term(m,b)).str(")");
+                }
+                Expl::Congruence(a,b) => {
+                    ctx.str("congruence(").pp(&pp_term(m,a)).str(", ").pp(&pp_term(m,b)).str(")");
+>>>>>>> wip: use custom view for CC
                 }
             }
         }
@@ -1103,6 +1210,7 @@ mod expl {
             match op {
                 UndoOp::SetOk => { ctx.str("set-ok"); },
                 UndoOp::Unmerge{root:a,old_root:b} => {
+<<<<<<< HEAD
                     let a = self[a.0].ast;
                     let b = self[b.0].ast;
                     ctx.str("unmerge(").pp1(m,&a).str(", ").pp1(m,&b).str(")");
@@ -1119,6 +1227,18 @@ mod expl {
                 UndoOp::RemoveNode(t) => {
                     let t = self[*t].ast;
                     ctx.str("remove-term(").pp1(m,&t).str(")");
+=======
+                    ctx.str("unmerge(").pp(&pp_term(m,&a.0)).str(", ").pp(&pp_term(m,&b.0)).str(")");
+                },
+                UndoOp::RemoveExplLink(a,b) => {
+                    ctx.str("remove-expl-link(").pp(&pp_term(m,a)).str(", ").pp(&pp_term(m,b)).str(")");
+                },
+                UndoOp::UnmapLit(t) => {
+                    ctx.str("unmap(").pp(&pp_term(m,t)).str(")");
+                },
+                UndoOp::RemoveTerm(t) => {
+                    ctx.str("remove-term(").pp(&pp_term(m,t)).str(")");
+>>>>>>> wip: use custom view for CC
                 }
             }
         }

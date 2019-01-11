@@ -5,7 +5,7 @@ use {
     batsmt_core::{ast::{self, }, backtrack, },
     batsmt_theory::{self as theory},
     batsmt_pretty as pp,
-    crate::{Builtins, CCInterface, Ctx},
+    crate::{CCInterface, Ctx},
 };
 
 #[allow(unused_imports)]
@@ -20,17 +20,17 @@ type CCI<M> = NaiveCC<M>;
 type CCI<M> = CC<M>;
 
 /// A theory built on top of a congruence closure.
+#[repr(transparent)]
 pub struct CCTheory<C:Ctx>{
-    builtins: Builtins<C::AST>,
     cc: CCI<C>,
 }
 
 impl<C:Ctx> CCTheory<C> {
     /// Build a new theory for equality, based on congruence closure.
-    pub fn new(m: &mut C, b: Builtins<C::AST>) -> Self {
-        let cc = CCI::new(m, b.clone());
+    pub fn new(m: &mut C) -> Self {
+        let cc = CCI::new(m);
         debug!("use {}", CCI::<C>::impl_descr());
-        Self { builtins: b, cc }
+        Self { cc }
     }
 
     /// Add trail to the congruence closure, returns `true` if anything was added

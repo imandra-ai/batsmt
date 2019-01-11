@@ -8,10 +8,10 @@ use {
         collections::VecDeque, fmt,
     },
     fxhash::{FxHashMap,FxHashSet},
-    batsmt_core::{ast::View,backtrack},
     batsmt_theory::Ctx,
     batsmt_pretty as pp,
-    crate::{*, types::*},
+    batsmt_core::{backtrack},
+    crate::*,
 };
 
 enum Op<C:Ctx> {
@@ -20,7 +20,6 @@ enum Op<C:Ctx> {
 
 /// A naive implementation of the congruence closure
 pub struct NaiveCC<C:Ctx>{
-    b: Builtins<C::AST>, // builtin terms
     confl: Vec<C::B>,
     ops: backtrack::Stack<Op<C>>, // just keep the set of operations to do here
 }
@@ -37,7 +36,6 @@ struct Solve<'a, C:Ctx> {
     m: &'a C,
     confl: &'a mut Vec<C::B>,
     all_lits: FxHashSet<C::B>, // all literals used in ops so far
-    b: Builtins<C::AST>, // builtin terms
     root: FxHashMap<C::AST, Repr<C::AST>>, // term -> its root + expl
     //root: FxHashMap<AST, (Repr,Option<Expl<B>>)>, // term -> its root + expl
     parents: FxHashMap<Repr<C::AST>, SVec<C::AST>>, // term -> its direct superterms
@@ -65,7 +63,7 @@ impl<C:Ctx> CCInterface<C> for NaiveCC<C> {
         debug!("cc.check()");
         // create local solver
         self.confl.clear();
-        let mut solve = Solve::new(m, self.b.clone(), &mut self.confl);
+        let mut solve = Solve::new(m, &mut self.confl);
         // here is where we do all the work
         let ok = solve.check_internal(self.ops.as_slice());
         if !ok {
@@ -85,9 +83,8 @@ impl<C:Ctx> CCInterface<C> for NaiveCC<C> {
 
 impl<C:Ctx> NaiveCC<C> {
     /// Create a new congruence closure using the given `Manager`
-    pub fn new(b: Builtins<C::AST>) -> Self {
+    pub fn new() -> Self {
         NaiveCC {
-            b,
             confl: vec!(),
             ops: backtrack::Stack::new(),
         }
@@ -105,13 +102,9 @@ impl<C:Ctx> backtrack::Backtrackable<C> for NaiveCC<C> {
 
 // main algorithm
 impl<'a, C:Ctx> Solve<'a, C> {
-    fn new(
-        m: &'a C, b: Builtins<C::AST>,
-        confl: &'a mut Vec<C::B>,
-    ) -> Self
-    {
+    fn new(m: &'a C, confl: &'a mut Vec<C::B>) -> Self {
         let mut s = Solve {
-            m, b: b.clone(),
+            m,
             confl,
             root: FxHashMap::default(),
             parents: FxHashMap::default(),
@@ -119,13 +112,14 @@ impl<'a, C:Ctx> Solve<'a, C> {
             tasks: VecDeque::new(),
         };
         // be sure to add true and false
-        s.add_term(b.true_);
-        s.add_term(b.false_);
+        s.add_term(m.get_bool_term(true));
+        s.add_term(m.get_bool_term(false));
+        debug_assert_ne!(m.get_bool_term(true), m.get_bool_term(false));
         s
     }
 
     /// entry point
-    pub(super) fn check_internal(&mut self, ops: &[Op<C>]) -> bool {
+    pub fn check_internal(&mut self, ops: &[Op<C>]) -> bool {
         trace!("naive-cc.check (ops: {:?})", ops);
         for op in ops.iter() {
             let ok = self.perform_op(op);
@@ -202,18 +196,20 @@ impl<'a, C:Ctx> Solve<'a, C> {
 
             // add arguments to CC, and add `t` to its arguments' parents lists
             match self.m.view(&t) {
-                View::App {f, args} => {
-                    {
-                        self.add_term(f);
-                        self.parents.get_mut(&self.find(f)).unwrap().push(t);
-                    }
+                CCView::App(_, args) | CCView::Distinct(args) => {
                     for &u in args.iter() {
                         self.add_term(u);
                         self.parents.get_mut(&self.find(u)).unwrap().push(t);
                     }
                     self.update_term(t);
                 },
-                View::Const(_) => (),
+                CCView::Eq(a,b) => {
+                    for &u in [a,b].iter() {
+                        self.add_term(u);
+                        self.parents.get_mut(&self.find(u)).unwrap().push(t);
+                    }
+                },
+                CCView::Bool(_) | CCView::Opaque(_) => (),
             };
         }
     }
@@ -248,16 +244,19 @@ impl<'a, C:Ctx> Solve<'a, C> {
     fn congruent(&self, t: C::AST, u: C::AST) -> bool {
         if t == u { return true }
 
-        let ok = match (self.m.view(&t), self.m.view(&u)) {
-            (View::App{f:f1, args:args1}, View::App{f:f2, args: args2}) => {
+        match (self.m.view(&t), self.m.view(&u)) {
+            (CCView::App{f:f1, args:args1}, CCView::App{f:f2, args: args2}) => {
                 args1.len() == args2.len() &&
-                    self.is_eq(f1,f2) &&
+                    f1 == f2 &&
                     args1.iter().zip(args2.iter())
                     .all(|(u1,u2)| self.is_eq(*u1,*u2))
             },
+            (CCView::Eq(a1,b1), CCView::Eq(a2,b2)) => {
+                (self.is_eq(a1, a2) && self.is_eq(b1, b2)) ||
+                (self.is_eq(a1, b2) && self.is_eq(b1, a2))
+            },
             _ => false,
-        };
-        ok
+        }
     }
 
     // merge these two distinct representatives
@@ -290,11 +289,9 @@ impl<'a, C:Ctx> Solve<'a, C> {
 
         for &t in parents_a.iter().chain(parents_b.iter()) {
             match self.m.view(&t) {
-                View::App {f, args} => {
+                CCView::Eq(a,b) if self.is_eq(a,b) => {
                     // `a=b` where a and b are merged --> merge with true
-                    if f == self.b.eq && self.is_eq(args[0], args[1]) {
-                        new_congr.push((t, self.b.true_));
-                    }
+                    new_congr.push((t, self.m.get_bool_term(true)));
                 },
                 _ => ()
             }
@@ -312,38 +309,53 @@ impl<'a, C:Ctx> Solve<'a, C> {
         }
     }
 
+    fn push_congruence(&mut self, t: C::AST, u: C::AST) {
+        trace!("update-term({:?}): merge with {:?}", pp::pp1(m,&t), pp::pp1(m,&u));
+        self.tasks.push_back(Task::Merge(t,u))
+    }
+
+    fn update_term_with_args<I>(&mut self, t: C::AST, args: I)
+        where I: Iterator<Item=C::AST>
+    {
+        let mut new_congr = SVec::new();
+
+        // look in parents of `f` and `args` for congruent terms
+        for &p in args {
+            let rp = self.find(p);
+            let parents_p = self.parents.get(&rp).unwrap();
+
+            for &u in parents_p.iter() {
+                if t != u && self.congruent(t, u) {
+                    new_congr.push((t,u));
+                }
+            }
+        }
+
+        for (t,u) in new_congr {
+            self.push_congruence(t,u)
+        }
+    }
+
     // this new term `t` might be congruent to other terms.
     //
     // Look for these based on t's arguments' parents
     fn update_term(&mut self, t: C::AST) {
-        let m = self.m.clone();
-        match m.view(&t) {
-            View::App {f, args} => {
-                let mut new_congr = SVec::new();
-
-                // look in parents of `f` and `args` for congruent terms
-                for &p in args.iter().chain(Some(f).iter()) {
-                    let rp = self.find(p);
-                    let parents_p = self.parents.get(&rp).unwrap();
-
-                    for &u in parents_p.iter() {
-                        if t != u && self.congruent(t, u) {
-                            new_congr.push((t,u));
-                        }
-                    }
-                }
-
-                // `a=b` where a and b are merged --> merge with true
-                if f == self.b.eq && self.is_eq(args[0], args[1]) {
-                    new_congr.push((t, self.b.true_));
-                }
-
-                for (t,u) in new_congr {
-                    trace!("update-term({:?}): merge with {:?}", pp::pp1(m,&t), pp::pp1(m,&u));
-                    self.tasks.push_back(Task::Merge(t,u))
-                }
+        match self.m.view(&t) {
+            CCView::Bool(_) | CCView::Opaque(_) => (),
+            CCView::Apply(_, args) | CCView::Distinct(args) => {
+                self.update_term_with_args(args.iter())
             },
-            _ => (),
+            CCView::ApplyHO(f, args) => {
+                let args = args.iter().chain(Some(f).iter());
+                self.update_term_with_args(args)
+            },
+            CCView::Eq(a,b) => {
+                if self.is_eq(a,b) {
+                    // `a=b` where a and b are merged --> merge with true
+                    let u = self.m.get_bool_term(true);
+                    self.push_congruence(t, u)
+                }
+            }
         };
     }
 }
