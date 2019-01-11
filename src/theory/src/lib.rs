@@ -463,3 +463,68 @@ pub mod int_lit {
 }
 
 pub type IntLit = int_lit::Lit;
+
+/// Basic actions, mostly useful for testing.
+pub struct SimpleActions<C:Ctx> {
+    confl: Option<Vec<C::B>>,
+    costly: bool,
+    props: Vec<C::B>,
+    lemmas: Vec<Vec<C::B>>,
+    mk_lit: Box<Fn() -> C::B>,
+}
+
+impl<C:Ctx> Actions<C> for SimpleActions<C> {
+    fn has_conflict(&self) -> bool { self.confl.is_some() }
+
+    fn propagate(&mut self, p: C::B) {
+        if !self.has_conflict() {
+            self.props.push(p)
+        }
+    }
+    fn add_lemma(&mut self, c: &[C::B]) {
+        if !self.has_conflict() {
+            self.lemmas.push(c.iter().cloned().collect())
+        }
+    }
+    fn raise_conflict(&mut self, c: &[C::B], costly: bool) {
+        if !self.has_conflict() {
+            self.clear();
+            self.costly = costly;
+            self.confl = Some(c.iter().cloned().collect());
+        }
+    }
+    fn map_lit(&mut self, _m: &C, _lit: TheoryLit<C>) -> C::B {
+        unimplemented!("map-lit")
+    }
+}
+
+impl<C:Ctx> SimpleActions<C> {
+    /// New set of actions.
+    pub fn new<F>(f: F) -> Self
+        where F: 'static + Fn() -> C::B
+    {
+        let mk_lit = Box::new(f);
+        SimpleActions {
+            mk_lit, lemmas: vec!(), props: vec!(),
+            confl: None, costly: false
+        }
+    }
+
+    /// Reset internal state.
+    pub fn clear(&mut self) {
+        self.confl = None;
+        self.props.clear();
+        self.lemmas.clear();
+    }
+
+    /// Get results.
+    ///
+    /// Returns `Ok((props, lemmas))` if the theory deemed the trail satisfiable,
+    /// `Err(conflict)` if `conflict` is a theory lemma that is currently false.
+    pub fn get(&self) -> Result<(&[C::B], &[Vec<C::B>]), &[C::B]> {
+        match &self.confl {
+            Some(c) => Err(c.as_slice()),
+            None => Ok((&self.props, &self.lemmas))
+        }
+    }
+}
