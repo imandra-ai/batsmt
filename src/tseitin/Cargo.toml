@@ -10,3 +10,4 @@ log = "^0.4"
 smallvec = "0.6"
 batsmt-core = {path = "../core"}
 batsmt-theory = {path = "../theory"}
+batsmt-pretty = {path = "../pretty"}

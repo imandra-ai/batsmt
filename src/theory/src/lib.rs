@@ -11,7 +11,7 @@
 
 use {
     std::{ops::{Deref,Not}, hash::Hash, fmt},
-    batsmt_core::{ backtrack::Backtrackable, ast, ast_u32, gc, },
+    batsmt_core::{ backtrack::Backtrackable, ast_u32, gc, },
     batsmt_pretty as pp,
 };
 
@@ -44,13 +44,15 @@ pub trait BoolLitCtx {
 }
 
 /// A theory is parametrized by a `HManager` (with its AST, symbol, etc.) and boolean literals.
-pub trait Ctx : ast_u32::ManagerU32 + BoolLitCtx {}
+pub trait Ctx : ast_u32::ManagerU32 + BoolLitCtx + pp::Pretty1<ast_u32::AST> {}
 
-// auto impl
+/* probably a bad idea.
+// auto-impl
 impl<T> Ctx for T
     where T : ast_u32::ManagerU32,
           T : BoolLitCtx,
           T : pp::Pretty1<ast_u32::AST> {}
+*/
 
 /// A theory-level literal, either a boolean literal, or a boolean term plus a sign.
 ///
@@ -265,7 +267,7 @@ mod theory_lit {
     }
 
     impl<C:Ctx> pp::Pretty1<C> for TheoryLit<C> {
-        fn pp_with(&self, c: &C, ctx: &mut pp::Ctx) {
+        fn pp1_into(&self, c: &C, ctx: &mut pp::Ctx) {
             match self {
                 TheoryLit::B(lit) => {
                     pp::Pretty::pp_into(&pp::dbg(lit), ctx);
@@ -273,12 +275,12 @@ mod theory_lit {
                 TheoryLit::T(t,sign) => {
                     let s = if *sign { "t+" } else { "t-" };
                     ctx.sexp(|ctx| {
-                        ctx.str(s).space().pp(&ast::pp(c,t));
+                        ctx.str(s).space().pp1(c,t);
                     });
                 },
                 TheoryLit::BLazy(t,sign) => {
                     let s = if *sign { "b+" } else { "b-" };
-                    ctx.sexp(|ctx| {ctx.str(s).space().pp(&ast::pp(c,t)); });
+                    ctx.sexp(|ctx| {ctx.str(s).space().pp1(c,t); });
                 },
             }
         }
@@ -326,7 +328,7 @@ mod theory_clause {
 
     // Print a list of literals
     impl<'a,C:Ctx> pp::Pretty1<C> for TheoryClauseRef<'a,C> {
-        fn pp_with(&self, c: &C, ctx: &mut pp::Ctx) {
+        fn pp1_into(&self, c: &C, ctx: &mut pp::Ctx) {
             ctx.sexp(|ctx| {
                 ctx.iter(pp::pair(" ∨", pp::space()),
                     self.lits.iter().map(|lit| lit.pp(c)));

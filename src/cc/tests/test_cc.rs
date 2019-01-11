@@ -4,11 +4,11 @@
 use {
     std::{rc::Rc, fmt},
     fxhash::FxHashMap,
-    batsmt_core::{ast::{self, HasManager, Manager},backtrack::*, ast_u32::{self, AST}},
+    batsmt_core::{ast::{self, HasManager, },backtrack::*, ast_u32::{self, AST}},
     batsmt_cc::*,
     batsmt_hast::*,
-    batsmt_pretty::{self as pp, Pretty1},
-    batsmt_theory::{BoolLit, self as theory, lit_map},
+    batsmt_pretty as pp,
+    batsmt_theory::{BoolLit, self as theory, },
 };
 
 type M = HManager<StrSymbolManager>;
@@ -44,13 +44,6 @@ mod term_lit {
     impl BoolLit for TermLit {
         fn abs(&self) -> Self { TermLit(true, self.1, self.2) }
     }
-
-    impl<M:ast_u32::ManagerU32> pp::Pretty1<M> for TermLit {
-        fn pp_with(&self, m: &M, ctx: &mut pp::Ctx) {
-            let s = if self.sign() {" = "} else {" != "};
-            ctx.pp(&ast::pp(m,&self.1)).str(s).pp(&ast::pp(m,&self.2));
-        }
-    }
 }
 
 struct Ctx(M);
@@ -67,7 +60,21 @@ mod ctx {
         type B = TermLit;
     }
 
+    impl pp::Pretty1<ast_u32::AST> for Ctx {
+        fn pp1_into(&self, t: &ast_u32::AST, ctx: &mut pp::Ctx) {
+            self.m().pp1_into(t, ctx)
+        }
+    }
+
     impl theory::Ctx for Ctx {}
+
+    impl pp::Pretty1<TermLit> for Ctx {
+        fn pp1_into(&self, lit: &TermLit, ctx: &mut pp::Ctx) {
+            let s = if lit.sign() {" = "} else {" != "};
+            ctx.pp1(self,&lit.1).str(s).pp1(self,&lit.2);
+        }
+    }
+
 }
 
 type CC0 = CC<Ctx>;
@@ -75,8 +82,7 @@ type NaiveCC0 = NaiveCC<Ctx>;
 
 // generate a series of operations for the congruence closure
 mod prop_cc {
-    use super::*;
-    use proptest::{prelude::*,test_runner::Config};
+    use {super::*, batsmt_core::ast::Manager, proptest::{prelude::*,test_runner::Config}};
 
     /// Context for generating terms
     #[derive(Clone)]
@@ -464,8 +470,8 @@ mod prop_cc {
         assert!(
             is_unsat,
             "propagation {} should be a tauto in current trail {}, but naive cc returned sat",
-            pp::display(lit.pp(ctx)),
-            pp::display(pp::sexp_iter(trail.iter().map(|x| x.pp(ctx)))),
+            pp::pp1(ctx,&lit),
+            pp::display(pp::sexp_iter(trail.iter().map(|x| pp::pp1(ctx,x)))),
             );
     }
 
@@ -485,19 +491,21 @@ mod prop_cc {
             is_unsat,
             "for propagation ({} => {})\n\
             negated cube {} should be unsat, but naive cc returned sat",
-            pp::display(pp::sexp_iter(expl.iter().map(|x| x.pp(ctx)))),
-            lit.pp(ctx),
-            pp::display(pp::sexp_iter(cube.iter().map(|x| x.pp(ctx)))));
+            pp::display(pp::sexp_iter(expl.iter().map(|x| pp::pp1(ctx,x)))),
+            pp::pp1(ctx,&lit),
+            pp::display(pp::sexp_iter(cube.iter().map(|x| pp::pp1(ctx,x)))));
     }
 
-    // check that the conflict is valid
+    // check that the conflict is a tautology
     fn check_confl(m: &AstGen, confl: &[TermLit]) {
-        let is_unsat = check_cube_is_unsat(m, confl);
+        let cube: Vec<_> = confl.iter().cloned().map(|lit| !lit).collect();
+        let is_unsat = check_cube_is_unsat(m, &cube);
         let ctx = &mut m.0.borrow_mut().m;
 
         //assert!(r.is_err(), "conflict should be unsat");
         assert!(
-            is_unsat, "conflict {:?} should be unsat, but naive cc returned sat",
-            pp::debug(pp::sexp_iter(confl.iter().map(|x| x.pp(ctx)))));
+            is_unsat, "conflict {:?} should be a tautology,\n\
+            but naive cc returned sat for its negation",
+            pp::debug(pp::sexp_iter(confl.iter().map(|x| pp::pp1(ctx,x)))));
     }
 }

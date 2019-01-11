@@ -157,6 +157,8 @@ impl Ctx {
     fn close(&mut self) -> &mut Self { self.push_(Op::Close); self }
 
     pub fn pp<T:Pretty>(&mut self, x: &T) -> &mut Self { x.pp_into(self); self }
+    pub fn pp1<T:Pretty1<U>,U>(&mut self, x: &T, y: &U) -> &mut Self { x.pp1_into(y, self); self }
+    pub fn pp2<T:Pretty2<U,V>,U,V>(&mut self, x: &T, y: &U, z: &V) -> &mut Self { x.pp2_into(y,z,self); self }
 
     /// Call `f` in a box with given indentation
     pub fn with_indent<F,U>(&mut self, n: usize, f: F) -> &mut Self
@@ -230,19 +232,27 @@ pub trait Pretty {
     }
 }
 
-/// A way to print type `T` given self as a context.
+/// A way to print with `T` as a context.
 pub trait Pretty1<T> {
-    fn pp_with(&self, x: &T, ctx: &mut Ctx);
+    fn pp1_into(&self, x: &T, ctx: &mut Ctx);
 
     /// Pretty-printable/debug/display-able version of the given object.
     fn pp<'a>(&'a self, x: &'a T) -> Tmp1<(&'a Self, &'a T)> { Tmp1((self,x)) }
 }
 
+/// A way to print with `T` and `U` as context.
+pub trait Pretty2<T, U> {
+    fn pp2_into(&self, x: &T, y: &U, ctx: &mut Ctx);
+
+    /// Pretty-printable/debug/display-able version of the given object.
+    fn pp<'a>(&'a self, x: &'a T, y: &'a U) -> Tmp1<(&'a Self, &'a T, &'a U)> { Tmp1((self,x,y)) }
+}
+
 /// Temporary holder of `T`. Can be pretty-printed, displayed,, etc.
-pub struct Tmp1<T>(T);
+pub struct Tmp1<T>(pub T);
 
 impl<'a,T1:Pretty1<T2>,T2> Pretty for Tmp1<(&'a T1,&'a T2)> {
-    fn pp_into(&self, ctx: &mut Ctx) { (self.0).0.pp_with(&(self.0).1, ctx); }
+    fn pp_into(&self, ctx: &mut Ctx) { (self.0).0.pp1_into(&(self.0).1, ctx); }
 }
 impl<'a,T1:Pretty1<T2>,T2> fmt::Debug for Tmp1<(&'a T1,&'a T2)> {
     fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result
@@ -253,6 +263,21 @@ impl<'a,T1:Pretty1<T2>,T2> fmt::Display for Tmp1<(&'a T1,&'a T2)> {
     { Pretty::pp_fmt(&self,out,false) }
 }
 
+impl<'a,T1:Pretty2<T2,T3>,T2,T3> Pretty for Tmp1<(&'a T1,&'a T2,&'a T3)> {
+    fn pp_into(&self, ctx: &mut Ctx) { (self.0).0.pp2_into(&(self.0).1, &(self.0).2, ctx); }
+}
+impl<'a,T1:Pretty2<T2,T3>,T2,T3> fmt::Debug for Tmp1<(&'a T1,&'a T2,&'a T3)> {
+    fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result
+    { Pretty::pp_fmt(&self,out,true) }
+}
+impl<'a,T1:Pretty2<T2,T3>,T2,T3> fmt::Display for Tmp1<(&'a T1,&'a T2,&'a T3)> {
+    fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result
+    { Pretty::pp_fmt(&self,out,false) }
+}
+
+pub fn pp1<'a,T:Pretty1<U>,U>(x:&'a T, y: &'a U) -> impl 'a+Pretty+fmt::Display+fmt::Debug { Tmp1((x,y)) }
+pub fn pp2<'a,T:Pretty2<U,V>,U,V>(x:&'a T, y: &'a U, z: &'a V) -> impl 'a+Pretty+fmt::Display+fmt::Debug { Tmp1((x,y,z)) }
+
 /// An array of `T`
 pub struct Arr<'a, T>(&'a [T]);
 
@@ -262,25 +287,14 @@ pub fn sexp1<'a,T,M>(x: &'a [T]) -> impl Pretty1<M> + 'a where T: Pretty1<M> {
 
 // render array in a S-expr
 impl<'a, T, M> Pretty1<M> for Arr<'a, T> where T : Pretty1<M> {
-    fn pp_with(&self, m: &M, ctx: &mut Ctx) {
+    fn pp1_into(&self, m: &M, ctx: &mut Ctx) {
         ctx.sexp(|ctx| {
             for (i,x) in self.0.iter().enumerate() {
                 if i > 0 { space().pp_into(ctx); }
-                x.pp_with(m, ctx)
+                x.pp1_into(m, ctx)
             }
         });
     }
-}
-
-mod pretty1 {
-
-    /* FIXME: collisions?
-    use super::*;
-    impl<'a, T, M> Pretty1<&'a T> for M where M : Pretty1<T> {
-        fn pp_with(&self, x: &&'a T, ctx: &mut Ctx) { self.pp_with(*x,ctx) }
-    }
-
-    */
 }
 
 // ability to use `Op` directly as a printable object

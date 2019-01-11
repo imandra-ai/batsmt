@@ -119,7 +119,7 @@ pub mod str {
 
     impl<'a> pp::Pretty1<&'a str> for StrManager {
         // SMTLIB printing
-        fn pp_with(&self, s: &&'a str, ctx: &mut pp::Ctx) {
+        fn pp1_into(&self, s: &&'a str, ctx: &mut pp::Ctx) {
             let escape = s.contains(|c| {c == ' ' || c == '\n'});
             if escape { ctx.str("|"); }
             ctx.string(s.to_string());

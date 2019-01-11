@@ -206,30 +206,6 @@ pub fn pp_ast<M, F>(m: &M, t: &M::AST, f: &mut F, ctx: &mut pp::Ctx)
     }
 }
 
-/// Create a temporary printing object from `m`.
-pub fn pp<'a, M:Manager>(m: &'a M, t: &M::AST) -> impl 'a + fmt::Debug + fmt::Display + pp::Pretty {
-    pp0::PP(m,t.clone())
-}
-
-mod pp0 {
-    use super::*;
-    pub(super) struct PP<'a, M:Manager>(pub &'a M, pub M::AST);
-
-    impl<'a, M:Manager> pp::Pretty for PP<'a,M> {
-        fn pp_into(&self, ctx: &mut pp::Ctx) {
-            pp_ast(self.0, &self.1, &mut |s,ctx| { ctx.display(s); }, ctx)
-        }
-    }
-    impl<'a, M:Manager> fmt::Debug for PP<'a, M> {
-        fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result
-        { pp::Pretty::pp_fmt(&self,out,true) }
-    }
-    impl<'a, M:Manager> fmt::Display for PP<'a, M> {
-        fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result
-        { pp::Pretty::pp_fmt(&self,out,false) }
-    }
-}
-
 /// Abstraction over sets of ASTs.
 pub trait AstSet<AST:Clone> {
     /// Create a new set.

@@ -7,6 +7,7 @@
 #[macro_use] extern crate log;
 
 use {
+    batsmt_pretty as pp,
     batsmt_core::{
         ast_u32::{self, AST, }, gc, AstView,
         ast::{self, AstMap, iter_dag::State as AstIter},
@@ -153,7 +154,7 @@ impl<'a, C:Ctx> SimpStruct<'a, C> {
         if let Some(u) = self.map.get(&t) {
             *u // in cache
         } else {
-            //trace!("simplify-rec {}", ast::pp(self.m, &t));
+            //trace!("simplify-rec {}", pp::pp1(self.m, &t));
             let view_t = self.m.view_as_formula(t);
             let u = match view_t {
                 View::Bool(..) => t,
@@ -246,7 +247,7 @@ impl<C> Tseitin<C> where C: Ctx {
         let mut simp = SimpStruct{m, map: &mut self.simp_map};
         let u = simp.simplify_rec(t);
         if t != u {
-            debug!("tseitin.simplify\nfrom {}\nto {}", ast::pp(m,&t), ast::pp(m,&u));
+            debug!("tseitin.simplify\nfrom {}\nto {}", pp::pp1(m,&t), pp::pp1(m,&u));
         }
         u
     }

@@ -544,17 +544,17 @@ mod manager {
 
     /// An AST can be printed, given a manager, if the symbols are pretty
     impl<S:SymbolManager> pp::Pretty1<AST> for HManager<S> {
-        fn pp_with(&self, t: &AST, ctx: &mut pp::Ctx) {
+        fn pp1_into(&self, t: &AST, ctx: &mut pp::Ctx) {
             match self.view(*t) {
                 AstView::Const(s) => {
-                    self.sym_m.pp_with(&s, ctx);
+                    self.sym_m.pp1_into(&s, ctx);
                 },
                 AstView::App{f,args} if args.len() == 0 => {
-                    self.pp_with(&f, ctx); // just f
+                    self.pp1_into(&f, ctx); // just f
                 },
                 AstView::App{f,args} => {
                     ctx.sexp(|ctx| {
-                        self.pp_with(&f, ctx);
+                        self.pp1_into(&f, ctx);
                         ctx.space();
                         ctx.iter(" ", args.iter().map(|u| self.pp(u)));
                     });

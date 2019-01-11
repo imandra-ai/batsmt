@@ -8,8 +8,9 @@ use {
         collections::VecDeque, fmt,
     },
     fxhash::{FxHashMap,FxHashSet},
-    batsmt_core::{ast::{self,View,Manager},backtrack},
+    batsmt_core::{ast::View,backtrack},
     batsmt_theory::Ctx,
+    batsmt_pretty as pp,
     crate::{*, types::*},
 };
 
@@ -41,13 +42,6 @@ struct Solve<'a, C:Ctx> {
     //root: FxHashMap<AST, (Repr,Option<Expl<B>>)>, // term -> its root + expl
     parents: FxHashMap<Repr<C::AST>, SVec<C::AST>>, // term -> its direct superterms
     tasks: VecDeque<Task<C::AST>>, // tasks to perform
-}
-
-#[derive(Clone,Copy,Debug)]
-enum Expl<AST, B> {
-    Lit(B),
-    Congruent(AST, AST),
-    AreEq(AST,AST),
 }
 
 #[derive(Clone,Copy,Debug)]
@@ -179,7 +173,7 @@ impl<'a, C:Ctx> Solve<'a, C> {
         if ra == rb {
             true
         } else {
-            trace!("merge {:?} and {:?}", ast::pp(self.m,&ra.0), ast::pp(self.m,&rb.0));
+            trace!("merge {:?} and {:?}", pp::pp1(self.m,&ra.0), pp::pp1(self.m,&rb.0));
             self.all_lits.insert(lit); // may be involved in conflict
 
             self.tasks.push_back(Task::Merge(a,b));
@@ -201,7 +195,7 @@ impl<'a, C:Ctx> Solve<'a, C> {
     // add subterms recursively
     fn add_term(&mut self, t: C::AST) {
         if ! self.root.contains_key(&t) {
-            trace!("add-term {:?}", ast::pp(self.m,&t));
+            trace!("add-term {:?}", pp::pp1(self.m,&t));
             self.root.insert(t.clone(), Repr(t.clone()));
             self.parents.insert(Repr(t.clone()), SVec::new());
             self.tasks.push_back(Task::UpdateTerm(t));
@@ -277,7 +271,7 @@ impl<'a, C:Ctx> Solve<'a, C> {
             std::mem::swap(&mut ra, &mut rb);
         }
 
-        trace!("task::merge-repr {:?} into {:?}", ast::pp(self.m,&rb.0), ast::pp(self.m,&ra.0));
+        trace!("task::merge-repr {:?} into {:?}", pp::pp1(self.m,&rb.0), pp::pp1(self.m,&ra.0));
         self.root.insert(rb.0, ra.clone()); // rb --> ra now
 
         // move `parents_b` here
@@ -313,7 +307,7 @@ impl<'a, C:Ctx> Solve<'a, C> {
         }
 
         for (t,u) in new_congr {
-            trace!("merge congruent parents: {:?} and {:?}", ast::pp(self.m,&t), ast::pp(self.m,&u));
+            trace!("merge congruent parents: {:?} and {:?}", pp::pp1(self.m,&t), pp::pp1(self.m,&u));
             self.tasks.push_back(Task::Merge(t,u))
         }
     }
@@ -345,7 +339,7 @@ impl<'a, C:Ctx> Solve<'a, C> {
                 }
 
                 for (t,u) in new_congr {
-                    trace!("update-term({:?}): merge with {:?}", ast::pp(m,&t), ast::pp(m,&u));
+                    trace!("update-term({:?}): merge with {:?}", pp::pp1(m,&t), pp::pp1(m,&u));
                     self.tasks.push_back(Task::Merge(t,u))
                 }
             },

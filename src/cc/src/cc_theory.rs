@@ -4,6 +4,7 @@
 use {
     batsmt_core::{ast::{self, }, backtrack, },
     batsmt_theory::{self as theory},
+    batsmt_pretty as pp,
     crate::{Builtins, CCInterface, Ctx},
 };
 
@@ -118,7 +119,7 @@ impl<C:Ctx> theory::Theory<C> for CCTheory<C> {
     #[inline]
     fn explain_propagation(&mut self, m: &C, _t: C::AST, _sign: bool, p: C::B) -> &[C::B] {
         // what does `t=sign` correspond to?
-        trace!("explain-prop {} sign={} (lit {:?})", ast::pp(m,&_t), _sign, p);
+        trace!("explain-prop {} sign={} (lit {:?})", pp::pp1(m,&_t), _sign, p);
         self.cc.explain_prop(m, p)
     }
 }

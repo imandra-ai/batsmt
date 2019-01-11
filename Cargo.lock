@@ -110,6 +110,7 @@ name = "batsmt-tseitin"
 version = "0.1.0"
 dependencies = [
  "batsmt-core 0.1.0",
+ "batsmt-pretty 0.1.0",
  "batsmt-theory 0.1.0",
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "smallvec 0.6.7 (registry+https://github.com/rust-lang/crates.io-index)",

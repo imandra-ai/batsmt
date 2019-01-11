@@ -5,6 +5,7 @@ use {
     batsmt_theory::{self as theory, LitMapBuiltins},
     batsmt_cc as cc,
     batsmt_solver as solver,
+    batsmt_pretty as pp,
     batsmt_tseitin::{self as tseitin, View as FView, }
 };
 
@@ -126,6 +127,12 @@ pub mod ctx {
         type M = M;
         fn m(&self) -> &Self::M { &self.m }
         fn m_mut(&mut self) -> &mut Self::M { &mut self.m }
+    }
+
+    impl pp::Pretty1<AST> for Ctx {
+        fn pp1_into(&self, t: &AST, ctx: &mut pp::Ctx) {
+            ast::pp_ast(self, t, &mut |s,ctx| { ctx.display(s); }, ctx);
+        }
     }
 
     // a valid context!
