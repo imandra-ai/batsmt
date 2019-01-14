@@ -16,7 +16,7 @@ use {
 pub enum View<'a, Sym, Sub> {
     Const(Sym), // symbol view
     App {
-        f: Sub,
+        f: &'a Sub,
         args: &'a [Sub],
     }
 }
@@ -137,16 +137,16 @@ mod view {
         }
 
         /// Iterate over the immediate subterms of this view.
-        pub fn subterms(&'a self) -> impl Iterator<Item=&'a Sub> + 'a {
-            match &self {
+        pub fn subterms(&'a self) -> impl 'a + Iterator<Item=&'a Sub> {
+            match self {
                 View::Const(_) => ViewIter::Nil,
-                View::App{f, args} => ViewIter::App(f, args),
+                View::App{f, args} => ViewIter::App::<Sub>(f, args),
             }
         }
     }
 
     // state of the iterator
-    enum ViewIter<'a,Sub:'a> {
+    enum ViewIter<'a,Sub> {
         Nil,
         Args(&'a [Sub], usize),
         App(&'a Sub, &'a [Sub]),
@@ -159,7 +159,7 @@ mod view {
             match self {
                 ViewIter::Nil => None,
                 ViewIter::App(f,args) => {
-                    let f = &**f; // separate pointer
+                    let f = &f.clone(); // separate pointer
                     *self = ViewIter::Args(args,0);
                     Some(f)
                 },
@@ -527,7 +527,7 @@ pub mod iter_dag {
                     match $m.view(&t) {
                         View::Const(_) => (),
                         View::App{f,args} => {
-                            $self.st.push(f);
+                            $self.st.push(f.clone());
                             for a in args.iter() {
                                 $self.st.push(a.clone())
                             }
@@ -678,7 +678,7 @@ pub mod iter_suffix {
                     match m.view(&t) {
                         View::Const(_) => (),
                         View::App{f,args} => {
-                            self.push_enter(f);
+                            self.push_enter(f.clone());
                             for a in args.iter() { self.push_enter(a.clone()) }
                         },
                     }
@@ -825,7 +825,7 @@ pub mod map_dag {
                                     View::App{f, args} => {
                                         // process `f` and `args` before exiting `t`
                                         self.tasks.push(Task::Exit(t.clone()));
-                                        self.tasks.push(Task::Enter(f));
+                                        self.tasks.push(Task::Enter(f.clone()));
                                         for u in args.iter() {
                                             self.tasks.push(Task::Enter(u.clone()));
                                         }
@@ -845,7 +845,7 @@ pub mod map_dag {
                         for _i in 0..n {
                             self.args.push(self.res.pop().unwrap());
                         }
-                        let view = View::App{f: head, args: &self.args[..]};
+                        let view = View::App{f: &head, args: &self.args[..]};
                         let r = f(m, &t, view);
                         self.cache.insert(t, r.clone()); // save in cache
                         self.res.push(r); // return result

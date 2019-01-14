@@ -2,10 +2,10 @@
 //! Theory built on the congruence closure
 
 use {
-    batsmt_core::{ast::{self, }, backtrack, },
-    batsmt_theory::{self as theory},
+    batsmt_core::{ast, backtrack, },
+    batsmt_theory as theory,
     batsmt_pretty as pp,
-    crate::{CCInterface, Ctx},
+    crate::{CCInterface, CCView, Ctx, pp_t},
 };
 
 #[allow(unused_imports)]
@@ -40,27 +40,26 @@ impl<C:Ctx> CCTheory<C> {
         // update congruence closure
         for (ast,sign,lit) in trail.iter() {
             // convert `ast is {true,false}` into a merge/distinct op
-            match m.view(&ast) {
-                ast::View::App {f, args} if f == self.builtins.eq => {
-                    assert_eq!(2,args.len());
+            match m.view_as_cc_term(&ast) {
+                CCView::Eq(a,b) => {
                     if sign {
-                        self.cc.merge(m, args[0], args[1], lit);
+                        self.cc.merge(m, *a, *b, lit);
                     } else {
                         // `(a=b)=false`
-                        self.cc.merge(m, ast, self.builtins.false_, lit);
+                        self.cc.merge(m, ast, m.get_bool_term(false), lit);
                     }
                 },
-                ast::View::App {f, args} if f == self.builtins.distinct => {
+                CCView::Distinct(args) => {
                     if !sign {
                         panic!("cannot handle negative `distinct`")
                     };
                     self.cc.distinct(m, args, lit)
                 },
                 _ if sign => {
-                    self.cc.merge(m, ast, self.builtins.true_, lit)
+                    self.cc.merge(m, ast, m.get_bool_term(true), lit)
                 },
                 _ => {
-                    self.cc.merge(m, ast, self.builtins.false_, lit)
+                    self.cc.merge(m, ast, m.get_bool_term(false), lit)
                 }
             }
 
@@ -119,7 +118,7 @@ impl<C:Ctx> theory::Theory<C> for CCTheory<C> {
     #[inline]
     fn explain_propagation(&mut self, m: &C, _t: C::AST, _sign: bool, p: C::B) -> &[C::B] {
         // what does `t=sign` correspond to?
-        trace!("explain-prop {} sign={} (lit {:?})", pp::pp1(m,&_t), _sign, p);
+        trace!("explain-prop {} sign={} (lit {:?})", pp_t(m,&_t), _sign, p);
         self.cc.explain_prop(m, p)
     }
 }

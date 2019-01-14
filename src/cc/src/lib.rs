@@ -22,4 +22,4 @@ pub use {
 
 /// a small vector of `T`.
 pub(crate) type SVec<T> = smallvec::SmallVec<[T; 3]>;
-pub(crate) use batsmt_theory::pp_ast;
+pub(crate) use crate::intf::pp_t;

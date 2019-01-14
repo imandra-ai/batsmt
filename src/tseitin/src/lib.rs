@@ -7,14 +7,13 @@
 #[macro_use] extern crate log;
 
 use {
-    batsmt_pretty as pp,
     batsmt_core::{
         ast_u32::{self, AST, }, gc, AstView,
         ast::{self, AstMap, iter_dag::State as AstIter},
     },
     batsmt_theory::{
         self as theory, TheoryLit, TheoryClauseSet, TheoryClauseRef,
-        LitMap, },
+        LitMap, pp_ast, },
 };
 
 /// A boolean-centric view of formulas.
@@ -171,7 +170,7 @@ impl<'a, C:Ctx> SimpStruct<'a, C> {
                         AstView::Const(_) => t,
                         AstView::App{f, args} => {
                             let mut args: SVec<AST> = args.iter().cloned().collect();
-                            let f = self.simplify_rec(f);
+                            let f = self.simplify_rec(*f);
                             for u in args.iter_mut() { *u = self.simplify_rec(*u) }
                             self.m.mk_app(f, &args[..])
                         }
@@ -247,7 +246,7 @@ impl<C> Tseitin<C> where C: Ctx {
         let mut simp = SimpStruct{m, map: &mut self.simp_map};
         let u = simp.simplify_rec(t);
         if t != u {
-            debug!("tseitin.simplify\nfrom {}\nto {}", pp::pp1(m,&t), pp::pp1(m,&u));
+            debug!("tseitin.simplify\nfrom {}\nto {}", pp_ast(m,&t), pp_ast(m,&u));
         }
         u
     }

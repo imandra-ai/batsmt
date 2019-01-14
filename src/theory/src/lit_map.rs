@@ -29,7 +29,7 @@ impl Builtins {
         let mut t = t;
         loop {
             match m.view(t) {
-                View::App {f, args} if f == self.not_ => {
+                View::App {f, args} if *f == self.not_ => {
                     // flip sign and recurse
                     t = &args[0];
                     sign = !sign;

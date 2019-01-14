@@ -194,7 +194,7 @@ fn view_node<'a, S>(sym: &'a S, n: &'a NodeStored<S>)
     match n.kind() {
         Kind::App => {
             let k = unsafe {n.as_app()};
-            AstView::App {f: k.f(), args: k.args()}
+            AstView::App {f: &k.f, args: k.args()}
         },
         Kind::Sym => {
             AstView::Const(unsafe { sym.view(n.as_sym()) })
@@ -445,7 +445,7 @@ mod manager {
                     AstView::Const(_) => (),
                     AstView::App{f, args} => {
                         // explore subterms, too
-                        self.gc_stack.push(f);
+                        self.gc_stack.push(*f);
                         for &a in args { self.gc_stack.push(a) };
                     }
                 }

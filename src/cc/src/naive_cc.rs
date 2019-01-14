@@ -8,8 +8,6 @@ use {
         collections::VecDeque, fmt,
     },
     fxhash::{FxHashMap,FxHashSet},
-    batsmt_theory::Ctx,
-    batsmt_pretty as pp,
     batsmt_core::{backtrack},
     crate::*,
 };
@@ -34,6 +32,8 @@ struct Repr<AST>(AST);
 // literals used so far.
 struct Solve<'a, C:Ctx> {
     m: &'a C,
+    true_: C::AST,
+    false_: C::AST,
     confl: &'a mut Vec<C::B>,
     all_lits: FxHashSet<C::B>, // all literals used in ops so far
     root: FxHashMap<C::AST, Repr<C::AST>>, // term -> its root + expl
@@ -83,7 +83,7 @@ impl<C:Ctx> CCInterface<C> for NaiveCC<C> {
 
 impl<C:Ctx> NaiveCC<C> {
     /// Create a new congruence closure using the given `Manager`
-    pub fn new() -> Self {
+    pub fn new(m: &mut C) -> Self {
         NaiveCC {
             confl: vec!(),
             ops: backtrack::Stack::new(),
@@ -103,8 +103,11 @@ impl<C:Ctx> backtrack::Backtrackable<C> for NaiveCC<C> {
 // main algorithm
 impl<'a, C:Ctx> Solve<'a, C> {
     fn new(m: &'a C, confl: &'a mut Vec<C::B>) -> Self {
+        let true_ = m.get_bool_term(true);
+        let false_ = m.get_bool_term(false);
         let mut s = Solve {
             m,
+            true_, false_,
             confl,
             root: FxHashMap::default(),
             parents: FxHashMap::default(),
@@ -112,8 +115,8 @@ impl<'a, C:Ctx> Solve<'a, C> {
             tasks: VecDeque::new(),
         };
         // be sure to add true and false
-        s.add_term(m.get_bool_term(true));
-        s.add_term(m.get_bool_term(false));
+        s.add_term(s.true_);
+        s.add_term(s.false_);
         debug_assert_ne!(m.get_bool_term(true), m.get_bool_term(false));
         s
     }
@@ -167,19 +170,19 @@ impl<'a, C:Ctx> Solve<'a, C> {
         if ra == rb {
             true
         } else {
-            trace!("merge {:?} and {:?}", pp::pp1(self.m,&ra.0), pp::pp1(self.m,&rb.0));
+            trace!("merge {:?} and {:?}", pp_t(self.m,&ra.0), pp_t(self.m,&rb.0));
             self.all_lits.insert(lit); // may be involved in conflict
 
             self.tasks.push_back(Task::Merge(a,b));
             self.fixpoint();
-            let ok = ! self.is_eq(self.b.true_, self.b.false_);
+            let ok = ! self.is_eq(&self.true_, &self.false_);
             ok
         }
     }
 
     // are `a` and `b` equal?
-    fn is_eq(&self, a: C::AST, b: C::AST) -> bool {
-        self.find(a) == self.find(b)
+    fn is_eq(&self, a: &C::AST, b: &C::AST) -> bool {
+        self.find(*a) == self.find(*b)
     }
 
     fn is_root(&self, r: &Repr<C::AST>) -> bool {
@@ -189,22 +192,31 @@ impl<'a, C:Ctx> Solve<'a, C> {
     // add subterms recursively
     fn add_term(&mut self, t: C::AST) {
         if ! self.root.contains_key(&t) {
-            trace!("add-term {:?}", pp::pp1(self.m,&t));
+            trace!("add-term {:?}", pp_t(self.m,&t));
             self.root.insert(t.clone(), Repr(t.clone()));
             self.parents.insert(Repr(t.clone()), SVec::new());
             self.tasks.push_back(Task::UpdateTerm(t));
 
             // add arguments to CC, and add `t` to its arguments' parents lists
-            match self.m.view(&t) {
-                CCView::App(_, args) | CCView::Distinct(args) => {
+            match self.m.view_as_cc_term(&t) {
+                CCView::Apply(_, args) | CCView::Distinct(args) => {
                     for &u in args.iter() {
                         self.add_term(u);
                         self.parents.get_mut(&self.find(u)).unwrap().push(t);
                     }
-                    self.update_term(t);
+                    self.update_term(&t);
+                },
+                CCView::ApplyHO(f,args) => {
+                    self.add_term(*f);
+                    self.parents.get_mut(&self.find(*f)).unwrap().push(t);
+                    for &u in args.iter() {
+                        self.add_term(u);
+                        self.parents.get_mut(&self.find(u)).unwrap().push(t);
+                    }
+                    self.update_term(&t);
                 },
                 CCView::Eq(a,b) => {
-                    for &u in [a,b].iter() {
+                    for &&u in [a,b].iter() {
                         self.add_term(u);
                         self.parents.get_mut(&self.find(u)).unwrap().push(t);
                     }
@@ -219,7 +231,7 @@ impl<'a, C:Ctx> Solve<'a, C> {
         while let Some(t) = self.tasks.pop_front() {
             match t {
                 Task::UpdateTerm(t) => {
-                    self.update_term(t)
+                    self.update_term(&t)
                 },
                 Task::Merge(a,b) => {
                     let ra = self.find(a);
@@ -241,15 +253,21 @@ impl<'a, C:Ctx> Solve<'a, C> {
     }
 
     // are t and u congruent?
-    fn congruent(&self, t: C::AST, u: C::AST) -> bool {
-        if t == u { return true }
+    fn congruent(&self, t: &C::AST, u: &C::AST) -> bool {
+        if *t == *u { return true }
 
-        match (self.m.view(&t), self.m.view(&u)) {
-            (CCView::App{f:f1, args:args1}, CCView::App{f:f2, args: args2}) => {
+        match (self.m.view_as_cc_term(t), self.m.view_as_cc_term(u)) {
+            (CCView::Apply(f1, args1), CCView::Apply(f2, args2)) => {
                 args1.len() == args2.len() &&
                     f1 == f2 &&
                     args1.iter().zip(args2.iter())
-                    .all(|(u1,u2)| self.is_eq(*u1,*u2))
+                    .all(|(u1,u2)| self.is_eq(u1,u2))
+            },
+            (CCView::ApplyHO(f1, args1), CCView::ApplyHO(f2, args2)) => {
+                args1.len() == args2.len() &&
+                    self.is_eq(f1, f2) &&
+                    args1.iter().zip(args2.iter())
+                    .all(|(u1,u2)| self.is_eq(u1,u2))
             },
             (CCView::Eq(a1,b1), CCView::Eq(a2,b2)) => {
                 (self.is_eq(a1, a2) && self.is_eq(b1, b2)) ||
@@ -270,7 +288,7 @@ impl<'a, C:Ctx> Solve<'a, C> {
             std::mem::swap(&mut ra, &mut rb);
         }
 
-        trace!("task::merge-repr {:?} into {:?}", pp::pp1(self.m,&rb.0), pp::pp1(self.m,&ra.0));
+        trace!("task::merge-repr {:?} into {:?}", pp_t(self.m,&rb.0), pp_t(self.m,&ra.0));
         self.root.insert(rb.0, ra.clone()); // rb --> ra now
 
         // move `parents_b` here
@@ -279,16 +297,16 @@ impl<'a, C:Ctx> Solve<'a, C> {
 
         // find merges between items of parents_a and parents_b
         let mut new_congr = SVec::new();
-        for &t in parents_a.iter() {
-            for &u in parents_b.iter() {
+        for t in parents_a.iter() {
+            for u in parents_b.iter() {
                 if t != u && self.congruent(t, u) {
-                    new_congr.push((t,u));
+                    new_congr.push((*t,*u));
                 }
             }
         }
 
         for &t in parents_a.iter().chain(parents_b.iter()) {
-            match self.m.view(&t) {
+            match self.m.view_as_cc_term(&t) {
                 CCView::Eq(a,b) if self.is_eq(a,b) => {
                     // `a=b` where a and b are merged --> merge with true
                     new_congr.push((t, self.m.get_bool_term(true)));
@@ -299,24 +317,22 @@ impl<'a, C:Ctx> Solve<'a, C> {
 
         // merge parents_b into parents_a and put it back into place
         {
-            parents_a.extend_from_slice(&parents_b);
+            parents_a.extend(parents_b.iter().cloned());
             self.parents.insert(ra, parents_a);
         }
 
         for (t,u) in new_congr {
-            trace!("merge congruent parents: {:?} and {:?}", pp::pp1(self.m,&t), pp::pp1(self.m,&u));
+            trace!("merge congruent parents: {:?} and {:?}", pp_t(self.m,&t), pp_t(self.m,&u));
             self.tasks.push_back(Task::Merge(t,u))
         }
     }
 
     fn push_congruence(&mut self, t: C::AST, u: C::AST) {
-        trace!("update-term({:?}): merge with {:?}", pp::pp1(m,&t), pp::pp1(m,&u));
+        trace!("update-term({:?}): merge with {:?}", pp_t(self.m,&t), pp_t(self.m,&u));
         self.tasks.push_back(Task::Merge(t,u))
     }
 
-    fn update_term_with_args<I>(&mut self, t: C::AST, args: I)
-        where I: Iterator<Item=C::AST>
-    {
+    fn update_term_with_args(&mut self, t: &C::AST, args: &[C::AST]) {
         let mut new_congr = SVec::new();
 
         // look in parents of `f` and `args` for congruent terms
@@ -324,9 +340,9 @@ impl<'a, C:Ctx> Solve<'a, C> {
             let rp = self.find(p);
             let parents_p = self.parents.get(&rp).unwrap();
 
-            for &u in parents_p.iter() {
+            for u in parents_p.iter() {
                 if t != u && self.congruent(t, u) {
-                    new_congr.push((t,u));
+                    new_congr.push((*t,*u));
                 }
             }
         }
@@ -339,21 +355,21 @@ impl<'a, C:Ctx> Solve<'a, C> {
     // this new term `t` might be congruent to other terms.
     //
     // Look for these based on t's arguments' parents
-    fn update_term(&mut self, t: C::AST) {
-        match self.m.view(&t) {
+    fn update_term(&mut self, t: &C::AST) {
+        match self.m.view_as_cc_term(t) {
             CCView::Bool(_) | CCView::Opaque(_) => (),
             CCView::Apply(_, args) | CCView::Distinct(args) => {
-                self.update_term_with_args(args.iter())
+                self.update_term_with_args(t, args)
             },
             CCView::ApplyHO(f, args) => {
-                let args = args.iter().chain(Some(f).iter());
-                self.update_term_with_args(args)
+                self.update_term_with_args(t, &[*f]);
+                self.update_term_with_args(t, args)
             },
             CCView::Eq(a,b) => {
                 if self.is_eq(a,b) {
                     // `a=b` where a and b are merged --> merge with true
                     let u = self.m.get_bool_term(true);
-                    self.push_congruence(t, u)
+                    self.push_congruence(*t, u)
                 }
             }
         };
@@ -378,9 +394,9 @@ impl<C:Ctx> Clone for Op<C> {
 
 impl<C:Ctx> Clone for NaiveCC<C> {
     fn clone(&self) -> Self {
-        let NaiveCC {b, confl, ops} = self;
+        let NaiveCC {confl, ops} = self;
         NaiveCC {
-            b: b.clone(), confl: confl.clone(), ops: ops.clone()
+            confl: confl.clone(), ops: ops.clone()
         }
     }
 }

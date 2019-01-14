@@ -11,7 +11,7 @@
 
 use {
     std::{ops::{Deref,Not}, hash::Hash, fmt},
-    batsmt_core::{ backtrack::Backtrackable, gc, },
+    batsmt_core::{ backtrack::Backtrackable, gc, ast_u32, },
     batsmt_pretty as pp,
 };
 
@@ -44,8 +44,8 @@ pub trait BoolLitCtx {
 }
 
 /// Context that has a notion of boolean literal, as well as a notion of term.
-pub trait Ctx : BoolLitCtx {
-    type AST : Eq + Hash + Clone + fmt::Debug;
+pub trait Ctx : ast_u32::ManagerU32 + BoolLitCtx {
+    // FIXME: generalize this type AST : Eq + Hash + Clone + fmt::Debug;
 
     /// Pretty print a term.
     fn pp_ast(&self, t: &Self::AST, ctx: &mut pp::Ctx);
@@ -436,7 +436,7 @@ impl<'a, C:Ctx> Trail<'a, C> {
     pub fn empty() -> Self { Trail(&[]) }
 
     /// Iterate on the underlying items.
-    pub fn iter(&self) -> impl Iterator<Item=(C::AST,bool,C::B)> + 'a {
+    pub fn iter(&self) -> impl Iterator<Item=(ast_u32::AST,bool,C::B)> + 'a {
         self.0.iter().cloned()
     }
 
