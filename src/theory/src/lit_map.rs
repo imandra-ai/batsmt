@@ -3,8 +3,8 @@
 
 use {
     batsmt_core::{
-        ast::{View, },
-        ast_u32::{AST, ManagerU32, },
+        ast::{View, Manager, },
+        ast_u32::{AST, },
     },
     crate::{BoolLit, },
 };

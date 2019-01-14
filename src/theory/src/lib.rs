@@ -19,8 +19,17 @@ pub mod lit_map;
 
 // re-exports for litmap
 pub use {
-    crate::lit_map::{LitMap, Builtins as LitMapBuiltins, },
+    crate::lit_map::{LitMap, },
 };
+
+/// A view of a term as a boolean.
+///
+/// Predicates, equations, etc. fall under the `Opaque` case.
+pub enum BoolView<'a, AST> {
+    Bool(bool),
+    Not(&'a AST),
+    Opaque(&'a AST),
+}
 
 /// Abstract notion of boolean literals.
 ///
@@ -49,6 +58,9 @@ pub trait Ctx : BoolLitCtx {
 
     /// Pretty print a term.
     fn pp_ast(&self, t: &Self::AST, ctx: &mut pp::Ctx);
+
+    /// View a term as a boolean term.
+    fn view_as_bool(&self, t: &Self::AST) -> BoolView<Self::AST>;
 }
 
 /// A theory-level literal, either a boolean literal, or a boolean term plus a sign.

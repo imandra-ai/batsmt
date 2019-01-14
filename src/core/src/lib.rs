@@ -16,7 +16,6 @@ pub use crate::{
       View as AstView,
       AstSet, DenseSet, SparseSet,
       AstMap, DenseMap, SparseMap,
-      WithDenseSet, WithDenseMap, WithSparseSet, WithSparseMap,
   },
   gc::GC,
   shared::{Shared,SharedRef,SharedRefMut},
