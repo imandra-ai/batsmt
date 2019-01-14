@@ -125,7 +125,9 @@ pub mod ctx {
 
     impl ast::HasManager for Ctx {
         type M = M;
+        #[inline(always)]
         fn m(&self) -> &Self::M { &self.m }
+        #[inline(always)]
         fn m_mut(&mut self) -> &mut Self::M { &mut self.m }
     }
 

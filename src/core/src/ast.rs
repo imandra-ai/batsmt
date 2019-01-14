@@ -177,6 +177,45 @@ mod view {
     }
 }
 
+/// A view of an AST as a S-expression like object.
+///
+/// This is useful for printing.
+pub enum SexpView<'a,Sym: fmt::Display,AST>  {
+    Const(&'a Sym),
+    App(&'a Sym, &'a [AST]),
+    AppHO(&'a [AST], &'a [AST]),
+    List(&'a [AST]),
+}
+
+/// AST-pretty printer, using `f` to print symbols.
+pub fn pp_ast<M, F>(m: &M, t: &M::AST, f: &mut F, ctx: &mut pp::Ctx)
+    where M: Manager,
+          F: for<'a> FnMut(&'a M::SymView, &mut pp::Ctx)
+{
+    match m.view(t) {
+        View::Const(s) => {
+            f(&s, ctx);
+        },
+        View::App{f: ref f0, args} if args.len() == 0 => {
+            pp_ast(m, f0, f, ctx); // just f
+        },
+        View::App{f: f0,args} => {
+            ctx.sexp(|ctx| {
+                pp_ast(m, &f0, f, ctx);
+                for u in args.iter() {
+                    ctx.space();
+                    pp_ast(m, u, f, ctx);
+                }
+            });
+        }
+    }
+    if ctx.alternate() {
+        if let Some(i) = t.get_id() {
+            ctx.string(format!("/{}", i)); // print unique ID
+        }
+    }
+}
+
 /// AST-pretty printer, using `f` to print symbols.
 pub fn pp_ast<M, F>(m: &M, t: &M::AST, f: &mut F, ctx: &mut pp::Ctx)
     where M: Manager,
