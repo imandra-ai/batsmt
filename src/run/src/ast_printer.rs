@@ -2,11 +2,11 @@
 use {
     batsmt_parser as parser,
     batsmt_pretty::{self as pp, Pretty, Pretty1},
-    batsmt_core::{ast::{Manager, View}, ast_u32::AST,},
+    batsmt_core::{ast::{View}, ast_u32::{AST, ManagerU32}, },
     crate::ctx::{Ctx, },
-    std::fmt,
 };
 
+/*
 // how to pretty-print an AST
 impl Pretty1<AST> for Ctx {
     fn pp1_into(&self, t: &AST, ctx: &mut pp::Ctx) {
@@ -29,12 +29,11 @@ impl Pretty1<AST> for Ctx {
         }
     }
 }
+*/
 
 // print a statement by mapping its terms/sorts into `PP`
 impl Pretty1<parser::Statement<AST,AST>> for Ctx {
-    fn pp1_into(&self, st: &Statement<AST<AST>, out: &mut pp::Ctx) {
-        let st = st.clone();
-        let st = st.map(|ast| pp::pp1(m, ast), |ast| pp::pp1(m,ast));
-        st.pp_into(out)
+    fn pp1_into(&self, st: &parser::Statement<AST,AST>, out: &mut pp::Ctx) {
+        parser::pp_stmt(st, |ast,ctx| self.pp1_into(ast,ctx), |ast,ctx| self.pp1_into(ast,ctx), out)
     }
 }

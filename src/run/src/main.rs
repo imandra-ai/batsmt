@@ -14,7 +14,7 @@ use {
     batsmt_parser::{self as parser, Statement},
     batsmt_tseitin::Tseitin,
     batsmt_solver as solver,
-    crate::ast_printer::PP,
+    batsmt_pretty::{self as pp, Pretty1},
 };
 
 pub use {
@@ -53,7 +53,7 @@ fn main() -> Result<(), Box<Error>> {
     let mut tseitin = Tseitin::new();
 
     for s in &stmts {
-        debug!("parsed statement {}", PP::new(&c, s.clone()));
+        debug!("parsed statement {}", pp::pp1(&c, s));
 
         // process statement
         match s {

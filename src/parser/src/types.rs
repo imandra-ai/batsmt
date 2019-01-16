@@ -83,40 +83,56 @@ impl<T,S> Statement<T,S> {
     }
 }
 
+pub fn pp_stmt<T,S,FT,FS>(st: &Statement<T,S>, mut ft: FT, mut fs: FS, ctx: &mut pp::Ctx)
+    where FT: FnMut(&T,&mut pp::Ctx),
+          FS: FnMut(&S,&mut pp::Ctx)
+{
+    match st {
+        &Statement::SetInfo(ref a, ref b) => {
+            ctx.sexp(|ctx| {
+                ctx.str("set-info").space().pp(&a).space().pp(&b);
+            });
+        },
+        &Statement::SetLogic(ref a) => {
+            ctx.sexp(|ctx| {
+                ctx.str("set-logic").space().pp(&a);
+            });
+        },
+        &Statement::DeclareSort(ref s,n) => {
+            ctx.sexp(|ctx| {
+                ctx.str("declare-sort").space().pp(s).space().string(n.to_string());
+            });
+        },
+        &Statement::DeclareFun(ref f, ref args, ref ret) => {
+            ctx.sexp(|ctx| {
+                ctx.str("declare-fun").space().pp(&f).space().
+                    sexp(|ctx| {
+                        ctx.sexp(|ctx| {
+                            for (i,u) in args.iter().enumerate() {
+                                if i>0 { ctx.space(); }
+                                fs(u,ctx);
+                            }}).space();
+                        fs(&ret, ctx);
+                        });
+
+            });
+        },
+        &Statement::Assert(ref t) => {
+            ctx.sexp(|ctx| {
+                ctx.str("assert").space();
+                ft(t, ctx);
+            });
+        },
+        &Statement::CheckSat => { ctx.str("(check-sat)"); },
+        &Statement::Exit => { ctx.str("(exit)"); },
+    }
+}
+
 impl<T,S> pp::Pretty for Statement<T,S>
     where T: pp::Pretty, S: pp::Pretty
 {
     fn pp_into(&self, ctx: &mut pp::Ctx) {
-        match self {
-            &Statement::SetInfo(ref a, ref b) => {
-                ctx.sexp(|ctx| {
-                    ctx.str("set-info").space().pp(&a).space().pp(&pp::dbg(&b));
-                });
-            },
-            &Statement::SetLogic(ref a) => {
-                ctx.sexp(|ctx| {
-                    ctx.str("set-logic").space().pp(&a);
-                });
-            },
-            &Statement::DeclareSort(ref s,n) => {
-                ctx.sexp(|ctx| {
-                    ctx.str("declare-sort").space().pp(&s).space().string(n.to_string());
-                });
-            },
-            &Statement::DeclareFun(ref f, ref args, ref ret) => {
-                ctx.sexp(|ctx| {
-                    ctx.str("declare-fun").space().pp(&f).space().
-                        sexp(|ctx| { ctx.array(pp::space(), &args); }).space().pp(&ret);
-                });
-            },
-            &Statement::Assert(ref t) => {
-                ctx.sexp(|ctx| {
-                    ctx.str("assert").space().pp(&t);
-                });
-            },
-            &Statement::CheckSat => { ctx.str("(check-sat)"); },
-            &Statement::Exit => { ctx.str("(exit)"); },
-        }
+        pp_stmt(self, |t,ctx| t.pp_into(ctx), |s,ctx| s.pp_into(ctx), ctx);
     }
 }
 
