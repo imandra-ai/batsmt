@@ -398,10 +398,12 @@ impl<'a,C,A> theory::Actions<C> for TmpAct<'a,A>
           A: sat::TheoryArgument
 {
     #[inline(always)]
-    fn propagate(&mut self, b: C::B) {
+    fn propagate(&mut self, b: C::B) -> bool {
         if self.ok {
             self.stats.propagations += 1;
             self.acts.propagate(b.0)
+        } else {
+            false
         }
     }
 

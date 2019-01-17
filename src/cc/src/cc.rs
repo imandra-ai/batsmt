@@ -219,7 +219,7 @@ impl<C:Ctx> CC<C> {
         self.fixpoint(m);
         if self.cc1.ok {
             for &p in &self.props {
-                acts.propagate(p)
+                self.cc1.ok = self.cc1.ok && acts.propagate(p);
             }
         } else {
             debug_assert!(self.cc1.confl.len() >= 1); // must have some conflict

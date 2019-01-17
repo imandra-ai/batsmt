@@ -93,7 +93,10 @@ pub trait Actions<C:Ctx> {
     ///
     /// The boolean solver is allowed to ask for an explanation
     /// using `explain_propagation` later.
-    fn propagate(&mut self, p: C::B);
+    ///
+    /// Returns `true` if no conflict was detected, `false` if the propagation
+    /// directly entailed a conflict.
+    fn propagate(&mut self, p: C::B) -> bool;
 
     /// Add a conflit clause.
     ///
@@ -504,9 +507,12 @@ pub struct SimpleActions<C:Ctx> {
 impl<C:Ctx> Actions<C> for SimpleActions<C> {
     fn has_conflict(&self) -> bool { self.confl.is_some() }
 
-    fn propagate(&mut self, p: C::B) {
-        if !self.has_conflict() {
-            self.props.push(p)
+    fn propagate(&mut self, p: C::B) -> bool {
+        if self.has_conflict() {
+            false
+        } else {
+            self.props.push(p);
+            true
         }
     }
     fn add_lemma(&mut self, c: &[C::B]) {
