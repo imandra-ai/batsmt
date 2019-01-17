@@ -35,6 +35,14 @@ impl<'a,Fun,AST> CCView<'a,Fun,AST> {
             },
         }
     }
+
+    /// Needs a signature in the congruence closure?
+    pub(crate) fn needs_sig(&self) -> bool {
+        match self {
+            CCView::Opaque(..) | CCView::Bool(..) => false,
+            CCView::Eq(..) | CCView::Apply(_, ..) | CCView::Distinct(..) | CCView::ApplyHO(..) => true,
+        }
+    }
 }
 
 /// The context needed by the congruence closure.

@@ -94,6 +94,7 @@ struct NodeDef<AST, B> where AST : Sized, B : Sized {
     as_lit: Option<B>, // if this term corresponds to a boolean literal
     root: Repr, // current representative (initially, itself)
     parents: List<NodeID>,
+    flags: u8, // boolean flags
 }
 
 /// A node in a singly-linked list of objects.
@@ -243,7 +244,9 @@ impl<C:Ctx> CC<C> {
             {
                 let mut updsig = UpdateSigPhase{cc1,combine,sig_tbl,tmp_sig};
                 for &t in pending.iter() {
-                    updsig.update_signature(m, t);
+                    if updsig.cc1[t].needs_sig() {
+                        updsig.update_signature(m, t);
+                    }
                 }
                 pending.clear();
             }
@@ -327,7 +330,8 @@ impl<C:Ctx> CC<C> {
                 },
                 TraverseTask::Exit(t,n) => {
                     // now add itself to its children's list of parents.
-                    m.view_as_cc_term(&t).iter_subterms(|u| {
+                    let view = m.view_as_cc_term(&t);
+                    view.iter_subterms(|u| {
                         debug_assert!(cc1.nodes.contains(&u)); // postfix order
                         let ur = cc1.find_t(*u);
                         let parents = cc1.nodes.parents_mut(ur.0);
@@ -335,7 +339,11 @@ impl<C:Ctx> CC<C> {
                     });
                     // remove `t` before its children
                     undo.push_if_nonzero(UndoOp::RemoveNode(n));
-                    pending.push(n);
+
+                    if view.needs_sig() {
+                        cc1.nodes[n].set_needs_sig();
+                        pending.push(n);
+                    }
                 },
             }
         }
@@ -1076,13 +1084,15 @@ mod node {
         fn eq(&self, other: &NodeDef<AST, B>) -> bool { self.id == other.id }
     }
 
+    const FLG_NEEDS_SIG : u8 = 0b1;
+
     impl<AST, B> NodeDef<AST, B> {
         /// Create a new node with the given ID and AST.
         pub fn new(ast: AST, id: NodeID) -> Self {
             let parents = List::new();
             NodeDef {
                 id, ast, next: id, expl: None,
-                root: Repr(id), as_lit: None, parents,
+                root: Repr(id), as_lit: None, parents, flags: 0,
             }
         }
 
@@ -1090,6 +1100,12 @@ mod node {
         pub fn len(&self) -> usize {
             self.parents.len()
         }
+
+        #[inline]
+        pub fn needs_sig(&self) -> bool { (self.flags & FLG_NEEDS_SIG) != 0 }
+
+        #[inline]
+        pub fn set_needs_sig(&mut self) { self.flags |= FLG_NEEDS_SIG }
     }
 }
 
