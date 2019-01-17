@@ -26,7 +26,7 @@ mod ast_iter_ref {
             match m.view(t) {
                 View::Const(_) => (),
                 View::App{f: f0,args} => {
-                    iter_dag_ref_rec(seen, m, f0, f);
+                    iter_dag_ref_rec(seen, m, *f0, f);
                     for a in args.iter() {
                         iter_dag_ref_rec(seen, m, *a, f);
                     }
@@ -98,13 +98,13 @@ mod test_ast {
         let t1 = m.mk_app(f, &[a,b]);
         let t2 = m.mk_app(f, &[b,a]);
         let t4 = m.mk_app(g, &[t1]);
-        assert!(match m.view(t1) { View::App{f:f2, args} => f2 == f && args==&[a,b], _ => false });
-        assert!(match m.view(t2) { View::App{f:f2, args} => f2 == f && args==&[b,a], _ => false });
-        assert!(match m.view(t4) { View::App{f:f2, args} => f2 == g && args==&[t1], _ => false });
+        assert!(match m.view(t1) { View::App{f:f2, args} => *f2 == f && args==&[a,b], _ => false });
+        assert!(match m.view(t2) { View::App{f:f2, args} => *f2 == f && args==&[b,a], _ => false });
+        assert!(match m.view(t4) { View::App{f:f2, args} => *f2 == g && args==&[t1], _ => false });
         let t10 = m.mk_app(f, &[a; 10]);
         let t11 = m.mk_app(f, &[b; 10]);
-        assert!(match m.view(t10) { View::App{f:f2, args} => f2 == f && args==&[a;10], _ => false });
-        assert!(match m.view(t11) { View::App{f:f2, args} => f2 == f && args==&[b;10], _ => false });
+        assert!(match m.view(t10) { View::App{f:f2, args} => *f2 == f && args==&[a;10], _ => false });
+        assert!(match m.view(t11) { View::App{f:f2, args} => *f2 == f && args==&[b;10], _ => false });
     }
 
     struct StressApp {
@@ -478,7 +478,7 @@ mod ast_prop {
                 match view {
                     ast::View::Const(()) => *u,
                     ast::View::App{f, args} => {
-                        m.mk_app(f, args)
+                        m.mk_app(*f, args)
                     },
                 }
             });

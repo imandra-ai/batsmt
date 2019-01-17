@@ -1,9 +1,66 @@
 
 use {
+    std::{hash::Hash, fmt, },
+    batsmt_theory::{self as theory, Actions},
     batsmt_core::{backtrack, },
-    batsmt_theory::Ctx,
-    crate::{types::*},
+    batsmt_pretty as pp,
 };
+
+/// A view of terms adapted for the congruence closure.
+#[derive(Debug,Clone)]
+pub enum CCView<'a,Fun,AST> {
+    Bool(bool),
+    Apply(&'a Fun, &'a [AST]),
+    ApplyHO(&'a AST, &'a [AST]),
+    Eq(&'a AST, &'a AST),
+    Distinct(&'a [AST]),
+    Opaque(&'a AST), // a foreign term
+}
+
+impl<'a,Fun,AST> CCView<'a,Fun,AST> {
+    /// Iterate on immediate subterms that are relevant to congruence.
+    pub fn iter_subterms<F>(&self, mut f: F) where F: FnMut(&'a AST) {
+        match self {
+            CCView::Bool(_) | CCView::Opaque(..) => (),
+            CCView::Eq(a,b) => {
+                f(a);
+                f(b);
+            },
+            CCView::Apply(_, args) | CCView::Distinct(args) => {
+                for u in args.iter() { f(u) }
+            },
+            CCView::ApplyHO(f0, args) => {
+                f(f0);
+                for u in args.iter() { f(u) }
+            },
+        }
+    }
+}
+
+/// The context needed by the congruence closure.
+///
+/// It provides a notion of boolean literals, functions, terms, as well as
+/// a way to deconstruct terms in the most convenient way.
+pub trait Ctx : theory::Ctx {
+    type Fun : Eq + Hash + Clone + fmt::Debug;
+
+    /// View a term as an equality or function application.
+    fn view_as_cc_term<'a>(&'a self, t: &'a Self::AST) -> CCView<'a, Self::Fun, Self::AST>;
+
+    /// Obtain true/false terms.
+    fn get_bool_term(&self, b: bool) -> Self::AST;
+}
+
+/// An empty type, convenient when there is no notion of `Fun` in terms.
+#[derive(Eq,PartialEq,Clone,Debug,Hash)]
+pub enum Void{} // empty type
+
+/// Print a term.
+pub(crate) fn pp_t<'a,C:Ctx>(
+    c: &'a C, t: &'a C::AST
+) -> impl 'a + fmt::Display + fmt::Debug + pp::Pretty {
+    theory::pp_ast(c,t)
+}
 
 /// Interface satisfied by implementations of the congruence closure.
 pub trait CC<C: Ctx> : backtrack::Backtrackable<C> {

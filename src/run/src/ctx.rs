@@ -3,7 +3,7 @@ use {
     batsmt_core::{ast, ast_u32::AST, Manager, AstView},
     batsmt_hast::{HManager, StrSymbolManager},
     batsmt_theory::{self as theory, LitMapBuiltins},
-    batsmt_cc as cc,
+    batsmt_cc::{self as cc, CCView},
     batsmt_solver as solver,
     batsmt_pretty as pp,
     batsmt_tseitin::{self as tseitin, View as FView, }
@@ -64,24 +64,24 @@ pub mod ctx {
             else {
                 match self.m.view(t) {
                     AstView::Const(_) => FView::Atom(t),
-                    AstView::App{f, args} if f == self.b.not_ => {
+                    AstView::App{f, args} if *f == self.b.not_ => {
                         debug_assert_eq!(args.len(), 1);
                         FView::Not(args[0])
                     },
-                    AstView::App{f, args} if f == self.b.eq => {
+                    AstView::App{f, args} if *f == self.b.eq => {
                         debug_assert_eq!(args.len(), 2);
                         FView::Eq(args[0], args[1])
                     },
-                    AstView::App{f, args} if f == self.b.distinct => {
+                    AstView::App{f, args} if *f == self.b.distinct => {
                         FView::Distinct(args)
                     },
-                    AstView::App{f, args} if f == self.b.imply_ => {
+                    AstView::App{f, args} if *f == self.b.imply_ => {
                         FView::Imply(args)
                     },
-                    AstView::App{f, args} if f == self.b.and_ => {
+                    AstView::App{f, args} if *f == self.b.and_ => {
                         FView::And(args)
                     },
-                    AstView::App{f, args} if f == self.b.or_ => {
+                    AstView::App{f, args} if *f == self.b.or_ => {
                         FView::Or(args)
                     },
                     AstView::App{..} => FView::Atom(t),
@@ -136,7 +136,39 @@ pub mod ctx {
     }
 
     // a valid context!
-    impl theory::Ctx for Ctx {}
+    impl theory::Ctx for Ctx {
+        fn pp_ast(&self, t: &AST, ctx: &mut pp::Ctx) {
+            ctx.pp1(&self.m, t);
+        }
+    }
+
+    impl cc::Ctx for Ctx {
+        type Fun = cc::intf::Void;
+
+        fn get_bool_term(&self, b: bool) -> AST {
+            if b { self.b.true_ } else { self.b.false_ }
+        }
+
+        fn view_as_cc_term<'a>(&'a self, t: &'a AST) -> CCView<'a,Self::Fun,AST> {
+            if *t == self.b.true_ {
+                CCView::Bool(true)
+            } else if *t == self.b.false_ {
+                CCView::Bool(false)
+            } else {
+                match self.m.view(*t) {
+                    AstView::Const(_) => CCView::Opaque(t),
+                    AstView::App{f, args} if *f == self.b.eq => {
+                        debug_assert_eq!(args.len(), 2);
+                        CCView::Eq(&args[0], &args[1])
+                    },
+                    AstView::App{f, args} if *f == self.b.distinct => {
+                        CCView::Distinct(args)
+                    },
+                    AstView::App{f,args} => CCView::ApplyHO(f,args),
+                }
+            }
+        }
+    }
 }
 
 mod builtins {
@@ -156,13 +188,6 @@ mod builtins {
                 not_: m.mk_str("not"),
                 distinct: m.mk_str("distinct"),
             }
-        }
-    }
-
-    impl Into<cc::Builtins<AST>> for Builtins {
-        fn into(self) -> cc::Builtins<AST> {
-            let Builtins {true_, false_, eq, distinct, not_, ..} = self;
-            cc::Builtins {true_,false_,eq,distinct,not_}
         }
     }
 

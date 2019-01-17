@@ -11,7 +11,7 @@
 
 use {
     std::{ops::{Deref,Not}, hash::Hash, fmt},
-    batsmt_core::{ backtrack::Backtrackable, ast_u32, gc, },
+    batsmt_core::{ backtrack::Backtrackable, gc, ast_u32, },
     batsmt_pretty as pp,
 };
 
@@ -43,16 +43,13 @@ pub trait BoolLitCtx {
     type B : BoolLit;
 }
 
-/// A theory is parametrized by a `HManager` (with its AST, symbol, etc.) and boolean literals.
-pub trait Ctx : ast_u32::ManagerU32 + BoolLitCtx + pp::Pretty1<ast_u32::AST> {}
+/// Context that has a notion of boolean literal, as well as a notion of term.
+pub trait Ctx : ast_u32::ManagerU32 + BoolLitCtx {
+    // FIXME: generalize this type AST : Eq + Hash + Clone + fmt::Debug;
 
-/* probably a bad idea.
-// auto-impl
-impl<T> Ctx for T
-    where T : ast_u32::ManagerU32,
-          T : BoolLitCtx,
-          T : pp::Pretty1<ast_u32::AST> {}
-*/
+    /// Pretty print a term.
+    fn pp_ast(&self, t: &Self::AST, ctx: &mut pp::Ctx);
+}
 
 /// A theory-level literal, either a boolean literal, or a boolean term plus a sign.
 ///
@@ -275,12 +272,15 @@ mod theory_lit {
                 TheoryLit::T(t,sign) => {
                     let s = if *sign { "t+" } else { "t-" };
                     ctx.sexp(|ctx| {
-                        ctx.str(s).space().pp1(c,t);
+                        ctx.str(s).space();
+                        c.pp_ast(t, ctx);
                     });
                 },
                 TheoryLit::BLazy(t,sign) => {
                     let s = if *sign { "b+" } else { "b-" };
-                    ctx.sexp(|ctx| {ctx.str(s).space().pp1(c,t); });
+                    ctx.sexp(|ctx| {
+                        ctx.str(s).space();
+                        c.pp_ast(t, ctx); });
                 },
             }
         }
@@ -445,6 +445,31 @@ impl<'a, C:Ctx> Trail<'a, C> {
     pub fn len(&self) -> usize { self.0.len() }
 }
 
+/// Create a temporary printing object from `m` to display the given term.
+pub fn pp_ast<'a, C:Ctx>(m: &'a C, t: &C::AST) -> impl 'a + fmt::Debug + fmt::Display + pp::Pretty {
+    pp0::PP(m,t.clone())
+}
+
+mod pp0 {
+    use super::*;
+    pub(super) struct PP<'a, C:Ctx>(pub &'a C, pub C::AST);
+
+    impl<'a, C:Ctx> pp::Pretty for PP<'a,C> {
+        fn pp_into(&self, ctx: &mut pp::Ctx) {
+            self.0.pp_ast(&self.1, ctx)
+        }
+    }
+    impl<'a, C:Ctx> fmt::Debug for PP<'a, C> {
+        fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result
+        { pp::Pretty::pp_fmt(&self,out,true) }
+    }
+    impl<'a, C:Ctx> fmt::Display for PP<'a, C> {
+        fn fmt(&self, out: &mut fmt::Formatter) -> fmt::Result
+        { pp::Pretty::pp_fmt(&self,out,false) }
+    }
+}
+
+
 /// A basic implementation of boolean literals using signed integers
 pub mod int_lit {
     /// A very simple representation of literals using signed integers.
@@ -472,7 +497,8 @@ pub struct SimpleActions<C:Ctx> {
     costly: bool,
     props: Vec<C::B>,
     lemmas: Vec<Vec<C::B>>,
-    mk_lit: Box<Fn() -> C::B>,
+    #[allow(unused)]
+    mk_lit: Box<Fn() -> C::B>, // FIXME: actual litmap or something?
 }
 
 impl<C:Ctx> Actions<C> for SimpleActions<C> {

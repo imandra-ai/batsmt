@@ -4,8 +4,8 @@
 use {
     std::{rc::Rc, fmt},
     fxhash::FxHashMap,
-    batsmt_core::{ast::{self, HasManager, },backtrack::*, ast_u32::{self, AST}},
-    batsmt_cc::*,
+    batsmt_core::{ast::{self, HasManager, },AstView,backtrack::*, ast_u32::{self, AST}},
+    batsmt_cc::{*, Ctx as CC_ctx},
     batsmt_hast::*,
     batsmt_pretty as pp,
     batsmt_theory::{BoolLit, self as theory, },
@@ -46,14 +46,24 @@ mod term_lit {
     }
 }
 
-struct Ctx(M);
+#[derive(Copy,Clone,Debug)]
+struct Builtins {
+    true_: AST,
+    false_: AST,
+    eq: AST,
+}
+
+struct Ctx{
+    m: M,
+    b: Option<Builtins>,
+}
 
 mod ctx {
     use super::*;
     impl HasManager for Ctx {
         type M = M;
-        fn m(&self) -> &M { &self.0 }
-        fn m_mut(&mut self) -> &mut M { &mut self.0 }
+        fn m(&self) -> &M { &self.m }
+        fn m_mut(&mut self) -> &mut M { &mut self.m }
     }
 
     impl theory::BoolLitCtx for Ctx {
@@ -66,8 +76,6 @@ mod ctx {
         }
     }
 
-    impl theory::Ctx for Ctx {}
-
     impl pp::Pretty1<TermLit> for Ctx {
         fn pp1_into(&self, lit: &TermLit, ctx: &mut pp::Ctx) {
             let s = if lit.sign() {" = "} else {" != "};
@@ -75,6 +83,41 @@ mod ctx {
         }
     }
 
+    impl Ctx {
+        #[inline]
+        pub fn b(&self) -> Builtins { self.b.unwrap() }
+    }
+
+    impl theory::Ctx for Ctx {
+        fn pp_ast(&self, t: &AST, ctx: &mut pp::Ctx) {
+            ctx.pp1(self, t);
+        }
+    }
+
+    impl CC_ctx for Ctx {
+        type Fun = String;
+
+        fn get_bool_term(&self, b: bool) -> AST {
+            if b { self.b().true_ } else { self.b().false_ }
+        }
+
+        fn view_as_cc_term<'a>(&'a self, t: &'a AST) -> CCView<'a,Self::Fun,AST> {
+            if *t == self.b().true_ {
+                CCView::Bool(true)
+            } else if *t == self.b().false_ {
+                CCView::Bool(false)
+            } else {
+                match self.m.view(*t) {
+                    AstView::Const(_) => CCView::Opaque(t),
+                    AstView::App{f, args} if *f == self.b().eq => {
+                        debug_assert_eq!(args.len(), 2);
+                        CCView::Eq(&args[0], &args[1])
+                    },
+                    AstView::App{f,args} => CCView::ApplyHO(f,args),
+                }
+            }
+        }
+    }
 }
 
 type CC0 = CC<Ctx>;
@@ -90,7 +133,7 @@ mod prop_cc {
 
     struct AstGenCell {
         m: Ctx,
-        b: Option<batsmt_cc::Builtins<AST>>,
+        b: Option<Builtins>,
         consts: FxHashMap<String, AST>,
     }
 
@@ -108,28 +151,27 @@ mod prop_cc {
             }
         }
         fn str(&mut self, s: &str) -> AST { self.string(s.to_string()) }
+        fn b(&self) -> Builtins { self.b.unwrap() }
     }
 
     impl AstGen {
         fn new(m: M) -> Self {
             let consts = FxHashMap::default();
-            let m = Ctx(m);
-            let mut cell = AstGenCell { m, consts, b: None, };
+            let m = Ctx{m, b:None};
+            let mut cell = AstGenCell { m, consts, b: None };
             // make builtins
-            let b = batsmt_cc::Builtins{
+            let b = Builtins{
                 true_: cell.str("true"),
                 false_: cell.str("false"),
-                distinct: cell.str("distinct"),
                 eq: cell.str("="),
-                not_: cell.str("not"),
             };
+            cell.m.b = Some(b);
             cell.b = Some(b);
             AstGen(Rc::new(std::cell::RefCell::new(cell)))
         }
         fn app(&self, f: AST, args: &[AST]) -> AST {
             self.0.borrow_mut().m.mk_app(f, args)
         }
-        fn b(&self) -> Builtins<AST> { self.0.borrow_mut().b.clone().unwrap() }
     }
 
     impl ast::HasManager for AstGenCell {
@@ -216,33 +258,29 @@ mod prop_cc {
     }
 
     // use a naive CC to check this set of lits
-    fn check_lits_sat<I,U>(m: &AstGen, i: I) -> bool
+    fn check_lits_sat<I,U>(m: &mut AstGenCell, i: I) -> bool
         where I: Iterator<Item=U>, U: Into<TermLit>
     {
-        let b = m.b();
-        let mut ncc = NaiveCC0::new(b.clone());
+        let ctx = &mut m.m;
+        let mut ncc = NaiveCC0::new(ctx);
         let mut acts = theory::SimpleActions::new(|| unimplemented!("new lit"));
 
         for lit in i {
             let lit = lit.into();
             let TermLit(sign,t1,t2) = lit;
             if sign {
-                let ctx = &mut m.0.borrow_mut().m;
                 ncc.merge(ctx,t1,t2,lit)
             } else {
-                let eqn = m.app(b.eq, &[t1,t2]); // `t1=t2`
-
-                let ctx = &mut m.0.borrow_mut().m;
-                ncc.merge(ctx,eqn, b.false_, lit)
+                let eqn = ctx.mk_app(ctx.b().eq, &[t1,t2]); // `t1=t2`
+                ncc.merge(ctx,eqn, ctx.b().false_, lit)
             }
         }
 
-        let ctx = &mut m.0.borrow_mut().m;
         ncc.final_check(ctx, &mut acts);
         acts.get().is_ok()
     }
 
-    fn check_cube_is_unsat(m: &AstGen, cube: &[TermLit]) -> bool {
+    fn check_cube_is_unsat(m: &mut AstGenCell, cube: &[TermLit]) -> bool {
         ! check_lits_sat(m, cube.iter().cloned())
     }
 
@@ -252,47 +290,47 @@ mod prop_cc {
         #[test]
         fn proptest_naive_cc_backtrack(ref mut tup in with_astgen(|m| cc_ops(m, 100))) {
             let (m, ops) = tup;
+            let m = &mut m.0.borrow_mut();
+            let b = m.b();
 
             //println!("ops: {:?}", ops);
 
             let mut st = Stack::new(); // just accumulate lits
-            let mut ncc = NaiveCC0::new(m.b());
-            let b = m.b();
+            let mut ncc = NaiveCC0::new(&mut m.m);
             let mut acts = theory::SimpleActions::new(|| unimplemented!("new lit"));
 
             for &op in ops.iter() {
                 match op {
                     Op::PushLevel => {
-                        let ctx = &mut m.0.borrow_mut().m;
+                        let ctx = &mut m.m;
                         st.push_level();
                         ncc.push_level(ctx);
                     },
                     Op::PopLevels(n) => {
+                        let ctx = &mut m.m;
                         acts.clear();
-                        let ctx = &mut m.0.borrow_mut().m;
                         st.pop_levels(n, |_| ());
                         ncc.pop_levels(ctx, n);
                     },
                     Op::AssertEq(t1,t2) => {
-                        let ctx = &mut m.0.borrow_mut().m;
+                        let ctx = &mut m.m;
                         let lit = TermLit::mk_eq(t1,t2);
                         st.push((t1,t2,lit));
                         ncc.merge(ctx, t1,t2,lit);
                     },
                     Op::AssertNeq(t1,t2) => {
+                        let ctx = &mut m.m;
                         let lit = TermLit::mk_neq(t1,t2);
-                        let eqn = m.app(b.eq, &[t1,t2]); // term `t1=t2`
-                        st.push((eqn, b.false_, lit));
+                        let eqn = ctx.mk_app(ctx.b().eq, &[t1,t2]); // term `t1=t2`
+                        st.push((eqn, ctx.b().false_, lit));
 
-                        let ctx = &mut m.0.borrow_mut().m;
-                        ncc.merge(ctx, eqn, b.false_, lit);
+                        ncc.merge(ctx, eqn, ctx.b().false_, lit);
                     },
                     Op::PartialCheck => (), // do nothing
                     Op::FinalCheck => {
                         // here be the main check
                         let r_ncc = {
-                            let mut mr = m.0.borrow_mut();
-                            let ctx = &mut mr.m;
+                            let ctx = &mut m.m;
                             ncc.final_check(ctx, &mut acts);
                             acts.get()
                         };
@@ -327,28 +365,23 @@ mod prop_cc {
         #[test]
         fn proptest_cc_is_correct(ref tup in with_astgen(|m| cc_ops(m, 120))) {
             let (m, ops) = tup;
+            let m = &mut m.0.borrow_mut();
             let mut stack = Stack::new(); // keep current set of ops
 
             //println!("ops: {:?}", ops);
 
-            let mut cc = {
-                let b = m.b();
-                let m = &mut m.0.borrow_mut().m;
-                CC0::new(m, b)
-            };
-            let mut ncc = NaiveCC0::new(m.b());
+            let mut cc = CC0::new(&mut m.m);
+            let mut ncc = NaiveCC0::new(&mut m.m);
             let mut acts = theory::SimpleActions::new(|| unimplemented!("new lit"));
             let mut nacts = theory::SimpleActions::new(|| unimplemented!("new lit"));
-            let b = m.b();
 
             // add literals, for propagations
             for &op in ops.iter() {
                 match op {
                     Op::AssertEq(t1,t2) | Op::AssertNeq(t1,t2) => {
-                        let mut mr = m.0.borrow_mut();
+                        let ctx = &mut m.m;
                         let lit = TermLit::mk_eq(t1,t2);
-                        let eqn = mr.mk_app(b.eq, &[t1,t2]);
-                        let ctx = &mut mr.m;
+                        let eqn = ctx.mk_app(ctx.b().eq, &[t1,t2]);
                         cc.add_literal(ctx, eqn, lit);
                     },
                     _ => (),
@@ -358,38 +391,37 @@ mod prop_cc {
             for &op in ops.iter() {
                 match op {
                     Op::PushLevel => {
-                        let ctx = &mut m.0.borrow_mut().m;
+                        let ctx = &mut m.m;
                         cc.push_level(ctx);
                         ncc.push_level(ctx);
                         stack.push_level();
                     },
                     Op::PopLevels(n) => {
+                        let ctx = &mut m.m;
                         acts.clear();
                         nacts.clear();
-                        let ctx = &mut m.0.borrow_mut().m;
                         cc.pop_levels(ctx,n);
                         ncc.pop_levels(ctx,n);
                         stack.pop_levels(n, |_| ());
                     },
                     Op::AssertEq(t1,t2) => {
-                        let ctx = &mut m.0.borrow_mut().m;
+                        let ctx = &mut m.m;
                         let lit = TermLit::mk_eq(t1,t2);
                         cc.merge(ctx,t1,t2,lit);
                         ncc.merge(ctx,t1,t2,lit);
                         stack.push(lit);
                     },
                     Op::AssertNeq(t1,t2) => {
+                        let ctx = &mut m.m;
                         let lit = TermLit::mk_neq(t1,t2);
-                        let eqn = m.app(b.eq, &[t1,t2]); // term `t1=t2`
-                        let ctx = &mut m.0.borrow_mut().m;
-                        cc.merge(ctx,eqn, b.false_, lit);
-                        ncc.merge(ctx,eqn, b.false_, lit);
+                        let eqn = ctx.mk_app(ctx.b().eq, &[t1,t2]); // term `t1=t2`
+                        cc.merge(ctx,eqn, ctx.b().false_, lit);
+                        ncc.merge(ctx,eqn, ctx.b().false_, lit);
                         stack.push(lit);
                     },
                     Op::PartialCheck => {
                         let r1 = {
-                            let mut mr = m.0.borrow_mut();
-                            let ctx = &mut mr.m;
+                            let ctx = &mut m.m;
                             cc.partial_check(ctx, &mut acts);
                             acts.get()
                         };
@@ -402,7 +434,7 @@ mod prop_cc {
                                 for lit in props.iter().cloned() {
                                     check_propagation(m, lit, stack.as_slice());
                                     let expl = {
-                                        let ctx = &mut m.0.borrow_mut().m;
+                                        let ctx = &mut m.m;
                                         let r = cc.explain_prop(ctx, lit);
                                         drop(ctx);
                                         r
@@ -419,8 +451,7 @@ mod prop_cc {
                     Op::FinalCheck => {
                         // here be the main check
                         let (r1,r2) = {
-                            let mut mr = m.0.borrow_mut();
-                            let ctx = &mut mr.m;
+                            let ctx = &mut m.m;
                             cc.final_check(ctx, &mut acts);
                             ncc.final_check(ctx, &mut nacts);
                             (acts.get(),nacts.get())
@@ -439,7 +470,7 @@ mod prop_cc {
                                 for lit in props.iter().cloned() {
                                     check_propagation(m, lit, &stack.as_slice());
                                     let expl = {
-                                        let ctx = &mut m.0.borrow_mut().m;
+                                        let ctx = &mut m.m;
                                         let r = cc.explain_prop(ctx, lit);
                                         drop(ctx);
                                         r
@@ -459,25 +490,24 @@ mod prop_cc {
     }
 
     // check that the propagation is valid (ie. ¬b is inconsistent with current trail)
-    fn check_propagation(m: &AstGen, lit: TermLit, trail: &[TermLit]) {
+    fn check_propagation(m: &mut AstGenCell, lit: TermLit, trail: &[TermLit]) {
         let mut cube = vec![!lit];
         cube.extend_from_slice(trail);
 
         let is_unsat = check_cube_is_unsat(m, &cube);
-        let ctx = &mut m.0.borrow_mut().m;
 
         //prop_assert!(r.is_err(), "¬lit where lit was propagated should be unsat");
         assert!(
             is_unsat,
             "propagation {} should be a tauto in current trail {}, but naive cc returned sat",
-            pp::pp1(ctx,&lit),
-            pp::display(pp::sexp_iter(trail.iter().map(|x| pp::pp1(ctx,x)))),
+            pp::pp1(&m.m, &lit),
+            pp::display(pp::sexp_iter(trail.iter().map(|x| pp::pp1(&m.m,x)))),
             );
     }
 
     // check that the propagation's explanation is valid
     // (ie `expl => lit` is valid, ie `expl & !lit` is unsat)
-    fn check_propagation_expl(m: &AstGen, lit: TermLit, expl: &[TermLit]) {
+    fn check_propagation_expl(m: &mut AstGenCell, lit: TermLit, expl: &[TermLit]) {
         // build the cube `expl & !lit`
         let mut cube = vec![!lit];
         for &lit2 in expl.iter() {
@@ -485,22 +515,21 @@ mod prop_cc {
         }
 
         let is_unsat = check_cube_is_unsat(m, &cube);
-        let ctx = &mut m.0.borrow_mut().m;
 
         assert!(
             is_unsat,
             "for propagation ({} => {})\n\
             negated cube {} should be unsat, but naive cc returned sat",
-            pp::display(pp::sexp_iter(expl.iter().map(|x| pp::pp1(ctx,x)))),
-            pp::pp1(ctx,&lit),
-            pp::display(pp::sexp_iter(cube.iter().map(|x| pp::pp1(ctx,x)))));
+            pp::display(pp::sexp_iter(expl.iter().map(|x| pp::pp1(&m.m,x)))),
+            pp::pp1(&m.m,&lit),
+            pp::display(pp::sexp_iter(cube.iter().map(|x| pp::pp1(&m.m,x)))));
     }
 
     // check that the conflict is a tautology
-    fn check_confl(m: &AstGen, confl: &[TermLit]) {
+    fn check_confl(m: &mut AstGenCell, confl: &[TermLit]) {
         let cube: Vec<_> = confl.iter().cloned().map(|lit| !lit).collect();
         let is_unsat = check_cube_is_unsat(m, &cube);
-        let ctx = &mut m.0.borrow_mut().m;
+        let ctx = &mut m.m;
 
         //assert!(r.is_err(), "conflict should be unsat");
         assert!(

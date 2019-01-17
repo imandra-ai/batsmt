@@ -8,16 +8,18 @@
 pub mod cc;
 pub mod cc_theory;
 pub mod naive_cc;
-pub(crate) mod types;
 pub mod intf;
 
 pub use {
     crate::{
-        types::{ Builtins, SVec, Ctx, },
-        intf::{CC as CCInterface},
+        intf::{CC as CCInterface, CCView, Ctx},
         cc::CC,
         naive_cc::NaiveCC,
         cc_theory::{CCTheory},
     },
+    batsmt_theory::Actions,
 };
 
+/// a small vector of `T`.
+pub(crate) type SVec<T> = smallvec::SmallVec<[T; 3]>;
+pub(crate) use crate::intf::pp_t;
