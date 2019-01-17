@@ -291,7 +291,6 @@ mod prop_cc {
         fn proptest_naive_cc_backtrack(ref mut tup in with_astgen(|m| cc_ops(m, 100))) {
             let (m, ops) = tup;
             let m = &mut m.0.borrow_mut();
-            let b = m.b();
 
             //println!("ops: {:?}", ops);
 

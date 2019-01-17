@@ -83,7 +83,7 @@ impl<C:Ctx> CCInterface<C> for NaiveCC<C> {
 
 impl<C:Ctx> NaiveCC<C> {
     /// Create a new congruence closure using the given `Manager`
-    pub fn new(m: &mut C) -> Self {
+    pub fn new(_m: &mut C) -> Self {
         NaiveCC {
             confl: vec!(),
             ops: backtrack::Stack::new(),
