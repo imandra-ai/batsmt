@@ -15,8 +15,7 @@
 
 use {
     std::{ u32, ptr, hash::Hash, fmt::Debug, },
-    batsmt_core::{ast::{self,AstMap,DenseMap,View}, backtrack, ast_u32, },
-    batsmt_theory::{Ctx as ThCtx,BoolLit},
+    batsmt_core::{backtrack, },
     fxhash::FxHashMap,
     batsmt_pretty as pp,
     crate::{ Ctx, Actions, CCInterface, CCView, SVec, pp_t, },
