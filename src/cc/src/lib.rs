@@ -12,7 +12,7 @@ pub mod intf;
 
 pub use {
     crate::{
-        intf::{CC as CCInterface, CCView, Ctx},
+        intf::{CC as CCInterface, CCView, Ctx, IteView, HasIte},
         cc::CC,
         naive_cc::NaiveCC,
         cc_theory::{CCTheory},

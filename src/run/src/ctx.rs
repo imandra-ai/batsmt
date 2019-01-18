@@ -101,6 +101,7 @@ pub mod ctx {
                 FView::Eq(t,u) if t == u => self.b.true_,
                 FView::Eq(t,u) => self.m.mk_app(self.b.eq, &[t, u]),
                 FView::Distinct(args) => self.m.mk_app(self.b.distinct, args),
+                FView::Ite(a,b,c) => self.m.mk_app(self.b.ite, &[a,b,c]),
                 FView::Not(t) => {
                     match self.view_as_formula(t) {
                         FView::Bool(true) => self.b.false_,
@@ -171,6 +172,18 @@ pub mod ctx {
                     },
                     AstView::App{f,args} => CCView::ApplyHO(f,args),
                 }
+            }
+        }
+    }
+
+    impl cc::HasIte<AST> for Ctx {
+        fn view_as_ite<'a>(&'a self, t: &'a AST) -> cc::IteView<'a, AST> {
+            match self.m.view(*t) {
+                AstView::App{f, args} if *f == self.b.ite => {
+                    debug_assert_eq!(args.len(), 3);
+                    cc::IteView::Ite(&args[0], &args[1], &args[2])
+                },
+                _ => cc::IteView::Other(t),
             }
         }
     }

@@ -104,3 +104,15 @@ pub trait CC<C: Ctx> : backtrack::Backtrackable<C> {
     /// Explain why `p` was propagated
     fn explain_prop(&mut self, m: &C, p: C::B) -> &[C::B];
 }
+
+/// A term adapted for if-then-else.
+#[derive(Debug,Clone)]
+pub enum IteView<'a, AST>{
+    Ite(&'a AST, &'a AST, &'a AST),
+    Other(&'a AST),
+}
+
+pub trait HasIte<AST> {
+    /// View a term as a if-then-else.
+    fn view_as_ite<'a>(&'a self, t: &'a AST) -> IteView<'a, AST>;
+}
