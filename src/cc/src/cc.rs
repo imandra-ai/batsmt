@@ -48,6 +48,7 @@ struct CC1<C:Ctx> {
     alloc_parent_list: ListAlloc<NodeID>,
     nodes: Nodes<C>,
     confl: Vec<C::B>, // local for conflict
+    tmp_expl: Vec<NodeID>,
 }
 
 /// Explanation for the propagation of a boolean literal.
@@ -585,6 +586,7 @@ impl<C:Ctx> CC1<C> {
             nodes: Nodes::new(),
             ok: true,
             alloc_parent_list: backtrack::Alloc::new(),
+            tmp_expl: vec!(),
             confl: vec!(),
         }
     }
@@ -702,49 +704,45 @@ impl<C:Ctx> CC1<C> {
         }
     }
 
-    /// Distance separating `t` from the root of its explanation forest.
-    fn dist_to_expl_root(&self, mut t: NodeID) -> usize {
-        let mut dist = 0;
-
-        while let NodeDef {expl: Some((next_t,_)), ..} = self[t] {
-            dist += 1;
-            t = next_t;
-        }
-        dist
-    }
-
     /// Find the closest common ancestor of `a` and `b` in the proof
     /// forest.
     /// Precond: `is_eq(a,b)`.
-    fn find_expl_common_ancestor(&mut self, mut a: NodeID, mut b: NodeID) -> NodeID {
-        debug_assert!(self.nodes.is_eq(a,b));
+    fn find_expl_common_ancestor(&mut self, a0: NodeID, b0: NodeID) -> NodeID {
+        debug_assert!(self.nodes.is_eq(a0,b0));
+        let CC1{tmp_expl: to_clean, nodes, ..} = self;
 
-        let dist_a = self.dist_to_expl_root(a);
-        let dist_b = self.dist_to_expl_root(b);
-        if dist_a > dist_b {
-            a = self.skip_expl_links(a, dist_a - dist_b);
-        } else if dist_a < dist_b {
-            b = self.skip_expl_links(b, dist_b - dist_a);
-        };
+        to_clean.clear();
 
-        // now walk in lock-step until we find the ancestor
-        loop {
-            if a == b {
-                return a;
+        // walk in lockstep, until we reached a node already marked
+        let res = {
+            let mut a = a0;
+            let mut b = b0;
+
+            loop {
+                if a==b { break a }
+
+                if nodes[a].marked() { break a }
+                if nodes[b].marked() { break b }
+
+                if let Some((a2,_)) = nodes[a].expl {
+                    nodes[a].mark();
+                    to_clean.push(a);
+                    a = a2;
+                }
+                if let Some((b2,_)) = nodes[b].expl {
+                    nodes[b].mark();
+                    to_clean.push(b);
+                    b = b2;
+                }
             }
-
-            if let Some((a2,_)) = self[a].expl { a = a2 } else { panic!() };
-            if let Some((b2,_)) = self[b].expl { b = b2 } else { panic!() };
-        }
-    }
-
-    /// Skip `n` links in the explanation forest.
-    fn skip_expl_links(&self, mut t: NodeID, mut n: usize) -> NodeID {
-        while n > 0 {
-            if let Some((t2,_)) = self[t].expl { t = t2 } else { panic!() };
-            n -= 1
         };
-        t
+
+        // cleanup
+        for &a in to_clean.iter() {
+            nodes[a].unmark()
+        }
+
+        res
     }
 }
 
@@ -1085,6 +1083,7 @@ mod node {
     }
 
     const FLG_NEEDS_SIG : u8 = 0b1;
+    const FLG_MARKED : u8 = 0b10;
 
     impl<AST, B> NodeDef<AST, B> {
         /// Create a new node with the given ID and AST.
@@ -1106,6 +1105,15 @@ mod node {
 
         #[inline]
         pub fn set_needs_sig(&mut self) { self.flags |= FLG_NEEDS_SIG }
+
+        #[inline]
+        pub fn marked(&self) -> bool { (self.flags & FLG_MARKED) != 0 }
+
+        #[inline]
+        pub fn mark(&mut self) { self.flags |= FLG_MARKED }
+
+        #[inline]
+        pub fn unmark(&mut self) { self.flags &= !FLG_MARKED }
     }
 }
 
