@@ -70,12 +70,12 @@ fn main() -> Result<(), Box<Error>> {
                 println!("{:?}", r)
             },
             Statement::Exit => {
-                info!("exit (after {}s)", chrono.as_f64());
                 break;
             }
             _ => (),
         }
     }
+    info!("exit (after {}s)", chrono.as_f64());
 
     Ok(())
 }
