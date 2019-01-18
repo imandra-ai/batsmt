@@ -79,8 +79,9 @@ mod ast_builder {
             }
         }
 
-        fn ite(&mut self, _a: AST, _b: AST, _c: AST) -> AST {
-            panic!("ite not implemented yet"); // FIXME once we have micro theories
+        fn ite(&mut self, a: AST, b: AST, c: AST) -> AST {
+            let f = self.b.ite;
+            self.m.m.mk_app(f, &[a,b,c])
         }
 
         fn app_fun(&mut self, f: AST, args: &[AST]) -> AST {

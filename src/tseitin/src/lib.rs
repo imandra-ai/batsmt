@@ -26,6 +26,7 @@ pub enum View<'a, AST> {
     Eq(AST,AST),
     Distinct(&'a [AST]),
     Atom(AST), // other
+    Ite(AST,AST,AST),
 }
 
 /// A relatively big small-vec
@@ -109,7 +110,7 @@ impl<'a,C,LM> LitMapB<'a,C,LM>
                 TheoryLit::new_b(t,sign) // encoded away
             },
             View::Not(..) => panic!("should not have a negation"), // unfold-not
-            View::Atom(..) | View::Eq(..) => {
+            View::Atom(..) | View::Eq(..) | View::Ite(..) => {
                 // theory literal
                 TheoryLit::new_t(t, sign)
             },
@@ -213,6 +214,17 @@ impl<'a, C:Ctx> SimpStruct<'a, C> {
                         self.m.mk_formula(View::Imply(&args))
                     }
                 },
+                View::Ite(a,b,c) => {
+                    let a = self.simplify_rec(a);
+                    let b = self.simplify_rec(b);
+                    let c = self.simplify_rec(c);
+                    match self.m.view_as_formula(a) {
+                        View::Bool(true) => b,
+                        View::Bool(false) => c,
+                        _ if b == c => b,
+                        _ => self.m.mk_formula(View::Ite(a,b,c))
+                    }
+                },
             };
             self.map.insert(t, u);
             u
@@ -281,6 +293,11 @@ impl<C> Tseitin<C> where C: Ctx {
                 View::Bool(false) => {
                     // TODO: is this needed? `u` maps to `not true` anyway?
                     cs.push(&[TheoryLit::new_b(*u, false)]) // clause [¬false]
+                },
+                View::Ite(a,_,_) => {
+                    let mut lmb = LitMapB{lit_map, m};
+                    let lit = lmb.term_to_lit(&a);
+                    cs.push(&[lit, !lit]); // trivial, but will force `lit` to be decided on
                 },
                 View::And(args2) => {
                     args.extend_from_slice(args2);

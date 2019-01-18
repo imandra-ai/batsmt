@@ -24,6 +24,7 @@ pub struct Builtins {
     pub and_: AST,
     pub or_: AST,
     pub imply_: AST,
+    pub ite: AST,
 }
 
 /// The main context.
@@ -83,6 +84,10 @@ pub mod ctx {
                     },
                     AstView::App{f, args} if *f == self.b.or_ => {
                         FView::Or(args)
+                    },
+                    AstView::App{f, args} if *f == self.b.ite => {
+                        debug_assert_eq!(args.len(), 3);
+                        FView::Ite(args[0], args[1], args[2])
                     },
                     AstView::App{..} => FView::Atom(t),
                 }
@@ -178,6 +183,7 @@ mod builtins {
         /// New builtins structure.
         pub(super) fn new(m: &mut M) -> Self {
             Builtins {
+                ite: m.mk_str("ite"),
                 bool_: m.mk_str("Bool"),
                 true_: m.mk_str("true"),
                 false_: m.mk_str("false"),
