@@ -42,6 +42,105 @@ pub struct CC<C:Ctx> {
     cc1: CC1<C>,
 }
 
+pub trait MicroTheoryState<C:Ctx> : Sized {
+    /// initialize state for the given term.
+    fn init(m: &mut C, t: &C::AST) -> Self;
+
+    /// Merge state `other` into `self`
+    fn merge(&mut self, other: &Self);
+
+    /// Undo the merge of `other` into `self`
+    fn unmerge(&mut self, other: &Self);
+}
+
+/// A micro-theory, which lives inside the congruence closure
+///
+/// It works purely by merging classes based on
+/// other merges, or by declaring a set of merges inconsistent.
+pub trait MicroTheory<C:Ctx> {
+    /// State for a given node
+    type State : MicroTheoryState<C>;
+
+    fn on_merge(&mut self, acts: &mut MergePhase<C>, n1: &NodeID, n2: NodeID);
+
+    fn on_signature(&mut self, acts: &mut UpdateSigPhase<C>, sig: &Signature<C::Fun>);
+}
+
+/// Implement `MicroTheory` for a tuple of types themselves micro-theories.
+macro_rules! impl_micro_theory_state_tuple {
+    ( () AND () ) => ();
+    ( ($( $t: ident ,)+) AND ($( $u: ident ,)+) ) => {
+        #[allow(non_snake_case)]
+        impl<C:Ctx, $( $t ,)* > MicroTheoryState<C> for ( $( $t ,)* )
+            where $( $t : MicroTheoryState<C> ),*
+        {
+            fn init(m: &mut C, t: &C::AST) -> Self {
+                ( $( <$t as MicroTheoryState<C>>::init(m, t) ,)* )
+            }
+            fn merge(&mut self, other: &Self) {
+                let ($( $t ,)* ) = self;
+                let ($( $u ,)* ) = other;
+                $(
+                    $t.merge( $u );
+                )*
+            }
+            fn unmerge(&mut self, other: &Self) {
+                let ($( $t ,)* ) = self;
+                let ($( $u ,)* ) = other;
+                $(
+                    $t.unmerge( $u );
+                )*
+            }
+        }
+
+        impl_micro_theory_state_tuple_peel!{ ($($t,)*) AND ($($u,)*) }
+    };
+}
+
+// recursion
+macro_rules! impl_micro_theory_state_tuple_peel {
+    ( ($t0: ident, $( $t: ident,)*) AND ($u0: ident, $( $u: ident,)*) ) => {
+        impl_micro_theory_state_tuple! { ($($t,)*) AND ($($u,)*) } }
+}
+impl_micro_theory_state_tuple! {
+    (T0, T1, T2, T3, T4, T5, T6, T7, T8,) AND
+    (U0, U1, U2, U3, U4, U5, U6, U7, U8,) }
+
+/// Implement `MicroTheory` for a tuple of types themselves micro-theories.
+macro_rules! impl_micro_theory_tuple {
+    () => ();
+    ( $( $t: ident ,)+ ) => {
+        #[allow(non_snake_case)]
+        impl<C:Ctx, $( $t ,)* > MicroTheory<C> for ( $( $t ,)* )
+            where $( $t : MicroTheory<C> ),*
+        {
+            type State = ( $( <$t as MicroTheory<C>>::State ),* );
+
+            fn on_merge(&mut self, acts: &mut MergePhase<C>, n1: &NodeID, n2: NodeID) {
+                let ($( $t ,)*) = self;
+                $(
+                    $t.on_merge(acts, n1, n2);
+                )*
+            }
+
+            fn on_signature(&mut self, acts: &mut UpdateSigPhase<C>, sig: &Signature<C::Fun>){
+                let ($( $t ,)*) = self;
+                $(
+                    $t.on_signature(acts, sig);
+                )*
+            }
+        }
+
+        impl_micro_theory_tuple_peel!{ $($t,)* }
+    };
+}
+
+// recursion
+macro_rules! impl_micro_theory_tuple_peel {
+    ( $t0: ident, $( $t: ident,)* ) => { impl_micro_theory_tuple! { $( $t ,)* } }
+}
+impl_micro_theory_tuple! { T0, T1, T2, T3, T4, T5, T6, T7, T8, }
+
 /// internal state, with just the core structure for nodes and parent sets
 struct CC1<C:Ctx> {
     ok: bool, // no conflict?
@@ -63,7 +162,7 @@ enum LitExpl<B> {
 
 /// Unique Node ID.
 #[derive(Debug,Copy,Clone,Eq,PartialEq,Hash,Ord,PartialOrd)]
-struct NodeID(u32);
+pub struct NodeID(u32);
 
 /// Map terms into the corresponding node.
 struct Nodes<C:Ctx>{
@@ -142,7 +241,7 @@ enum UndoOp {
 /// Signatures have the properties that if two terms are congruent,
 /// then their signatures are identical.
 #[derive(Eq,PartialEq,Hash,Clone,Debug)]
-struct Signature<F> {
+pub struct Signature<F> {
     f: Option<F>,
     subs: SVec<Repr>
 }
@@ -366,7 +465,8 @@ impl<C:Ctx> CC<C> {
     }
 }
 
-struct MergePhase<'a,C:Ctx> {
+/// Internal structure used during merging of newly equivalent classes.
+pub struct MergePhase<'a,C:Ctx> {
     cc1: &'a mut CC1<C>,
     n_true: NodeID,
     n_false: NodeID,
@@ -377,7 +477,8 @@ struct MergePhase<'a,C:Ctx> {
     lit_expl: &'a mut backtrack::HashMap<C::B, LitExpl<C::B>>, // pre-explanations for propagations
 }
 
-struct UpdateSigPhase<'a,C:Ctx> {
+/// Internal structure used during update of term signatures.
+pub struct UpdateSigPhase<'a,C:Ctx> {
     cc1: &'a mut CC1<C>,
     combine: &'a mut Vec<(NodeID,NodeID,Expl<C::B>)>,
     sig_tbl: &'a mut backtrack::HashMap<Signature<C::Fun>, NodeID>,
@@ -592,13 +693,13 @@ impl<C:Ctx> CC1<C> {
     }
 
     #[inline(always)]
-    fn find(&mut self, t: NodeID) -> Repr { self.nodes.find(t) }
+    pub(crate) fn find(&mut self, t: NodeID) -> Repr { self.nodes.find(t) }
 
     #[inline(always)]
-    fn find_t(&mut self, t: C::AST) -> Repr { self.nodes.find_t(t) }
+    pub(crate) fn find_t(&mut self, t: C::AST) -> Repr { self.nodes.find_t(t) }
 
     #[inline(always)]
-    fn is_root(&mut self, id: NodeID) -> bool { self.find(id).0 == id }
+    pub(crate) fn is_root(&mut self, id: NodeID) -> bool { self.find(id).0 == id }
 
     /// Undo one change.
     fn perform_undo(&mut self, m: &C, op: UndoOp) {
@@ -881,11 +982,11 @@ impl<C:Ctx> Nodes<C> {
     }
 
     #[inline(always)]
-    fn contains(&self, t: &C::AST) -> bool { self.map.contains_key(t) }
+    pub(crate) fn contains(&self, t: &C::AST) -> bool { self.map.contains_key(t) }
 
     /// Find the ID of the given term.
     #[inline]
-    fn get_term_id(&self, t: &C::AST) -> NodeID {
+    pub(crate) fn get_term_id(&self, t: &C::AST) -> NodeID {
         debug_assert!(self.contains(t));
         self.map[t]
     }
@@ -906,14 +1007,14 @@ impl<C:Ctx> Nodes<C> {
 
     /// Find the representative of the given term.
     #[inline]
-    fn find_t(&mut self, t: C::AST) -> Repr {
+    pub(crate) fn find_t(&mut self, t: C::AST) -> Repr {
         let n = self.get_term_id(&t);
         self.find(n)
     }
 
     /// Find representative of the given node
     #[inline(always)]
-    fn find(&mut self, t: NodeID) -> Repr {
+    pub(crate) fn find(&mut self, t: NodeID) -> Repr {
         let root = self[t].root;
 
         if root.0 == t {
@@ -970,7 +1071,7 @@ impl<C:Ctx> Nodes<C> {
 
     /// Are these two terms known to be equal?
     #[inline(always)]
-    fn is_eq(&mut self, a: NodeID, b: NodeID) -> bool {
+    pub(crate) fn is_eq(&mut self, a: NodeID, b: NodeID) -> bool {
         self.find(a) == self.find(b)
     }
 
@@ -995,7 +1096,7 @@ impl<C:Ctx> Nodes<C> {
     }
 
     /// Call `f` with a mutable ref on all nodes of the class of `r`
-    fn iter_class<F>(&mut self, r: Repr, mut f: F)
+    pub(crate) fn iter_class<F>(&mut self, r: Repr, mut f: F)
         where F: for<'b> FnMut(&'b mut Node<C>)
     {
         let mut t = r.0;
@@ -1010,7 +1111,7 @@ impl<C:Ctx> Nodes<C> {
 
     /// Call `f` on all parents of all nodes of the class of `r`
     #[inline]
-    fn iter_parents<F>(&mut self, r: Repr, f: F)
+    pub(crate) fn iter_parents<F>(&mut self, r: Repr, f: F)
         where F: FnMut(&NodeID)
     {
         self[r.0].parents.for_each(f);
