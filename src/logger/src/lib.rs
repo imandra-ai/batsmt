@@ -17,6 +17,7 @@ pub fn init() {
             "error" => LevelFilter::Error,
             "warn" => LevelFilter::Warn,
             "trace" => LevelFilter::Trace,
+            "debug" => LevelFilter::Debug,
             s => {
                 eprintln!("unknown logging level {:?}", s);
                 return;
