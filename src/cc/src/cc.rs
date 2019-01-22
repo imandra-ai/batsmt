@@ -61,9 +61,9 @@ pub trait MicroTheory<C:Ctx> {
     /// State for a given node
     type State : MicroTheoryState<C>;
 
-    fn on_merge(&mut self, acts: &mut MergePhase<C>, n1: &NodeID, n2: NodeID);
+    fn on_merge(&mut self, c: &mut C, acts: &mut MergePhase<C>, n1: &NodeID, n2: NodeID);
 
-    fn on_signature(&mut self, acts: &mut UpdateSigPhase<C>, sig: &Signature<C::Fun>);
+    fn on_signature(&mut self, c: &mut C, acts: &mut UpdateSigPhase<C>, t: &C::AST);
 }
 
 /// Implement `MicroTheory` for a tuple of types themselves micro-theories.
@@ -116,17 +116,17 @@ macro_rules! impl_micro_theory_tuple {
         {
             type State = ( $( <$t as MicroTheory<C>>::State ),* );
 
-            fn on_merge(&mut self, acts: &mut MergePhase<C>, n1: &NodeID, n2: NodeID) {
+            fn on_merge(&mut self, c: &mut C, acts: &mut MergePhase<C>, n1: &NodeID, n2: NodeID) {
                 let ($( $t ,)*) = self;
                 $(
-                    $t.on_merge(acts, n1, n2);
+                    $t.on_merge(c, acts, n1, n2);
                 )*
             }
 
-            fn on_signature(&mut self, acts: &mut UpdateSigPhase<C>, sig: &Signature<C::Fun>){
+            fn on_signature(&mut self, c: &mut C, acts: &mut UpdateSigPhase<C>, t: &C::AST){
                 let ($( $t ,)*) = self;
                 $(
-                    $t.on_signature(acts, sig);
+                    $t.on_signature(c, acts, t);
                 )*
             }
         }
@@ -142,7 +142,7 @@ macro_rules! impl_micro_theory_tuple_peel {
 impl_micro_theory_tuple! { T0, T1, T2, T3, T4, T5, T6, T7, T8, }
 
 /// internal state, with just the core structure for nodes and parent sets
-struct CC1<C:Ctx> {
+pub (crate)struct CC1<C:Ctx> {
     ok: bool, // no conflict?
     alloc_parent_list: ListAlloc<NodeID>,
     nodes: Nodes<C>,
@@ -174,7 +174,7 @@ struct Nodes<C:Ctx>{
 }
 
 #[allow(type_alias_bounds)]
-type Node<C:Ctx> = NodeDef<C::AST, C::B>;
+pub(crate) type Node<C:Ctx> = NodeDef<C::AST, C::B>;
 
 /// One node in the congruence closure's E-graph.
 ///
@@ -186,7 +186,7 @@ type Node<C:Ctx> = NodeDef<C::AST, C::B>;
 /// - the proof forest pointer
 /// - an optional mapping from the term to a boolean literal (for propagation)
 #[derive(Clone)]
-struct NodeDef<AST, B> where AST : Sized, B : Sized {
+pub(crate) struct NodeDef<AST, B> where AST : Sized, B : Sized {
     id: NodeID,
     ast: AST, // what AST does this correspond to?
     next: NodeID, // next elt in class
@@ -213,11 +213,11 @@ struct List<T> {
 
 /// A representative
 #[derive(Debug,Clone,Copy,Eq,PartialEq,Hash,Ord,PartialOrd)]
-struct Repr(NodeID);
+pub(crate) struct Repr(pub(crate) NodeID);
 
 /// An explanation for a merge
 #[derive(Clone,Debug)]
-enum Expl<B> {
+pub(crate) enum Expl<B> {
     Lit(B), // because literal was asserted
     Congruence(NodeID, NodeID), // because terms are congruent
     AreEq(NodeID, NodeID), // because terms are equal
@@ -342,7 +342,9 @@ impl<C:Ctx> CC<C> {
             }
 
             {
-                let mut updsig = UpdateSigPhase{cc1,combine,sig_tbl,tmp_sig};
+                let mut updsig =
+                    UpdateSigPhase{cc1,combine,sig_tbl,tmp_sig,
+                    n_true: *n_true,n_false: *n_false};
                 for &t in pending.iter() {
                     if updsig.cc1[t].needs_sig() {
                         updsig.update_signature(m, t);
@@ -433,7 +435,7 @@ impl<C:Ctx> CC<C> {
                     let view = m.view_as_cc_term(&t);
                     view.iter_subterms(|u| {
                         debug_assert!(cc1.nodes.contains(&u)); // postfix order
-                        let ur = cc1.find_t(*u);
+                        let ur = cc1.find_t(u);
                         let parents = cc1.nodes.parents_mut(ur.0);
                         parents.add(&mut cc1.alloc_parent_list, n);
                     });
@@ -479,10 +481,12 @@ pub struct MergePhase<'a,C:Ctx> {
 
 /// Internal structure used during update of term signatures.
 pub struct UpdateSigPhase<'a,C:Ctx> {
-    cc1: &'a mut CC1<C>,
-    combine: &'a mut Vec<(NodeID,NodeID,Expl<C::B>)>,
-    sig_tbl: &'a mut backtrack::HashMap<Signature<C::Fun>, NodeID>,
-    tmp_sig: &'a mut Signature<C::Fun>,
+    pub(crate) cc1: &'a mut CC1<C>,
+    pub(crate) n_true: NodeID,
+    pub(crate) n_false: NodeID,
+    pub(crate) combine: &'a mut Vec<(NodeID,NodeID,Expl<C::B>)>,
+    pub(crate) sig_tbl: &'a mut backtrack::HashMap<Signature<C::Fun>, NodeID>,
+    pub(crate) tmp_sig: &'a mut Signature<C::Fun>,
 }
 
 impl<'a, C:Ctx> MergePhase<'a,C> {
@@ -696,10 +700,26 @@ impl<C:Ctx> CC1<C> {
     pub(crate) fn find(&mut self, t: NodeID) -> Repr { self.nodes.find(t) }
 
     #[inline(always)]
-    pub(crate) fn find_t(&mut self, t: C::AST) -> Repr { self.nodes.find_t(t) }
+    pub(crate) fn find_t(&mut self, t: &C::AST) -> Repr { self.nodes.find_t(t) }
 
     #[inline(always)]
     pub(crate) fn is_root(&mut self, id: NodeID) -> bool { self.find(id).0 == id }
+
+    #[inline(always)]
+    pub(crate) fn is_eq(&mut self, a: NodeID, b: NodeID) -> bool {
+        self.nodes.is_eq(a,b)
+    }
+
+    /// Find the ID of the given term.
+    #[inline]
+    pub(crate) fn get_term_id(&self, t: &C::AST) -> NodeID {
+        self.nodes.get_term_id(t)
+    }
+
+    #[inline(always)]
+    pub(crate) fn is_eq_t(&mut self, a: &C::AST, b: &C::AST) -> bool {
+        self.find_t(a) == self.find_t(b)
+    }
 
     /// Undo one change.
     fn perform_undo(&mut self, m: &C, op: UndoOp) {
@@ -755,7 +775,7 @@ impl<C:Ctx> CC1<C> {
 
                 // remove from children's parents' lists
                 m.view_as_cc_term(&t).iter_subterms(|u| {
-                    let ur = self.find_t(*u);
+                    let ur = self.find_t(u);
                     let parents = self.nodes.parents_mut(ur.0);
                     let _n = parents.remove();
                     debug_assert_eq!(_n, n);
@@ -1007,8 +1027,8 @@ impl<C:Ctx> Nodes<C> {
 
     /// Find the representative of the given term.
     #[inline]
-    pub(crate) fn find_t(&mut self, t: C::AST) -> Repr {
-        let n = self.get_term_id(&t);
+    pub(crate) fn find_t(&mut self, t: &C::AST) -> Repr {
+        let n = self.get_term_id(t);
         self.find(n)
     }
 
@@ -1402,7 +1422,7 @@ impl<F: Eq+Hash+Clone+Debug> Signature<F> {
     ) where C: Ctx<Fun=F> {
         self.clear();
         self.f = Some(f.clone());
-        for &u in args {
+        for u in args {
             self.subs.push(cc1.find_t(u));
         }
     }
@@ -1412,8 +1432,8 @@ impl<F: Eq+Hash+Clone+Debug> Signature<F> {
         &mut self, cc1: &mut CC1<C>, f: &C::AST, args: &[C::AST]
     ) where C: Ctx {
         self.clear();
-        self.subs.push(cc1.find_t(*f));
-        for &u in args {
+        self.subs.push(cc1.find_t(f));
+        for u in args {
             self.subs.push(cc1.find_t(u));
         }
     }

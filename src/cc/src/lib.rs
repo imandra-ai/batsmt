@@ -9,6 +9,7 @@ pub mod cc;
 pub mod cc_theory;
 pub mod naive_cc;
 pub mod intf;
+pub mod theories;
 
 pub use {
     crate::{
@@ -16,6 +17,7 @@ pub use {
         cc::CC,
         naive_cc::NaiveCC,
         cc_theory::{CCTheory},
+        theories::{Ite as ThIte, }
     },
     batsmt_theory::Actions,
 };
