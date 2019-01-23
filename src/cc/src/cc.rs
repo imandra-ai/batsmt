@@ -64,7 +64,7 @@ pub trait MicroTheory<C:Ctx> {
 
     fn init(m: &mut C) -> Self;
 
-    fn on_merge(&mut self, c: &mut C, acts: &mut MergePhase<C>, n1: &NodeID, n2: NodeID);
+    fn on_merge(&mut self, c: &mut C, acts: &mut MergePhase<C>, n1: NodeID, n2: NodeID);
 
     fn on_signature(&mut self, c: &mut C, acts: &mut UpdateSigPhase<C>, t: &C::AST);
 }
@@ -124,7 +124,7 @@ macro_rules! impl_micro_theory_tuple {
                 ($( $t::init(m) ,)* )
             }
 
-            fn on_merge(&mut self, c: &mut C, acts: &mut MergePhase<C>, n1: &NodeID, n2: NodeID) {
+            fn on_merge(&mut self, c: &mut C, acts: &mut MergePhase<C>, n1: NodeID, n2: NodeID) {
                 let ($( $t ,)*) = self;
                 $(
                     $t.on_merge(c, acts, n1, n2);
@@ -152,7 +152,7 @@ impl_micro_theory_tuple! { T0, T1, T2, T3, T4, T5, T6, T7, T8, }
 impl<C:Ctx> MicroTheory<C> for () {
     type State = ();
     fn init(_m: &mut C) -> Self { () }
-    fn on_merge(&mut self, _c: &mut C, _acts: &mut MergePhase<C>, _n1: &NodeID, _n2: NodeID) {}
+    fn on_merge(&mut self, _c: &mut C, _acts: &mut MergePhase<C>, _n1: NodeID, _n2: NodeID) {}
     fn on_signature(&mut self, _c: &mut C, _acts: &mut UpdateSigPhase<C>, _t: &C::AST) {}
 }
 
@@ -288,14 +288,14 @@ impl<C:Ctx, Th: MicroTheory<C>> CCInterface<C> for CC<C, Th> {
     }
 
     #[inline]
-    fn final_check<A>(&mut self, m: &C, acts: &mut A)
+    fn final_check<A>(&mut self, m: &mut C, acts: &mut A)
         where A: Actions<C>
     {
         self.check_internal(m, acts)
     }
 
     #[inline]
-    fn partial_check<A>(&mut self, m: &C, acts: &mut A)
+    fn partial_check<A>(&mut self, m: &mut C, acts: &mut A)
         where A: Actions<C>
     {
         self.check_internal(m, acts)
@@ -326,7 +326,7 @@ impl<C:Ctx, Th: MicroTheory<C>> CCInterface<C> for CC<C, Th> {
 
 impl<C:Ctx, Th: MicroTheory<C>> CC<C, Th> {
     // main `check` function, performs the fixpoint
-    fn check_internal<A>(&mut self, m: &C, acts: &mut A)
+    fn check_internal<A>(&mut self, m: &mut C, acts: &mut A)
         where A: Actions<C>
     {
         debug!("check-internal (pending: {}, combine: {})",
@@ -345,9 +345,9 @@ impl<C:Ctx, Th: MicroTheory<C>> CC<C, Th> {
     }
 
     /// Main CC algorithm.
-    fn fixpoint(&mut self, m: &C) {
+    fn fixpoint(&mut self, m: &mut C) {
         let CC{
-            combine,cc1,pending, expl_st,undo,tmp_sig,
+            combine,cc1,pending,th,expl_st,undo,tmp_sig,
             sig_tbl,props,lit_expl,n_true,n_false,..} = self;
         loop {
             if !cc1.ok {
@@ -362,7 +362,7 @@ impl<C:Ctx, Th: MicroTheory<C>> CC<C, Th> {
                     n_true: *n_true,n_false: *n_false};
                 for &t in pending.iter() {
                     if updsig.cc1[t].needs_sig() {
-                        updsig.update_signature(m, t);
+                        updsig.update_signature(m, th, t);
                     }
                 }
                 pending.clear();
@@ -373,7 +373,7 @@ impl<C:Ctx, Th: MicroTheory<C>> CC<C, Th> {
                     cc1,pending,expl_st,undo,props,lit_expl,
                     n_true: *n_true,n_false: *n_false};
                 for (t,u,expl) in combine.iter() {
-                    merger.merge(m,*t,*u,expl.clone())
+                    merger.merge(m,th,*t,*u,expl.clone())
                 }
                 combine.clear();
             }
@@ -508,7 +508,10 @@ pub struct UpdateSigPhase<'a,C:Ctx> {
 
 impl<'a, C:Ctx> MergePhase<'a,C> {
     /// Merge `a` and `b`, if they're not already equal.
-    fn merge(&mut self, m: &C, mut a: NodeID, mut b: NodeID, expl: Expl<C::B>) {
+    fn merge<Th:MicroTheory<C>>(
+        &mut self, m: &mut C, th: &mut Th,
+        mut a: NodeID, mut b: NodeID, expl: Expl<C::B>
+    ) {
         let mut ra = self.cc1.nodes.find(a);
         let mut rb = self.cc1.nodes.find(b);
         debug_assert!(self.cc1.is_root(ra.0), "{}.repr = {}",
@@ -651,12 +654,15 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
             // also merge parent lists
             na.parents.append(&mut nb.parents)
         }
+
+        // call micro theories
+        th.on_merge(m, self, a, b);
     }
 }
 
 impl<'a, C:Ctx> UpdateSigPhase<'a,C> {
     /// Check and update signature of `t`, possibly adding new merged by congruence.
-    fn update_signature(&mut self, m: &C, n: NodeID) {
+    fn update_signature<Th:MicroTheory<C>>(&mut self, m: &mut C, th: &mut Th, n: NodeID) {
         let UpdateSigPhase{tmp_sig: ref mut sig, cc1, sig_tbl, combine, ..} = self;
         let t = cc1[n].ast;
         let has_sig = match m.view_as_cc_term(&t) {
@@ -698,6 +704,8 @@ impl<'a, C:Ctx> UpdateSigPhase<'a,C> {
                 }
             }
         }
+        // call theory
+        th.on_signature(m, self, &t);
     }
 }
 

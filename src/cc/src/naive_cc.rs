@@ -57,7 +57,7 @@ impl<C:Ctx> CCInterface<C> for NaiveCC<C> {
         unimplemented!("no handling of `distinct` in naiveCC")
     }
 
-    fn final_check<A>(&mut self, m: &C, acts: &mut A)
+    fn final_check<A>(&mut self, m: &mut C, acts: &mut A)
         where A: Actions<C>
     {
         debug!("cc.check()");

@@ -23,7 +23,7 @@ impl<C> MicroTheory<C> for Ite where C: Ctx + HasIte<AST> {
     fn init(_m: &mut C) -> Self { Ite }
 
     #[inline]
-    fn on_merge(&mut self, _c: &mut C, _acts: &mut cc::MergePhase<C>, _n1: &NodeID, _n2: NodeID) {
+    fn on_merge(&mut self, _c: &mut C, _acts: &mut cc::MergePhase<C>, _n1: NodeID, _n2: NodeID) {
     }
 
     fn on_signature(&mut self, c: &mut C, acts: &mut cc::UpdateSigPhase<C>, t: &AST) {
