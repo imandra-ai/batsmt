@@ -14,7 +14,7 @@ pub mod theories;
 pub use {
     crate::{
         intf::{CC as CCInterface, CCView, Ctx, IteView, HasIte},
-        cc::CC,
+        cc::{CC, MicroTheory, MicroTheoryState},
         naive_cc::NaiveCC,
         cc_theory::{CCTheory},
         theories::{Ite as ThIte, }

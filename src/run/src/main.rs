@@ -46,7 +46,7 @@ fn main() -> Result<(), Box<Error>> {
 
     info!("parsed {} statements (after {}s)", stmts.len(), chrono.as_f64());
 
-    let th = cc::CCTheory::new(&mut c);
+    let th: cc::CCTheory<Ctx> = cc::CCTheory::new(&mut c);
     let mut solver = solver::Solver::new(c.builtins(), th);
 
     // Tseitin transformation, to handle formulas

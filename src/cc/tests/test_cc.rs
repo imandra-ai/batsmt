@@ -120,7 +120,7 @@ mod ctx {
     }
 }
 
-type CC0 = CC<Ctx>;
+type CC0 = CC<Ctx, ()>;
 type NaiveCC0 = NaiveCC<Ctx>;
 
 // generate a series of operations for the congruence closure

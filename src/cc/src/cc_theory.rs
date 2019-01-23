@@ -5,31 +5,31 @@ use {
     batsmt_core::{ast, backtrack, },
     batsmt_theory as theory,
     batsmt_pretty as pp,
-    crate::{CCInterface, CCView, Ctx, pp_t},
+    crate::{CCInterface, CCView, Ctx, theories, pp_t},
 };
 
 #[allow(unused_imports)]
-use crate::{naive_cc::NaiveCC,cc::CC};
+use crate::{naive_cc::NaiveCC,cc::{CC, MicroTheory, MicroTheoryState}};
 
 // TODO: notion of micro theory should come here
 
-#[cfg(feature="naive")]
-type CCI<M> = NaiveCC<M>;
+//#[cfg(feature="naive")]
+//type CCI<M> = NaiveCC<M>;
 
-#[cfg(not(feature="naive"))]
-type CCI<M> = CC<M>;
+//#[cfg(not(feature="naive"))]
+type CCI<M, Th> = CC<M, Th>;
 
 /// A theory built on top of a congruence closure.
 #[repr(transparent)]
-pub struct CCTheory<C:Ctx>{
-    cc: CCI<C>,
+pub struct CCTheory<C:Ctx, Th: MicroTheory<C> = (theories::Ite, )>{
+    cc: CCI<C, Th>,
 }
 
-impl<C:Ctx> CCTheory<C> {
+impl<C:Ctx, Th: MicroTheory<C>> CCTheory<C, Th> {
     /// Build a new theory for equality, based on congruence closure.
     pub fn new(m: &mut C) -> Self {
         let cc = CCI::new(m);
-        debug!("use {}", CCI::<C>::impl_descr());
+        debug!("use {}", CCI::<C,Th>::impl_descr());
         Self { cc }
     }
 
@@ -69,13 +69,13 @@ impl<C:Ctx> CCTheory<C> {
     }
 }
 
-impl<C:Ctx> backtrack::Backtrackable<C> for CCTheory<C> {
+impl<C:Ctx, Th:MicroTheory<C>> backtrack::Backtrackable<C> for CCTheory<C,Th> {
     fn push_level(&mut self, c: &mut C) { self.cc.push_level(c) }
     fn pop_levels(&mut self, c: &mut C, n:usize) { self.cc.pop_levels(c, n) }
     fn n_levels(&self) -> usize { self.cc.n_levels() }
 }
 
-impl<C:Ctx> theory::Theory<C> for CCTheory<C> {
+impl<C:Ctx, Th:MicroTheory<C>> theory::Theory<C> for CCTheory<C, Th> {
     fn final_check<A>(
         &mut self, ctx: &mut C,
         acts: &mut A, trail: &theory::Trail<C>
@@ -91,7 +91,7 @@ impl<C:Ctx> theory::Theory<C> for CCTheory<C> {
         acts: &mut A, trail: &theory::Trail<C>
     ) where A: theory::Actions<C>
     {
-        if ! CCI::<C>::has_partial_check() {
+        if ! CCI::<C,Th>::has_partial_check() {
             return; // doesn't handle partial checks
         }
         debug!("cc.partial-check");
@@ -107,7 +107,7 @@ impl<C:Ctx> theory::Theory<C> for CCTheory<C> {
 
     #[inline(always)]
     fn has_partial_check() -> bool {
-        CCI::<C>::has_partial_check()
+        CCI::<C,Th>::has_partial_check()
     }
 
     #[inline]

@@ -20,6 +20,8 @@ impl<C> MicroTheoryState<C> for IteState where C: Ctx + HasIte<AST> {
 impl<C> MicroTheory<C> for Ite where C: Ctx + HasIte<AST> {
     type State = IteState;
 
+    fn init(_m: &mut C) -> Self { Ite }
+
     #[inline]
     fn on_merge(&mut self, _c: &mut C, _acts: &mut cc::MergePhase<C>, _n1: &NodeID, _n2: NodeID) {
     }
