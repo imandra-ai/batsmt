@@ -13,8 +13,7 @@ use {
         slice, u32, marker::PhantomData,
     },
     batsmt_core::{
-        ast::{Manager, },
-        ast_u32::{self, DenseSet, }, gc, AstView, },
+        ast, ast_u32::{self, DenseSet, }, gc, AstView, },
     fxhash::{FxHashMap},
     batsmt_pretty as pp,
 };
@@ -532,58 +531,14 @@ mod manager {
     /// GC for a manager's internal nodes
     impl<S> gc::GC for HManager<S> where S: SymbolManager {
         type Element = AST;
-
-        fn mark_root(&mut self, ast: &AST) {
-            self.gc_mark_root(ast)
-        }
-
-        fn collect(&mut self) -> usize {
-            self.gc_collect()
-        }
+        fn mark_root(&mut self, ast: &AST) { self.gc_mark_root(ast) }
+        fn collect(&mut self) -> usize { self.gc_collect() }
     }
 
     /// An AST can be printed, given a manager, if the symbols are pretty
     impl<S:SymbolManager> pp::Pretty1<AST> for HManager<S> {
         fn pp1_into(&self, t: &AST, ctx: &mut pp::Ctx) {
-            match self.view(*t) {
-                AstView::Const(s) => {
-                    self.sym_m.pp1_into(&s, ctx);
-                },
-                AstView::App{f,args} if args.len() == 0 => {
-                    self.pp1_into(&f, ctx); // just f
-                },
-                AstView::App{f,args} => {
-                    ctx.sexp(|ctx| {
-                        self.pp1_into(&f, ctx);
-                        ctx.space();
-                        ctx.iter(" ", args.iter().map(|u| self.pp(u)));
-                    });
-                }
-            }
-            if ctx.alternate() {
-                ctx.string(format!("/{}", t.idx())); // print unique ID
-            }
+            ast::pp_ast(self, t, &mut |s, ctx| { self.sym_m.pp1_into(&s, ctx) }, ctx)
         }
     }
 }
-
-/// An implementation of `ManagerCtx` using some notion of symbol and `HManager`
-pub trait HManagerCtx
-    : SymbolCtx
-    + Manager<
-        AST=AST,
-        SymView=<Self as SymbolCtx>::View,
-        SymBuilder=<Self as SymbolCtx>::Builder,
-    >
-{}
-
-// auto impl
-impl<U> HManagerCtx for U
-where U: SymbolCtx,
-      U: Manager<
-        AST=AST,
-        SymView=<Self as SymbolCtx>::View,
-        SymBuilder=<Self as SymbolCtx>::Builder,
-    >
-{}
-
