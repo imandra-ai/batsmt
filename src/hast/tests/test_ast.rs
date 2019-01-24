@@ -6,7 +6,7 @@ extern crate batsmt_hast;
 use {
     std::{fmt, rc::Rc}, 
     batsmt_core::{
-        ast_u32::{self, AST, DenseSet, DenseMap, },
+        ast_u32::{self, AST, },
         ast::{self, View}, },
     fxhash::FxHashMap,
     batsmt_hast::{HManager, StrSymbolManager,}
@@ -37,13 +37,13 @@ mod ast_iter_ref {
 
     // trivial implementation of `iter_dag`, as a reference
     pub(super) fn iter_dag_ref<F>(m: &M, t: AST, mut f: F) where F: FnMut(&M, AST) {
-        let mut seen = ast_u32::SparseSet::new();
+        let mut seen = ast_u32::HashSet::new();
         iter_dag_ref_rec(&mut seen, m, t, &mut f);
     }
 }
 
 mod test_ast {
-    use {super::*, batsmt_core::{gc::GC,ast::{AstSet, AstMap, Manager}} };
+    use {super::*, batsmt_core::{gc::GC,ast::{Manager}} };
 
     #[test]
     fn test_mk_str() {
@@ -193,43 +193,6 @@ mod test_ast {
     }
 
     #[test]
-    fn test_bitset_add_rm() {
-        // create a bunch of terms
-        let mut s = StressApp::new(100).verbose(false).long_apps(true);
-        s.run();
-        let mut bs = DenseSet::new();
-        for t in s.terms.iter() {
-            assert!(! bs.contains(t));
-            bs.add(*t);
-        }
-        for t in s.terms.iter() {
-            assert!(bs.contains(t));
-        }
-        for t in s.terms.iter() {
-            bs.remove(t);
-        }
-        for t in s.terms.iter() {
-            assert!(! bs.contains(t));
-        }
-    }
-
-    #[test]
-    fn test_bitset_clear() {
-        // create a bunch of terms
-        let mut s = StressApp::new(100).verbose(false).long_apps(true);
-        s.run();
-        let mut bs = DenseSet::new();
-        bs.add_slice(&s.terms);
-        for t in s.terms.iter() {
-            assert!(bs.contains(t));
-        }
-        bs.clear();
-        for t in s.terms.iter() {
-            assert!(! bs.contains(t));
-        }
-    }
-
-    #[test]
     fn test_gc() {
         // create a bunch of terms
         let mut s = StressApp::new(100).verbose(false).long_apps(true);
@@ -283,40 +246,6 @@ mod test_ast {
             // create terms again, to check nothing is messed up
             s.run();
         }
-    }
-
-    #[test]
-    fn test_dense_map() {
-        // create a bunch of terms
-        let mut s = StressApp::new(100).verbose(false).long_apps(true);
-        s.run();
-
-        let mut m : DenseMap<usize> = DenseMap::new(0);
-
-        for (i,t) in s.terms.iter().enumerate() {
-            assert!(! m.contains(t));
-
-            m.insert(*t,i);
-        }
-
-        // ahah just kidding
-        m.clear();
-        assert!(m.is_empty());
-        assert_eq!(0, m.len());
-
-        for (i,t) in s.terms.iter().enumerate() {
-            assert!(! m.contains(t));
-
-            m.insert(*t,i);
-        }
-
-        // now check membership
-        for (i,t) in s.terms.iter().enumerate() {
-            assert!(m.contains(t));
-            assert_eq!(m.get(t), Some(&i));
-        }
-
-        assert_eq!(m.len(), m.iter().count());
     }
 
     #[test]

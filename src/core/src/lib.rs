@@ -11,13 +11,7 @@ pub mod chrono;
 
 pub use crate::{
   backtrack::{Stack as BacktrackStack,Backtrackable},
-  ast::{
-      Manager,
-      View as AstView,
-      AstSet, DenseSet, SparseSet,
-      AstMap, DenseMap, SparseMap,
-      WithDenseSet, WithDenseMap, WithSparseSet, WithSparseMap,
-  },
+  ast::{Manager, View as AstView, AstSet, AstMap, },
   gc::GC,
   shared::{Shared,SharedRef,SharedRefMut},
   chrono::Chrono,

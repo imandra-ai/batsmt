@@ -29,7 +29,7 @@ impl theory::LitMap<BLit> for SatLitMap {
         assert_ne!(b.true_, b.false_); // sanity check
         SatLitMap {
             b,
-            term_to_lit: ast::SparseMap::new(),
+            term_to_lit: ast::HashMap::new(),
             lit_to_term: LMap::new(),
             theory_lits: vec!(),
         }

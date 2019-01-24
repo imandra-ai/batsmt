@@ -12,9 +12,9 @@ use {
     std::{
         slice, u32, marker::PhantomData,
     },
-    batsmt_core::{
-        ast, ast_u32::{self, DenseSet, }, gc, AstView, },
+    batsmt_core::{ ast, ast_u32, gc, AstView, },
     fxhash::{FxHashMap},
+    bit_set::BitSet,
     batsmt_pretty as pp,
 };
 
@@ -270,14 +270,14 @@ pub struct HManager<S:SymbolManager> {
     tbl_app: FxHashMap<AppStored<'static>, AST>, // hashconsing of applications
     sym_m: S,
     // TODO: use some bits of nodes[i].kind (a u8) for this?
-    gc_alive: ast_u32::DenseSet, // for GC
+    gc_alive: BitSet, // for GC
     gc_stack: Vec<AST>, // temporary vector for GC marking
     recycle: Vec<u32>, // indices that contain a `undefined`
 }
 
 mod manager {
     use {
-        super::*, batsmt_core::ast::{ Manager, AstSet, },
+        super::*, batsmt_core::ast::{ Manager, },
     };
 
     impl<S:SymbolManager> Manager for HManager<S> {
@@ -353,7 +353,7 @@ mod manager {
                 nodes: Vec::with_capacity(512),
                 tbl_app,
                 sym_m: S::new(),
-                gc_alive: DenseSet::new(),
+                gc_alive: BitSet::new(),
                 gc_stack: Vec::new(),
                 recycle: Vec::new(),
             }
@@ -435,10 +435,10 @@ mod manager {
         // traverse and mark all elements on `stack` and their subterms
         fn gc_traverse_and_mark(&mut self) {
             while let Some(ast) = self.gc_stack.pop() {
-                if self.gc_alive.contains(&ast) {
+                if self.gc_alive.contains(ast.idx() as usize) {
                     continue; // subgraph already marked and traversed
                 }
-                self.gc_alive.add(ast);
+                self.gc_alive.insert(ast.idx() as usize);
 
                 match view_node(&self.sym_m, &self.nodes[ast.idx() as usize]) {
                     AstView::Const(_) => (),
@@ -460,8 +460,7 @@ mod manager {
             for i in 0 .. len {
                 match self.nodes[i].kind() {
                     Kind::Undef => (),
-                    _ if self.gc_alive.contains(
-                        &ast_u32::manager_util::ast_from_u32(i as u32)) => (), // keep
+                    _ if self.gc_alive.contains(i as usize) => (), // keep
                     _ => {
                         // collect
                         count += 1;
@@ -480,7 +479,7 @@ mod manager {
 
         fn gc_mark_root(&mut self, &ast: &AST) {
             // mark subterms transitively, using recursion stack
-            let marked = self.gc_alive.contains(&ast);
+            let marked = self.gc_alive.contains(ast.idx() as usize);
             if !marked {
                 self.gc_stack.push(ast);
                 self.gc_traverse_and_mark();

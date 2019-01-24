@@ -243,25 +243,6 @@ pub trait AstSet<AST:Clone> {
     }
 }
 
-/// An AST Set that is "dense".
-///
-/// This indicates that it's based on some form of array or bitset, and
-/// therefore that access should be very fast, possibly at the expense
-/// of memory consumption.
-pub trait DenseSet<AST:Clone> : AstSet<AST> {}
-
-pub trait WithDenseSet<AST:Clone> : Manager {
-    type DenseSet : DenseSet<AST>;
-    fn new_dense_set() -> Self::DenseSet;
-}
-
-/// A manager that provides an implementation of a dense set.
-pub trait ManagerWithDenseSet : Manager + WithDenseSet<<Self as Manager>::AST> {}
-
-// auto-impl
-impl<M> ManagerWithDenseSet for M
-    where M : Manager, M : WithDenseSet<<M as Manager>::AST> {}
-
 /// An AST Set that is "sparse".
 ///
 /// This indicates that it's probably based on some form of hashtable, and
@@ -310,57 +291,6 @@ pub trait AstMap<AST, V> {
     #[inline(always)]
     fn is_empty(&self) -> bool { self.len() == 0 }
 }
-
-pub trait DenseMap<AST, V> : AstMap<AST, V> {
-    /// Create a new map with `sentinel` as an element to fill the underlying storage.
-    ///
-    /// It is best if `sentinel` is efficient to clone.
-    fn new(sentinel: V) -> Self;
-
-    /// Access the given key. It must be present.
-    fn get_unchecked(&self, ast: &AST) -> &V;
-
-    /// Access the given key, return a mutable reference to its value. It must be present.
-    fn get_mut_unchecked(&mut self, ast: &AST) -> &mut V;
-
-    /// Access two disjoint locations, mutably.
-    ///
-    /// Precondition: the ASTs are distinct and in the map (panics otherwise).
-    fn get2(&mut self, t1: AST, t2: AST) -> (&mut V, &mut V);
-}
-
-pub trait SparseMap<AST, V> : AstMap<AST, V> {
-    /// Create a new empty sparse map.
-    fn new() -> Self;
-}
-
-pub trait WithDenseMap<AST,V> {
-    type DenseMap : DenseMap<AST, V>;
-
-    fn new_dense_map(sentinel: V) -> Self::DenseMap;
-}
-
-/// A manager that provides an implementation of a dense map.
-pub trait ManagerWithDenseMap<V: Clone>
-    : Manager + WithDenseMap<<Self as Manager>::AST,V> {}
-
-// auto-impl
-impl<M, V:Clone> ManagerWithDenseMap<V> for M
-    where M : Manager, M : WithDenseMap<<M as Manager>::AST,V> {}
-
-pub trait WithSparseMap<AST, V:Clone> {
-    type SparseMap : SparseMap<AST, V>;
-
-    fn new_sparse_map() -> Self::SparseMap;
-}
-
-pub trait ManagerWithSparseMap<V: Clone>
-    : Manager + WithSparseMap<<Self as Manager>::AST,V>
-{}
-
-// auto-impl
-impl<M, V:Clone> ManagerWithSparseMap<V> for M
-    where M : Manager, M : WithSparseMap<<M as Manager>::AST,V> {}
 
 /// A hashset whose elements are AST nodes.
 #[derive(Clone,Debug,Default)]
@@ -443,10 +373,6 @@ pub mod hash_map {
 
         #[inline(always)]
         fn clear(&mut self) { self.0.clear() }
-    }
-
-    impl<AST:Eq+Hash, V> SparseMap<AST, V> for HashMap<AST,V> {
-        fn new() -> Self { HashMap(FxHashMap::default()) }
     }
 
     impl<AST:Eq+Hash, V> HashMap<AST,V> {
