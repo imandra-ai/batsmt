@@ -858,10 +858,11 @@ impl<C:Ctx, Th: MicroTheory<C>> backtrack::Backtrackable<C> for CC<C, Th> {
             self.sig_tbl.pop_levels(n);
             cc1.alloc_parent_list.pop_levels(n);
             self.lit_expl.pop_levels(n);
+            self.th.pop_levels(m, n);
+
             self.props.clear();
             self.pending.clear();
             self.combine.clear();
-            self.th.pop_levels(m, n);
         }
     }
 }

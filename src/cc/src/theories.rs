@@ -27,14 +27,20 @@ impl<C> MicroTheory<C> for Ite where C: Ctx + HasIte<AST> {
             IteView::Ite(a,b,c) => {
                 let cc::UpdateSigPhase{n_true,n_false,cc1,combine,..} = acts;
                 let a = cc1.get_term_id(a);
+                let b = cc1.get_term_id(b);
+                let c = cc1.get_term_id(c);
                 if cc1.is_eq(a, *n_true) {
+                    // a=true => if(a,b,c)=b
                     let t = cc1.get_term_id(t);
-                    let b = cc1.get_term_id(b);
                     combine.push((t, b, cc::Expl::AreEq(a, *n_true)));
                 } else if cc1.is_eq(a, *n_false) {
+                    // a=false => if(a,b,c)=c
                     let t = cc1.get_term_id(t);
-                    let c = cc1.get_term_id(c);
                     combine.push((t, c, cc::Expl::AreEq(a, *n_false)));
+                } else if cc1.is_eq(b,c) {
+                    // b=c => if(a,b,c)=b
+                    let t = cc1.get_term_id(t);
+                    combine.push((t, b, cc::Expl::AreEq(b, c)));
                 }
             },
             IteView::Other(..) => ()
