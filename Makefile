@@ -21,14 +21,14 @@ doc:
 
 TEST_FLAGS ?= --test-threads=1 --nocapture
 
-test:
+test-debug:
 	cargo test -- $(TEST_FLAGS)
 	#RUST_BACKTRACE=full cargo test -- $(TEST_FLAGS)
 
 test-release:
 	cargo test --release -- $(TEST_FLAGS)
 
-dev: check debug test-release build
+dev: check test-release build
 
 watch:
 	while find src/ -print0 | xargs -0 inotifywait -e delete_self -e modify ; do \
