@@ -160,6 +160,8 @@ pub mod ctx {
                 CCView::Bool(true)
             } else if *t == self.b.false_ {
                 CCView::Bool(false)
+            } else if self.m.is_const(t) {
+                CCView::Opaque(t) // shortcut
             } else {
                 match self.m.view(t) {
                     AstView::Const(_) => CCView::Opaque(t),

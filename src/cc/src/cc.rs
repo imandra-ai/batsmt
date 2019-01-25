@@ -665,7 +665,10 @@ impl<'a, C:Ctx> UpdateSigPhase<'a,C> {
     fn update_signature<Th:MicroTheory<C>>(&mut self, m: &mut C, th: &mut Th, n: NodeID) {
         let UpdateSigPhase{tmp_sig: ref mut sig, cc1, sig_tbl, combine, ..} = self;
         let t = cc1[n].ast;
-        let has_sig = match m.view_as_cc_term(&t) {
+        let has_sig =
+            m.is_app(&t) // shortcut &&
+            &&
+            match m.view_as_cc_term(&t) {
             CCView::Bool(_) | CCView::Opaque(_) | CCView::Distinct(_) => false,
             CCView::Eq(a,b) => {
                 // do not compute a signature, but check if `args[0]==args[1]`
