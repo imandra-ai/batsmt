@@ -116,3 +116,43 @@ pub trait HasIte<AST> {
     /// View a term as a if-then-else.
     fn view_as_ite<'a>(&'a self, t: &'a AST) -> IteView<'a, AST>;
 }
+
+/// A term adapted for injective functions.
+#[derive(Debug,Clone)]
+pub enum InjectiveView<'a, F, AST>{
+    AppInjective(&'a F, &'a [AST]),
+    Other(&'a AST),
+}
+
+pub trait HasInjectivity<AST> {
+    type F : Eq+Hash;
+
+    /// View the term as an injective function, if it is.
+    ///
+    /// This means that if `f(t1…tn) = f(u1…un)` then `t1=u1 ∧ … ∧ tn=un`
+    fn view_as_injective<'a>(&'a self, t: &'a AST) -> InjectiveView<'a, Self::F, AST>;
+}
+
+pub trait HasDisjointness<F, AST> {
+    /// Does the given term have a label?
+    ///
+    /// This means any term with a distinct label is disequal to this term.
+    fn get_disjoint_label(&self, t: &AST) -> Option<F>;
+}
+
+/// A view of terms with selector functions.
+///
+/// A selector `select-f-idx` is a term
+/// satisfying `select-f-idx(f(t1…tn)) = t_idx`.
+pub enum SelectorView<'a, AST> {
+    Select {
+        f: &'a AST,
+        idx: u32,
+    },
+    Other(&'a AST),
+}
+
+pub trait HasSelector<AST> {
+    /// View a term as a selector.
+    fn view_as_selector<'a>(&'a self, t: &'a AST) -> SelectorView<'a, AST>;
+}

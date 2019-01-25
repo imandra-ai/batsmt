@@ -251,7 +251,7 @@ mod solver {
             trace!("solver.{}-check ({} level(s), \
                 {} elt(s) in trail, among which {} from theory)",
                 if partial {"partial"} else {"final"},
-                self.th.n_levels(), model.len(), self.th_trail.len());
+                self.trail_offset.n_levels(), model.len(), self.th_trail.len());
 
 
             // update which section of the trail we've checked so far, so
@@ -287,9 +287,7 @@ mod solver {
             self.0.th.pop_levels(self.1, n);
         }
         fn n_levels(&self) -> usize {
-            let n = self.0.th.n_levels();
-            debug_assert_eq!(n, self.0.trail_offset.n_levels());
-            n
+            self.0.trail_offset.n_levels()
         }
 
         // main check

@@ -94,7 +94,6 @@ impl<C:Ctx> NaiveCC<C> {
 // just backtrack the set of operations we'll have to perform
 impl<C:Ctx> backtrack::Backtrackable<C> for NaiveCC<C> {
     fn push_level(&mut self, _: &mut C) { self.ops.push_level() }
-    fn n_levels(&self) -> usize { self.ops.n_levels() }
     fn pop_levels(&mut self, _: &mut C, n: usize) {
         self.ops.pop_levels(n, |_| ()) // we didn't do anything to cancel
     }

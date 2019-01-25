@@ -9,15 +9,11 @@ pub mod alloc;
 ///
 /// It gets a context `Ctx` to perform operations.
 pub trait Backtrackable<Ctx> {
-
     /// Push one level.
     fn push_level(&mut self, _c: &mut Ctx);
 
     /// Backtrack `n` levels, using `ctx` to undo changes
     fn pop_levels(&mut self, _c: &mut Ctx, n: usize);
-
-    /// How many levels?
-    fn n_levels(&self) -> usize;
 }
 
 pub use {
@@ -28,26 +24,40 @@ pub use {
     self::alloc::Alloc,
 };
 
-/// Trivial backtracking implementation, which doesn't do anything.
-///
-/// Defer to this if you need to implement the `Backtrackable` trait but
-/// store no state.
-pub struct Dummy{n_levels: usize}
-
-impl Dummy {
-    /// New stateless backtrackable object.
-    pub fn new() -> Self { Dummy {n_levels: 0} }
+impl<C> Backtrackable<C> for () {
+    fn push_level(&mut self, _: &mut C) { }
+    fn pop_levels(&mut self, _: &mut C, _n: usize) {}
 }
 
-impl Default for Dummy {
-    fn default() -> Self { Dummy::new() }
+/// Implement `Backtrackable` for a tuple of types themselves backtrackable.
+macro_rules! impl_micro_theory_tuple {
+    () => ();
+    ( $( $t: ident ,)+ ) => {
+        #[allow(non_snake_case)]
+        impl<C, $( $t ,)* > Backtrackable<C> for ( $( $t ,)* )
+            where $( $t : Backtrackable<C> ),*
+        {
+            fn push_level(&mut self, c: &mut C) {
+                let ($( $t ,)*) = self;
+                $(
+                    $t.push_level(c);
+                )*
+            }
+
+            fn pop_levels(&mut self, c: &mut C, n: usize) {
+                let ($( $t ,)*) = self;
+                $(
+                    $t.pop_levels(c, n);
+                )*
+            }
+        }
+
+        impl_micro_theory_tuple_peel!{ $($t,)* }
+    };
 }
 
-impl<C> Backtrackable<C> for Dummy {
-    fn push_level(&mut self, _: &mut C) { self.n_levels += 1 }
-    fn pop_levels(&mut self, _: &mut C, n: usize) {
-        debug_assert!(self.n_levels >= n);
-        self.n_levels -= n;
-    }
-    fn n_levels(&self) -> usize { self.n_levels }
+// recursion
+macro_rules! impl_micro_theory_tuple_peel {
+    ( $t0: ident, $( $t: ident,)* ) => { impl_micro_theory_tuple! { $( $t ,)* } }
 }
+impl_micro_theory_tuple! { T0, T1, T2, T3, T4, T5, T6, T7, T8, }

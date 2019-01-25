@@ -43,72 +43,17 @@ pub struct CC<C:Ctx, Th: MicroTheory<C> = ()> {
     cc1: CC1<C>,
 }
 
-pub trait MicroTheoryState<C:Ctx> : Sized {
-    /// initialize state for the given term.
-    fn init(m: &mut C, t: &C::AST) -> Self;
-
-    /// Merge state `other` into `self`
-    fn merge(&mut self, other: &Self);
-
-    /// Undo the merge of `other` into `self`
-    fn unmerge(&mut self, other: &Self);
-}
-
 /// A micro-theory, which lives inside the congruence closure
 ///
 /// It works purely by merging classes based on
 /// other merges, or by declaring a set of merges inconsistent.
-pub trait MicroTheory<C:Ctx> {
-    /// State for a given node
-    type State : MicroTheoryState<C>;
-
+pub trait MicroTheory<C:Ctx> : backtrack::Backtrackable<C> {
     fn init(m: &mut C) -> Self;
 
     fn on_merge(&mut self, c: &mut C, acts: &mut MergePhase<C>, n1: NodeID, n2: NodeID);
 
     fn on_signature(&mut self, c: &mut C, acts: &mut UpdateSigPhase<C>, t: &C::AST);
 }
-
-/// Implement `MicroTheory` for a tuple of types themselves micro-theories.
-macro_rules! impl_micro_theory_state_tuple {
-    ( ($( $t: ident ),*) AND ($( $u: ident ),*) ) => {
-        #[allow(dead_code)]
-        #[allow(non_snake_case)]
-        impl<C:Ctx, $( $t ,)* > MicroTheoryState<C> for ( $( $t ,)* )
-            where $( $t : MicroTheoryState<C> ),*
-        {
-            fn init(m: &mut C, u: &C::AST) -> Self {
-                ( $( <$t as MicroTheoryState<C>>::init(m, u) ,)* )
-            }
-            fn merge(&mut self, other: &Self) {
-                let ($( $t ,)* ) = self;
-                let ($( $u ,)* ) = other;
-                $(
-                    $t.merge( $u );
-                )*
-            }
-            fn unmerge(&mut self, other: &Self) {
-                let ($( $t ,)* ) = self;
-                let ($( $u ,)* ) = other;
-                $(
-                    $t.unmerge( $u );
-                )*
-            }
-        }
-
-        impl_micro_theory_state_tuple_peel!{ ($($t,)*) AND ($($u,)*) }
-    };
-}
-
-// recursion
-macro_rules! impl_micro_theory_state_tuple_peel {
-    ( () AND () ) => {};
-    ( ($t0: ident, $( $t: ident,)*) AND ($u0: ident, $( $u: ident,)*) ) => {
-        impl_micro_theory_state_tuple! { ($($t),*) AND ($($u),*) } }
-}
-impl_micro_theory_state_tuple! {
-    (T0, T1, T2, T3, T4, T5, T6, T7, T8) AND
-    (U0, U1, U2, U3, U4, U5, U6, U7, U8) }
 
 /// Implement `MicroTheory` for a tuple of types themselves micro-theories.
 macro_rules! impl_micro_theory_tuple {
@@ -118,8 +63,6 @@ macro_rules! impl_micro_theory_tuple {
         impl<C:Ctx, $( $t ,)* > MicroTheory<C> for ( $( $t ,)* )
             where $( $t : MicroTheory<C> ),*
         {
-            type State = ( $( <$t as MicroTheory<C>>::State ,)* );
-
             fn init(m: &mut C) -> Self {
                 ($( $t::init(m) ,)* )
             }
@@ -150,7 +93,6 @@ macro_rules! impl_micro_theory_tuple_peel {
 impl_micro_theory_tuple! { T0, T1, T2, T3, T4, T5, T6, T7, T8, }
 
 impl<C:Ctx> MicroTheory<C> for () {
-    type State = ();
     fn init(_m: &mut C) -> Self { () }
     fn on_merge(&mut self, _c: &mut C, _acts: &mut MergePhase<C>, _n1: NodeID, _n2: NodeID) {}
     fn on_signature(&mut self, _c: &mut C, _acts: &mut UpdateSigPhase<C>, _t: &C::AST) {}
@@ -903,6 +845,7 @@ impl<C:Ctx, Th: MicroTheory<C>> backtrack::Backtrackable<C> for CC<C, Th> {
         self.sig_tbl.push_level();
         self.cc1.alloc_parent_list.push_level();
         self.lit_expl.push_level();
+        self.th.push_level(m);
     }
 
     fn pop_levels(&mut self, m: &mut C, n: usize) {
@@ -918,11 +861,9 @@ impl<C:Ctx, Th: MicroTheory<C>> backtrack::Backtrackable<C> for CC<C, Th> {
             self.props.clear();
             self.pending.clear();
             self.combine.clear();
+            self.th.pop_levels(m, n);
         }
     }
-
-    #[inline(always)]
-    fn n_levels(&self) -> usize { self.undo.n_levels() }
 }
 
 /// Temporary structure to resolve explanations.

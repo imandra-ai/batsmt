@@ -9,7 +9,7 @@ use {
 };
 
 #[allow(unused_imports)]
-use crate::{naive_cc::NaiveCC,cc::{CC, MicroTheory, MicroTheoryState}};
+use crate::{naive_cc::NaiveCC,cc::{CC, MicroTheory}};
 
 // TODO: notion of micro theory should come here
 
@@ -70,9 +70,10 @@ impl<C:Ctx, Th: MicroTheory<C>> CCTheory<C, Th> {
 }
 
 impl<C:Ctx, Th:MicroTheory<C>> backtrack::Backtrackable<C> for CCTheory<C,Th> {
+    #[inline]
     fn push_level(&mut self, c: &mut C) { self.cc.push_level(c) }
+    #[inline]
     fn pop_levels(&mut self, c: &mut C, n:usize) { self.cc.pop_levels(c, n) }
-    fn n_levels(&self) -> usize { self.cc.n_levels() }
 }
 
 impl<C:Ctx, Th:MicroTheory<C>> theory::Theory<C> for CCTheory<C, Th> {
