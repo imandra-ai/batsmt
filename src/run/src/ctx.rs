@@ -63,7 +63,7 @@ pub mod ctx {
             if t == self.b.true_ { tseitin::View::Bool(true) }
             else if t == self.b.false_ { tseitin::View::Bool(true) }
             else {
-                match self.m.view(t) {
+                match self.m.view(&t) {
                     AstView::Const(_) => FView::Atom(t),
                     AstView::App{f, args} if *f == self.b.not_ => {
                         debug_assert_eq!(args.len(), 1);
@@ -161,7 +161,7 @@ pub mod ctx {
             } else if *t == self.b.false_ {
                 CCView::Bool(false)
             } else {
-                match self.m.view(*t) {
+                match self.m.view(t) {
                     AstView::Const(_) => CCView::Opaque(t),
                     AstView::App{f, args} if *f == self.b.eq => {
                         debug_assert_eq!(args.len(), 2);
@@ -178,7 +178,7 @@ pub mod ctx {
 
     impl cc::HasIte<AST> for Ctx {
         fn view_as_ite<'a>(&'a self, t: &'a AST) -> cc::IteView<'a, AST> {
-            match self.m.view(*t) {
+            match self.m.view(t) {
                 AstView::App{f, args} if *f == self.b.ite => {
                     debug_assert_eq!(args.len(), 3);
                     cc::IteView::Ite(&args[0], &args[1], &args[2])

@@ -43,6 +43,9 @@ pub trait SymbolManager
     ///
     /// The caller must never use this reference again.
     fn free(&mut self, r: Self::Ref);
+
+    /// Sentinel reference. Must not be dereferenced ever.
+    fn sentinel(&self) -> Self::Ref;
 }
 
 /// String symbols
@@ -115,6 +118,8 @@ pub mod str {
             self.syms[r as usize] = self.sentinel.clone(); // remove from array
             self.recycle.push(r); // re-use this ID in the future
         }
+
+        fn sentinel(&self) -> Self::Ref { u32::MAX }
     }
 
     impl<'a> pp::Pretty1<&'a str> for StrManager {

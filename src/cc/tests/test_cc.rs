@@ -59,7 +59,7 @@ struct Ctx{
 }
 
 mod ctx {
-    use super::*;
+    use {super::*, batsmt_core::ast::Manager};
     impl HasManager for Ctx {
         type M = M;
         fn m(&self) -> &M { &self.m }
@@ -107,7 +107,7 @@ mod ctx {
             } else if *t == self.b().false_ {
                 CCView::Bool(false)
             } else {
-                match self.m.view(*t) {
+                match self.m.view(t) {
                     AstView::Const(_) => CCView::Opaque(t),
                     AstView::App{f, args} if *f == self.b().eq => {
                         debug_assert_eq!(args.len(), 2);

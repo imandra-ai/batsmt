@@ -42,6 +42,12 @@ pub trait Manager : Sized {
     /// This should be as lightweight and fast as possible.
     fn view(&self, t: &Self::AST) -> View<&Self::SymView, Self::AST>;
 
+    /// Is this term an application?
+    fn is_app(&self, t: &Self::AST) -> bool { self.view(t).is_app() }
+
+    /// Is this term a constant?
+    fn is_const(&self, t: &Self::AST) -> bool { self.view(t).is_const() }
+
     /// Create an application.
     fn mk_app(&mut self, f: Self::AST, args: &[Self::AST]) -> Self::AST;
 

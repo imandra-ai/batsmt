@@ -16,14 +16,14 @@ type M = HManager<StrSymbolManager>;
 
 /// Reference implementation for `ast::iter_dag`
 mod ast_iter_ref {
-    use {super::*, batsmt_core::ast::{AstSet, } };
+    use {super::*, batsmt_core::ast::{AstSet, Manager, } };
 
     fn iter_dag_ref_rec<F>(seen: &mut ast_u32::HashSet, m: &M, t: AST, f: &mut F) where F:FnMut(&M, AST) {
         if ! seen.contains(&t) {
             seen.add(t);
             f(&m, t);
 
-            match m.view(t) {
+            match m.view(&t) {
                 View::Const(_) => (),
                 View::App{f: f0,args} => {
                     iter_dag_ref_rec(seen, m, *f0, f);
@@ -60,8 +60,8 @@ mod test_ast {
         let mut m = M::new();
         let a = m.mk_str("a");
         let b = m.mk_str("b");
-        assert!(match m.view(a) { View::Const(s) => s == "a", _ => false });
-        assert!(match m.view(b) { View::Const(s) => s == "b", _ => false });
+        assert!(match m.view(&a) { View::Const(s) => s == "a", _ => false });
+        assert!(match m.view(&b) { View::Const(s) => s == "b", _ => false });
     }
 
     #[test]
@@ -98,13 +98,13 @@ mod test_ast {
         let t1 = m.mk_app(f, &[a,b]);
         let t2 = m.mk_app(f, &[b,a]);
         let t4 = m.mk_app(g, &[t1]);
-        assert!(match m.view(t1) { View::App{f:f2, args} => *f2 == f && args==&[a,b], _ => false });
-        assert!(match m.view(t2) { View::App{f:f2, args} => *f2 == f && args==&[b,a], _ => false });
-        assert!(match m.view(t4) { View::App{f:f2, args} => *f2 == g && args==&[t1], _ => false });
+        assert!(match m.view(&t1) { View::App{f:f2, args} => *f2 == f && args==&[a,b], _ => false });
+        assert!(match m.view(&t2) { View::App{f:f2, args} => *f2 == f && args==&[b,a], _ => false });
+        assert!(match m.view(&t4) { View::App{f:f2, args} => *f2 == g && args==&[t1], _ => false });
         let t10 = m.mk_app(f, &[a; 10]);
         let t11 = m.mk_app(f, &[b; 10]);
-        assert!(match m.view(t10) { View::App{f:f2, args} => *f2 == f && args==&[a;10], _ => false });
-        assert!(match m.view(t11) { View::App{f:f2, args} => *f2 == f && args==&[b;10], _ => false });
+        assert!(match m.view(&t10) { View::App{f:f2, args} => *f2 == f && args==&[a;10], _ => false });
+        assert!(match m.view(&t11) { View::App{f:f2, args} => *f2 == f && args==&[b;10], _ => false });
     }
 
     struct StressApp {
@@ -468,7 +468,7 @@ mod ast_prop {
             let mut res = None; // for fast exit
             ast::iter_suffix(m, t, &mut res, |_,r,_| r.is_some(), |m,r,u| {
                 // immediate subterms
-                let subs: Vec<_> = m.view(*u).subterms().cloned().collect();
+                let subs: Vec<_> = m.view(u).subterms().cloned().collect();
                 for v in &subs {
                     if ! seen.contains(v) {
                         *r = Some((*t, *u, *v));

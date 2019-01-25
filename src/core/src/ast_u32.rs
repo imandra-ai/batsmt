@@ -18,7 +18,7 @@ impl AST {
 
     /// Access the underlying integer.
     #[inline(always)]
-    pub fn idx(&self) -> u32 { self.0 }
+    pub const fn idx(&self) -> u32 { self.0 }
 }
 
 impl ast::HasID for AST {
