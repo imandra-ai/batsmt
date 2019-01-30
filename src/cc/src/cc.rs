@@ -191,6 +191,7 @@ pub(crate) enum Expl<B> {
     Lit(B), // because literal was asserted
     Congruence(NodeID, NodeID), // because terms are congruent
     AreEq(NodeID, NodeID), // because terms are equal
+    Conj(Vec<Expl<B>>), // conjunction of explanations
 }
 
 /// Undo operations on the congruence closure
@@ -919,6 +920,10 @@ impl<'a,C:Ctx> ExplResolve<'a,C> {
                 Expl::AreEq(a,b) => {
                     self.explain_eq(m, a, b);
                 },
+                Expl::Conj(v) => {
+                    // explain each element of the conjunction
+                    self.expl_st.extend(v.iter().cloned());
+                },
                 Expl::Congruence(a,b) => {
                     // explain why arguments are pairwise equal
                     let a = self.cc1[a].ast;
@@ -1243,6 +1248,11 @@ mod expl {
                     let b = self[*b].ast;
                     ctx.str("are-eq(").pp(&pp_t(m,&a)).str(", ").pp(&pp_t(m,&b)).str(")");
                 }
+                Expl::Conj(v) => {
+                    ctx.sexp(|ctx| {
+                        for e in v.iter() { self.pp2_into(m, e, ctx) }
+                    });
+                },
                 Expl::Congruence(a,b) => {
                     let a = self[*a].ast;
                     let b = self[*b].ast;
