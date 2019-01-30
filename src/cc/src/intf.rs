@@ -125,7 +125,7 @@ pub enum InjectiveView<'a, F, AST>{
 }
 
 pub trait HasInjectivity<AST> {
-    type F : Eq+Hash+Clone;
+    type F : Eq + Hash + Clone + fmt::Debug;
 
     /// View the term as an injective function, if it is.
     ///
@@ -134,7 +134,7 @@ pub trait HasInjectivity<AST> {
 }
 
 pub trait HasDisjointness<AST> {
-    type F : Eq + Clone;
+    type F : Eq + Clone + fmt::Debug;
 
     /// Does the given term have a label?
     ///
@@ -142,19 +142,19 @@ pub trait HasDisjointness<AST> {
     fn get_disjoint_label(&self, t: &AST) -> Option<Self::F>;
 }
 
-/// A view of terms with selector functions.
+/// A view of terms with selector functions over injective functions.
 ///
 /// A selector `select-f-idx` is a term
 /// satisfying `select-f-idx(f(t1…tn)) = t_idx`.
-pub enum SelectorView<'a, AST> {
+pub enum SelectorView<'a, F, AST> {
     Select {
-        f: &'a AST,
+        f: &'a F,
         idx: u32,
     },
     Other(&'a AST),
 }
 
-pub trait HasSelector<AST> {
+pub trait HasSelector<AST> : HasInjectivity<AST> {
     /// View a term as a selector.
-    fn view_as_selector<'a>(&'a self, t: &'a AST) -> SelectorView<'a, AST>;
+    fn view_as_selector<'a>(&'a self, t: &'a AST) -> SelectorView<'a, Self::F, AST>;
 }

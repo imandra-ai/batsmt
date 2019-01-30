@@ -89,13 +89,12 @@ impl<C> MicroTheory<C> for Injectivity<<C as HasInjectivity<AST>>::F>
     }
 
     fn on_merge(&mut self, c: &mut C, acts: &mut cc::MergePhase<C>, n1: NodeID, n2: NodeID) {
-
-        let mut v2_subset = SVec::new(); // to be added to v1
-
         // TODO: find a shortcut (per-node bitfield? bloom filter?)
         // to pre-filter whether n1 and n2 have at least one injective symbol
 
         if let Some(v1) = self.repr.get(&n1) {
+            let mut v2_subset = SVec::new(); // to be added to v1
+
             if let Some(v2) = self.repr.get(&n2) {
                 debug_assert!(v2.len()>0 && v1.len()>0);
 
@@ -106,24 +105,53 @@ impl<C> MicroTheory<C> for Injectivity<<C as HasInjectivity<AST>>::F>
                             v2_subset.push((f2.clone(),t2.clone()))
                         },
                         Some((_f1,t1)) => {
-                            trace!("injectivity: merge {} and {}", pp_t(c,t1), pp_t(c,t2));
+                            trace!("injectivity: merge arguments of {} and {}", pp_t(c,t1), pp_t(c,t2));
+
                             let n_t1 = acts.cc1.get_term_id(t1);
                             let n_t2 = acts.cc1.get_term_id(t2);
-                            acts.combine2.push((n_t1, n_t2, cc::Expl::AreEq(n1,n2)))
+                            
+                            // explanation: `t1[i]=t2[i] <== t1=n1,n1=n2,n2=t2`
+                            let expl = if n_t1 == n1 && n_t2 == n2 {
+                                cc::Expl::AreEq(n1,n2)
+                            } else {
+                                let mut v = Vec::with_capacity(3);
+                                v.push(cc::Expl::AreEq(n1,n2));
+                                if n1 != n_t1 { v.push(cc::Expl::AreEq(n1,n_t1)) };
+                                if n2 != n_t2 { v.push(cc::Expl::AreEq(n2,n_t2)) };
+                                cc::Expl::Conj(v)
+                            };
+
+                            // merge arguments of `t1` and `t2` pairwise,
+                            // since both are of the shape `f2(…)`
+                            match (c.view_as_injective(t1), c.view_as_injective(t2)) {
+                                (InjectiveView::AppInjective(f_t1, args1),
+                                 InjectiveView::AppInjective(f_t2, args2)) => {
+                                    assert_eq!(args1.len(), args2.len());
+                                    debug_assert_eq!(f2, f_t1);
+                                    debug_assert_eq!(f2, f_t2);
+
+                                    for i in 0..args1.len() {
+                                        let n_u1 = acts.cc1.get_term_id(&args1[i]);
+                                        let n_u2 = acts.cc1.get_term_id(&args2[i]);
+                                        acts.combine2.push((n_u1, n_u2, expl.clone()))
+                                    }
+                                },
+                                _ => unreachable!(),
+                            }
                         }
                     }
                 }
             }
-        }
 
-        if v2_subset.len() > 0 {
-            self.repr.update(&n1, |v1| {
-                // v1 <- v1 ++ v2
-                let mut v1_new = SVec::with_capacity(v1.len() + v2_subset.len());
-                v1_new.extend(v1.iter().cloned());
-                v1_new.extend(v2_subset.drain());
-                v1_new
-            });
+            if v2_subset.len() > 0 {
+                self.repr.update(&n1, |v1| {
+                    // v1 <- v1 ++ v2
+                    let mut v1_new = SVec::with_capacity(v1.len() + v2_subset.len());
+                    v1_new.extend(v1.iter().cloned());
+                    v1_new.extend(v2_subset.drain());
+                    v1_new
+                });
+            }
         }
     }
 
@@ -132,7 +160,7 @@ impl<C> MicroTheory<C> for Injectivity<<C as HasInjectivity<AST>>::F>
 }
 
 pub struct Disjointness<F:Clone+Eq> {
-    label: BHMap<NodeID, F>, // label of the class, if any
+    label: BHMap<NodeID, (F, AST)>, // label of the class, if any
 }
 
 impl<C, F:Eq+Clone> Backtrackable<C> for Disjointness<F> {
@@ -152,7 +180,7 @@ impl<C> MicroTheory<C> for Disjointness<<C as HasDisjointness<AST>>::F>
             Some(f) => {
                 // add to the table
                 trace!("add disjoint label to {}", pp_t(c,t));
-                self.label.insert(n, f);
+                self.label.insert(n, (f,t.clone()));
             },
             None => (),
         }
@@ -162,14 +190,25 @@ impl<C> MicroTheory<C> for Disjointness<<C as HasDisjointness<AST>>::F>
         // TODO: find a shortcut (per-node bitfield? bloom filter?)
         // to pre-filter whether n1 and n2 have a label
 
-        if let Some(f2) = self.label.get(&n2) {
-            if let Some(f1) = self.label.get(&n1) {
+        if let Some((f2,t2)) = self.label.get(&n2) {
+            if let Some((f1,t1)) = self.label.get(&n1) {
                 if f1 != f2 {
                     let cc::MergePhase{cc1,n_true,n_false,combine2,..} = acts;
                     trace!("disjointness: failure for {} and {}",
                            pp::pp2(*cc1,c,&n1), pp::pp2(*cc1,c,&n2));
-                    // conflict
-                    combine2.push((*n_true, *n_false, cc::Expl::AreEq(n1,n2)))
+                    // conflict by `false <== n1=n2 & n1=t1 & n2=t2`
+                    let n_t1 = cc1.get_term_id(t1);
+                    let n_t2 = cc1.get_term_id(t2);
+                    let expl = if n_t1 == n1 && n_t2 == n2 {
+                        cc::Expl::AreEq(n1,n2)
+                    } else {
+                        let mut v = Vec::with_capacity(3);
+                        v.push(cc::Expl::AreEq(n1,n2));
+                        if n1 != n_t1 { v.push(cc::Expl::AreEq(n1, n_t1)) };
+                        if n2 != n_t2 { v.push(cc::Expl::AreEq(n2, n_t2)) };
+                        cc::Expl::Conj(v)
+                    };
+                    combine2.push((*n_true, *n_false, expl))
                 }
             }
         }
