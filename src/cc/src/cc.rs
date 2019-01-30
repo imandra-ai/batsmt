@@ -50,8 +50,13 @@ pub struct CC<C:Ctx, Th: MicroTheory<C> = ()> {
 pub trait MicroTheory<C:Ctx> : backtrack::Backtrackable<C> {
     fn init(m: &mut C) -> Self;
 
+    /// `th.on_new_term(c,t,n)` is called when `t` has been added, with node `n`
+    fn on_new_term(&mut self, c: &mut C, t: &C::AST, n: NodeID);
+
+    /// `th.on_merge(c,acts,n1,n2)` is called when `n2` is merged into `n1`.
     fn on_merge(&mut self, c: &mut C, acts: &mut MergePhase<C>, n1: NodeID, n2: NodeID);
 
+    /// `th.on_signature(c,acts,t)` is called when the signature of `t` has changed.
     fn on_signature(&mut self, c: &mut C, acts: &mut UpdateSigPhase<C>, t: &C::AST);
 }
 
@@ -65,6 +70,13 @@ macro_rules! impl_micro_theory_tuple {
         {
             fn init(m: &mut C) -> Self {
                 ($( $t::init(m) ,)* )
+            }
+
+            fn on_new_term(&mut self, c: &mut C, t: &C::AST, n: NodeID) {
+                let ($( $t ,)*) = self;
+                $(
+                    $t.on_new_term(c, t, n);
+                )*
             }
 
             fn on_merge(&mut self, c: &mut C, acts: &mut MergePhase<C>, n1: NodeID, n2: NodeID) {
@@ -94,6 +106,7 @@ impl_micro_theory_tuple! { T0, T1, T2, T3, T4, T5, T6, T7, T8, }
 
 impl<C:Ctx> MicroTheory<C> for () {
     fn init(_m: &mut C) -> Self { () }
+    fn on_new_term(&mut self, _c: &mut C, _t: &C::AST, _n: NodeID) {}
     fn on_merge(&mut self, _c: &mut C, _acts: &mut MergePhase<C>, _n1: NodeID, _n2: NodeID) {}
     fn on_signature(&mut self, _c: &mut C, _acts: &mut UpdateSigPhase<C>, _t: &C::AST) {}
 }
@@ -205,7 +218,7 @@ pub struct Signature<F> {
 
 // implement main interface
 impl<C:Ctx, Th: MicroTheory<C>> CCInterface<C> for CC<C, Th> {
-    fn merge(&mut self, m: &C, t1: C::AST, t2: C::AST, lit: C::B) {
+    fn merge(&mut self, m: &mut C, t1: C::AST, t2: C::AST, lit: C::B) {
         debug!("merge {} and {} (expl {:?})", pp_t(m,&t1), pp_t(m,&t2), lit);
         // FIXME debug!("merge {} and {} (expl {:?})", pp_term(m,&t1), pp_term(m,&t2), lit);
         let n1 = self.add_term(m, t1);
@@ -214,7 +227,7 @@ impl<C:Ctx, Th: MicroTheory<C>> CCInterface<C> for CC<C, Th> {
         self.combine.push((n1,n2,expl));
     }
 
-    fn distinct(&mut self, _m: &C, _ts: &[C::AST], _lit: C::B) {
+    fn distinct(&mut self, _m: &mut C, _ts: &[C::AST], _lit: C::B) {
         unimplemented!("distinct is not supported yet")
         /*
         let mut v = SVec::with_capacity(ts.len());
@@ -224,7 +237,7 @@ impl<C:Ctx, Th: MicroTheory<C>> CCInterface<C> for CC<C, Th> {
         */
     }
 
-    fn add_literal(&mut self, m: &C, t: C::AST, lit: C::B) {
+    fn add_literal(&mut self, m: &mut C, t: C::AST, lit: C::B) {
         let n = self.add_term(m, t);
         self.map_to_lit(m, n, lit);
     }
@@ -312,12 +325,17 @@ impl<C:Ctx, Th: MicroTheory<C>> CC<C, Th> {
 
             {
                 let mut merger = MergePhase{
-                    cc1,pending,expl_st,undo,props,lit_expl,
+                    cc1,pending,expl_st,undo,props,lit_expl,combine2: SVec::new(),
                     n_true: *n_true,n_false: *n_false};
-                for (t,u,expl) in combine.iter() {
-                    merger.merge(m,th,*t,*u,expl.clone())
+                while combine.len() > 0 {
+                    for (t,u,expl) in combine.iter() {
+                        merger.merge(m,th,*t,*u,expl.clone())
+                    }
+                    combine.clear();
+                    // micro theories may have more things to propagate
+                    combine.extend_from_slice(&merger.combine2);
+                    merger.combine2.clear();
                 }
-                combine.clear();
             }
 
             if pending.is_empty() {
@@ -359,17 +377,17 @@ impl<C:Ctx, Th:MicroTheory<C>> CC<C, Th> {
 
     /// Add this term to the congruence closure, if not present already.
     #[inline]
-    fn add_term(&mut self, m: &C, t0: C::AST) -> NodeID {
+    fn add_term(&mut self, m: &mut C, t0: C::AST) -> NodeID {
         match self.cc1.nodes.map.get(&t0) {
             Some(n) => *n,
             None => self.add_term_rec(m, t0),
         }
     }
 
-    fn add_term_rec(&mut self, m: &C, t0: C::AST) -> NodeID {
+    fn add_term_rec(&mut self, m: &mut C, t0: C::AST) -> NodeID {
         self.traverse.clear();
 
-        let CC {traverse, undo, cc1, pending, ..} = self;
+        let CC {traverse, undo, cc1, pending, th, ..} = self;
         // traverse in postfix order (shared context: `cc1`)
 
         traverse.push(TraverseTask::Enter(t0));
@@ -405,6 +423,8 @@ impl<C:Ctx, Th:MicroTheory<C>> CC<C, Th> {
                         cc1.nodes[n].set_needs_sig();
                         pending.push(n);
                     }
+
+                    th.on_new_term(m, &t, n);
                 },
             }
         }
@@ -428,13 +448,14 @@ impl<C:Ctx, Th:MicroTheory<C>> CC<C, Th> {
 
 /// Internal structure used during merging of newly equivalent classes.
 pub struct MergePhase<'a,C:Ctx> {
-    cc1: &'a mut CC1<C>,
-    n_true: NodeID,
-    n_false: NodeID,
-    pending: &'a mut Vec<NodeID>,
-    expl_st: &'a mut Vec<Expl<C::B>>,
+    pub(crate) cc1: &'a mut CC1<C>,
+    pub(crate) n_true: NodeID,
+    pub(crate) n_false: NodeID,
+    pub(crate) pending: &'a mut Vec<NodeID>,
+    pub(crate) combine2: SVec<(NodeID, NodeID, Expl<C::B>)>, // temporary
+    pub(crate) expl_st: &'a mut Vec<Expl<C::B>>,
     undo: &'a mut backtrack::Stack<UndoOp>,
-    props: &'a mut Vec<C::B>, // local for propagations
+    pub(crate) props: &'a mut Vec<C::B>, // local for propagations
     lit_expl: &'a mut backtrack::HashMap<C::B, LitExpl<C::B>>, // pre-explanations for propagations
 }
 

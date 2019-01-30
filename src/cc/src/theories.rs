@@ -2,10 +2,11 @@
 //! Micro theories
 
 use {
+    std::hash::Hash,
     batsmt_core::{ast_u32::AST, backtrack::{Backtrackable, HashMap as BHMap}},
     crate::{
         cc::{self, MicroTheory, NodeID, },
-        Ctx, IteView, HasIte, InjectiveView, HasInjectivity, },
+        Ctx, IteView, HasIte, InjectiveView, HasInjectivity, pp_t, },
 };
 
 pub struct Ite;
@@ -19,9 +20,11 @@ impl<C> MicroTheory<C> for Ite where C: Ctx + HasIte<AST> {
     fn init(_m: &mut C) -> Self { Ite }
 
     #[inline]
+    fn on_new_term(&mut self, _c: &mut C, _t: &AST, _n: NodeID) {}
+
+    #[inline]
     fn on_merge(&mut self, _c: &mut C, _acts: &mut cc::MergePhase<C>, _n1: NodeID, _n2: NodeID) {}
 
-    // TODO: if then=else, also merge with then
     fn on_signature(&mut self, c: &mut C, acts: &mut cc::UpdateSigPhase<C>, t: &AST) {
         match c.view_as_ite(t) {
             IteView::Ite(a,b,c) => {
@@ -48,52 +51,139 @@ impl<C> MicroTheory<C> for Ite where C: Ctx + HasIte<AST> {
     }
 }
 
-/* TODO
-pub struct Injectivity<F:Eq+Hash> {
-    repr: BHMap<(NodeID,F), AST>, // (root,injective-fun) => a term in the class with this function
+/// A local small-vec
+type SVec<T> = smallvec::SmallVec<[T; 4]>;
+
+/// State for the theory of injectivity.
+pub struct Injectivity<F:Eq+Clone> {
+    // TODO: bloom-filter of classes that have injective funs?
+    /// `representative -> (f,t)+` where f: injective, `t=f(…)`
+    /// There's at most one `(f,_)` per vector.
+    repr: BHMap<NodeID, SVec<(F,AST)>>,
 }
 
-pub struct Disjointness<F:Clone> {
-    label: BHMap<NodeID, F>, // label of the class, if any
+impl<C, F:Eq+Hash+Clone> Backtrackable<C> for Injectivity<F> {
+    fn push_level(&mut self, _: &mut C) { self.repr.push_level() }
+    fn pop_levels(&mut self, _: &mut C, n: usize) { self.repr.pop_levels(n) }
 }
 
-pub struct Selector;
-
-impl<C, F> MicroTheory<C> for Injectivity
-    where F: Eq,
-          C: Ctx + HasInjectivity<F, AST>
+impl<C> MicroTheory<C> for Injectivity<<C as HasInjectivity<AST>>::F>
+    where C: Ctx + HasInjectivity<AST>
 {
-    // TODO: store one term per injective function per class
-    type State = ();
+    fn init(_m: &mut C) -> Self {
+        Injectivity{ repr: BHMap::new() }
+    }
 
-    fn init(_m: &mut C) -> Self { Injectivity }
+    fn on_new_term(&mut self, c: &mut C, t: &AST, n: NodeID) {
+        match c.view_as_injective(t) {
+            InjectiveView::AppInjective(f, _) => {
+                // add to the table
+                trace!("add {} to the injective entries for {:?}", pp_t(c,t), n);
+                let v = SVec::from_elem((f.clone(),t.clone()),1);
+                self.repr.insert(n, v);
+            },
+            InjectiveView::Other(..) => ()
+        }
+    }
 
     fn on_merge(&mut self, c: &mut C, acts: &mut cc::MergePhase<C>, n1: NodeID, n2: NodeID) {
-        let t1 = acts.cc1[n1].ast;
-        let t2 = acts.cc1[n2].ast;
-        match c.view(t) {
 
+        let mut v2_subset = SVec::new(); // to be added to v1
 
-        }
-        match c.view_as_ite(t) {
-            IteView::Ite(a,b,c) => {
-                let cc::UpdateSigPhase{n_true,n_false,cc1,combine,..} = acts;
-                let a = cc1.get_term_id(a);
-                if cc1.is_eq(a, *n_true) {
-                    let t = cc1.get_term_id(t);
-                    let b = cc1.get_term_id(b);
-                    combine.push((t, b, cc::Expl::AreEq(a, *n_true)));
-                } else if cc1.is_eq(a, *n_false) {
-                    let t = cc1.get_term_id(t);
-                    let c = cc1.get_term_id(c);
-                    combine.push((t, c, cc::Expl::AreEq(a, *n_false)));
+        // TODO: find a shortcut (per-node bitfield? bloom filter?)
+        // to indicate where n1 and n2 have any injective symbol
+        if let Some(v1) = self.repr.get(&n1) {
+            if let Some(v2) = self.repr.get(&n2) {
+                debug_assert!(v2.len()>0 && v1.len()>0);
+
+                for (f2,t2) in v2.iter() {
+                    match v1.iter().find(|(f1,t1)| f1 == f2 && t1 != t2) {
+                        None => {
+                            // will add to v1
+                            v2_subset.push((f2.clone(),t2.clone()))
+                        },
+                        Some((_f1,t1)) => {
+                            trace!("injectivity: merge {} and {}", pp_t(c,t1), pp_t(c,t2));
+                            let n_t1 = acts.cc1.get_term_id(t1);
+                            let n_t2 = acts.cc1.get_term_id(t2);
+                            acts.combine2.push((n_t1, n_t2, cc::Expl::AreEq(n1,n2)))
+                        }
+                    }
                 }
-            },
-            IteView::Other(..) => ()
+            }
+        }
+
+        if v2_subset.len() > 0 {
+            self.repr.update(&n1, |v1| {
+                // v1 <- v1 ++ v2
+                let mut v1_new = SVec::with_capacity(v1.len() + v2_subset.len());
+                v1_new.extend(v1.iter().cloned());
+                v1_new.extend(v2_subset.drain());
+                v1_new
+            });
         }
     }
 
     #[inline]
     fn on_signature(&mut self, _c: &mut C, _acts: &mut cc::UpdateSigPhase<C>, _t: &AST) {}
 }
+
+pub struct Disjointness<F:Clone+Eq> {
+    label: BHMap<NodeID, F>, // label of the class, if any
+}
+
+impl<C, F:Eq+Clone> Backtrackable<C> for Disjointness<F> {
+    fn push_level(&mut self, _: &mut C) { self.label.push_level() }
+    fn pop_levels(&mut self, _: &mut C, n: usize) { self.label.pop_levels(n) }
+}
+
+/*
+impl<C, F:Eq+Clone> MicroTheory<C> for Disjointness<F>
+    where C: Ctx + HasDisjointness<C::AST>
+{
+    fn init(_m: &mut C) -> Self {
+        Injectivity{ repr: BHMap::new() }
+    }
+
+    fn on_new_term(&mut self, c: &mut C, t: &AST, n: NodeID) {
+        match c.view_as_injective(t) {
+            InjectiveView::AppInjective(f, _) => {
+                // add to the table
+                trace!("add {} to the injective entries for {:?}", pp_t(c,t), n);
+                let v = SVec::from_elem((f.clone(),t.clone()),1);
+                self.repr.insert(n, v);
+            },
+            InjectiveView::Other(..) => ()
+        }
+    }
+
+    fn on_merge(&mut self, c: &mut C, acts: &mut cc::MergePhase<C>, n1: NodeID, n2: NodeID) {
+        // TODO: find a shortcut (per-node bitfield? bloom filter?)
+        // to indicate where n1 and n2 have any injective symbol
+        if let Some(v2) = self.repr.get(&n2) {
+            if let Some(v1) = self.repr.get(&n1) {
+                debug_assert!(v2.len()>0 && v1.len()>0);
+
+                for (f1,t1) in v1.iter() {
+                    for (f2,t2) in v2.iter() {
+                        if f1 == f2 && t1 != t2 {
+                            trace!("injectivity: merge {} and {}", pp_t(c,t1), pp_t(c,t2));
+                            let n_t1 = acts.cc1.get_term_id(t1);
+                            let n_t2 = acts.cc1.get_term_id(t2);
+                            acts.combine2.push((n_t1,n_t2, cc::Expl::AreEq(n1,n2)))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[inline]
+    fn on_signature(&mut self, _c: &mut C, _acts: &mut cc::UpdateSigPhase<C>, _t: &AST) {}
+}
+*/
+
+/*
+pub struct Selector;
+
 */

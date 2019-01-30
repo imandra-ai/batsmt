@@ -73,17 +73,17 @@ pub(crate) fn pp_t<'a,C:Ctx>(
 /// Interface satisfied by implementations of the congruence closure.
 pub trait CC<C: Ctx> : backtrack::Backtrackable<C> {
     /// `cc.merge(t1,t2,lit)` merges `t1` and `t2` with explanation `lit`.
-    fn merge(&mut self, m: &C, t1: C::AST, t2: C::AST, lit: C::B);
+    fn merge(&mut self, m: &mut C, t1: C::AST, t2: C::AST, lit: C::B);
 
     /// `cc.distinct(terms,lit)` asserts that all elements of `terms` are disjoint
-    fn distinct(&mut self, m: &C, ts: &[C::AST], lit: C::B);
+    fn distinct(&mut self, m: &mut C, ts: &[C::AST], lit: C::B);
 
     /// Add a binding term<=>literal to the congruence closure.
     ///
     /// This is typically called before solving, so as to add terms once
     /// and for all, and so that the congruence closure can propagate
     /// literals back to the SAT solver.
-    fn add_literal(&mut self, _m: &C, _t: C::AST, _lit: C::B) {}
+    fn add_literal(&mut self, _m: &mut C, _t: C::AST, _lit: C::B) {}
 
     /// Check if the set of `merge` and `distinct` seen so far is consistent.
     ///
@@ -125,7 +125,7 @@ pub enum InjectiveView<'a, F, AST>{
 }
 
 pub trait HasInjectivity<AST> {
-    type F : Eq+Hash;
+    type F : Eq+Hash+Clone;
 
     /// View the term as an injective function, if it is.
     ///

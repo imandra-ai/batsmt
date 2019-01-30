@@ -49,11 +49,11 @@ enum Task<AST> {
 }
 
 impl<C:Ctx> CCInterface<C> for NaiveCC<C> {
-    fn merge(&mut self, _m: &C, t1: C::AST, t2: C::AST, lit: C::B) {
+    fn merge(&mut self, _m: &mut C, t1: C::AST, t2: C::AST, lit: C::B) {
         self.ops.push(Op::Merge(t1,t2,lit))
     }
 
-    fn distinct(&mut self, _m: &C, _ts: &[C::AST], _lit: C::B) {
+    fn distinct(&mut self, _m: &mut C, _ts: &[C::AST], _lit: C::B) {
         unimplemented!("no handling of `distinct` in naiveCC")
     }
 

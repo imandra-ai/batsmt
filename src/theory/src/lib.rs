@@ -161,7 +161,7 @@ pub trait Theory<C:Ctx> : Backtrackable<C>{
     /// This is typically called before solving, so as to add terms once
     /// and for all, and so that the theory can propagate
     /// literals back to the SAT solver.
-    fn add_literal(&mut self, _ctx: &C, _t: C::AST, _lit: C::B) {}
+    fn add_literal(&mut self, _ctx: &mut C, _t: C::AST, _lit: C::B) {}
 
     /// Ask the theory to explain why it propagated literal `lit`.
     ///
@@ -173,7 +173,7 @@ pub trait Theory<C:Ctx> : Backtrackable<C>{
     /// - `ctx`: the theory context.
     /// - `(t,sign)`: the signed theory atom corresponding to `p`.
     /// - `p`: the raw boolean literal whose propagation must be explained.
-    fn explain_propagation(&mut self, ctx: &C, t: C::AST, sign: bool, p: C::B) -> &[C::B];
+    fn explain_propagation(&mut self, ctx: &mut C, t: C::AST, sign: bool, p: C::B) -> &[C::B];
 }
 
 /// Statistics.

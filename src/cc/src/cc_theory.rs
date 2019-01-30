@@ -11,7 +11,7 @@ use {
 #[allow(unused_imports)]
 use crate::{naive_cc::NaiveCC,cc::{CC, MicroTheory}};
 
-// TODO: notion of micro theory should come here
+type SVec8<T> = smallvec::SmallVec<[T;8]>;
 
 //#[cfg(feature="naive")]
 //type CCI<M> = NaiveCC<M>;
@@ -34,7 +34,7 @@ impl<C:Ctx, Th: MicroTheory<C>> CCTheory<C, Th> {
     }
 
     /// Add trail to the congruence closure, returns `true` if anything was added
-    fn add_trail_to_cc(&mut self, m: &C, trail: &theory::Trail<C>) -> bool {
+    fn add_trail_to_cc(&mut self, m: &mut C, trail: &theory::Trail<C>) -> bool {
         let mut done_sth = false;
 
         // update congruence closure
@@ -53,7 +53,9 @@ impl<C:Ctx, Th: MicroTheory<C>> CCTheory<C, Th> {
                     if !sign {
                         panic!("cannot handle negative `distinct`")
                     };
-                    self.cc.distinct(m, args, lit)
+                    // copy `args` locally
+                    let args = SVec8::from_slice(args);
+                    self.cc.distinct(m, &args, lit)
                 },
                 _ if sign => {
                     self.cc.merge(m, ast, m.get_bool_term(true), lit)
@@ -112,12 +114,12 @@ impl<C:Ctx, Th:MicroTheory<C>> theory::Theory<C> for CCTheory<C, Th> {
     }
 
     #[inline]
-    fn add_literal(&mut self, ctx: &C, t: C::AST, lit: C::B) {
+    fn add_literal(&mut self, ctx: &mut C, t: C::AST, lit: C::B) {
         self.cc.add_literal(ctx, t,lit);
     }
 
     #[inline]
-    fn explain_propagation(&mut self, m: &C, _t: C::AST, _sign: bool, p: C::B) -> &[C::B] {
+    fn explain_propagation(&mut self, m: &mut C, _t: C::AST, _sign: bool, p: C::B) -> &[C::B] {
         // what does `t=sign` correspond to?
         trace!("explain-prop {} sign={} (lit {:?})", pp_t(m,&_t), _sign, p);
         self.cc.explain_prop(m, p)
