@@ -4,9 +4,11 @@
 use {
     std::hash::Hash,
     batsmt_core::{ast_u32::AST, backtrack::{Backtrackable, HashMap as BHMap}},
+    batsmt_pretty as pp,
     crate::{
         cc::{self, MicroTheory, NodeID, },
-        Ctx, IteView, HasIte, InjectiveView, HasInjectivity, pp_t, },
+        Ctx, IteView, HasIte, InjectiveView, HasInjectivity,
+        HasDisjointness, pp_t, },
 };
 
 pub struct Ite;
@@ -91,7 +93,8 @@ impl<C> MicroTheory<C> for Injectivity<<C as HasInjectivity<AST>>::F>
         let mut v2_subset = SVec::new(); // to be added to v1
 
         // TODO: find a shortcut (per-node bitfield? bloom filter?)
-        // to indicate where n1 and n2 have any injective symbol
+        // to pre-filter whether n1 and n2 have at least one injective symbol
+
         if let Some(v1) = self.repr.get(&n1) {
             if let Some(v2) = self.repr.get(&n2) {
                 debug_assert!(v2.len()>0 && v1.len()>0);
@@ -137,42 +140,36 @@ impl<C, F:Eq+Clone> Backtrackable<C> for Disjointness<F> {
     fn pop_levels(&mut self, _: &mut C, n: usize) { self.label.pop_levels(n) }
 }
 
-/*
-impl<C, F:Eq+Clone> MicroTheory<C> for Disjointness<F>
-    where C: Ctx + HasDisjointness<C::AST>
+impl<C> MicroTheory<C> for Disjointness<<C as HasDisjointness<AST>>::F>
+    where C: Ctx + HasDisjointness<AST>
 {
     fn init(_m: &mut C) -> Self {
-        Injectivity{ repr: BHMap::new() }
+        Disjointness{ label: BHMap::new() }
     }
 
     fn on_new_term(&mut self, c: &mut C, t: &AST, n: NodeID) {
-        match c.view_as_injective(t) {
-            InjectiveView::AppInjective(f, _) => {
+        match c.get_disjoint_label(t) {
+            Some(f) => {
                 // add to the table
-                trace!("add {} to the injective entries for {:?}", pp_t(c,t), n);
-                let v = SVec::from_elem((f.clone(),t.clone()),1);
-                self.repr.insert(n, v);
+                trace!("add disjoint label to {}", pp_t(c,t));
+                self.label.insert(n, f);
             },
-            InjectiveView::Other(..) => ()
+            None => (),
         }
     }
 
     fn on_merge(&mut self, c: &mut C, acts: &mut cc::MergePhase<C>, n1: NodeID, n2: NodeID) {
         // TODO: find a shortcut (per-node bitfield? bloom filter?)
-        // to indicate where n1 and n2 have any injective symbol
-        if let Some(v2) = self.repr.get(&n2) {
-            if let Some(v1) = self.repr.get(&n1) {
-                debug_assert!(v2.len()>0 && v1.len()>0);
+        // to pre-filter whether n1 and n2 have a label
 
-                for (f1,t1) in v1.iter() {
-                    for (f2,t2) in v2.iter() {
-                        if f1 == f2 && t1 != t2 {
-                            trace!("injectivity: merge {} and {}", pp_t(c,t1), pp_t(c,t2));
-                            let n_t1 = acts.cc1.get_term_id(t1);
-                            let n_t2 = acts.cc1.get_term_id(t2);
-                            acts.combine2.push((n_t1,n_t2, cc::Expl::AreEq(n1,n2)))
-                        }
-                    }
+        if let Some(f2) = self.label.get(&n2) {
+            if let Some(f1) = self.label.get(&n1) {
+                if f1 != f2 {
+                    let cc::MergePhase{cc1,n_true,n_false,combine2,..} = acts;
+                    trace!("disjointness: failure for {} and {}",
+                           pp::pp2(*cc1,c,&n1), pp::pp2(*cc1,c,&n2));
+                    // conflict
+                    combine2.push((*n_true, *n_false, cc::Expl::AreEq(n1,n2)))
                 }
             }
         }
@@ -181,7 +178,6 @@ impl<C, F:Eq+Clone> MicroTheory<C> for Disjointness<F>
     #[inline]
     fn on_signature(&mut self, _c: &mut C, _acts: &mut cc::UpdateSigPhase<C>, _t: &AST) {}
 }
-*/
 
 /*
 pub struct Selector;

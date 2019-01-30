@@ -133,11 +133,13 @@ pub trait HasInjectivity<AST> {
     fn view_as_injective<'a>(&'a self, t: &'a AST) -> InjectiveView<'a, Self::F, AST>;
 }
 
-pub trait HasDisjointness<F, AST> {
+pub trait HasDisjointness<AST> {
+    type F : Eq + Clone;
+
     /// Does the given term have a label?
     ///
     /// This means any term with a distinct label is disequal to this term.
-    fn get_disjoint_label(&self, t: &AST) -> Option<F>;
+    fn get_disjoint_label(&self, t: &AST) -> Option<Self::F>;
 }
 
 /// A view of terms with selector functions.
