@@ -57,7 +57,7 @@ pub trait MicroTheory<C:Ctx> : backtrack::Backtrackable<C> {
     fn on_merge(&mut self, c: &mut C, acts: &mut MergePhase<C>, n1: NodeID, n2: NodeID);
 
     /// `th.on_signature(c,acts,t)` is called when the signature of `t` has changed.
-    fn on_signature(&mut self, c: &mut C, acts: &mut UpdateSigPhase<C>, t: &C::AST);
+    fn on_signature(&mut self, c: &mut C, acts: &mut UpdateSigPhase<C>, t: &C::AST, n: NodeID);
 }
 
 /// Implement `MicroTheory` for a tuple of types themselves micro-theories.
@@ -86,10 +86,10 @@ macro_rules! impl_micro_theory_tuple {
                 )*
             }
 
-            fn on_signature(&mut self, c: &mut C, acts: &mut UpdateSigPhase<C>, t: &C::AST){
+            fn on_signature(&mut self, c: &mut C, acts: &mut UpdateSigPhase<C>, t: &C::AST, n: NodeID){
                 let ($( $t ,)*) = self;
                 $(
-                    $t.on_signature(c, acts, t);
+                    $t.on_signature(c, acts, t, n);
                 )*
             }
         }
@@ -108,7 +108,7 @@ impl<C:Ctx> MicroTheory<C> for () {
     fn init(_m: &mut C) -> Self { () }
     fn on_new_term(&mut self, _c: &mut C, _t: &C::AST, _n: NodeID) {}
     fn on_merge(&mut self, _c: &mut C, _acts: &mut MergePhase<C>, _n1: NodeID, _n2: NodeID) {}
-    fn on_signature(&mut self, _c: &mut C, _acts: &mut UpdateSigPhase<C>, _t: &C::AST) {}
+    fn on_signature(&mut self, _c: &mut C, _acts: &mut UpdateSigPhase<C>, _t: &C::AST, _n: NodeID) {}
 }
 
 /// internal state, with just the core structure for nodes and parent sets
@@ -157,11 +157,11 @@ pub(crate) type Node<C:Ctx> = NodeDef<C::AST, C::B>;
 /// - an optional mapping from the term to a boolean literal (for propagation)
 #[derive(Clone)]
 pub(crate) struct NodeDef<AST, B> where AST : Sized, B : Sized {
-    id: NodeID,
-    ast: AST, // what AST does this correspond to?
+    pub(crate) id: NodeID,
+    pub(crate) ast: AST, // what AST does this correspond to?
     next: NodeID, // next elt in class
     expl: Option<(NodeID, Expl<B>)>, // proof forest
-    as_lit: Option<B>, // if this term corresponds to a boolean literal
+    pub(crate) as_lit: Option<B>, // if this term corresponds to a boolean literal
     root: Repr, // current representative (initially, itself)
     parents: List<NodeID>,
     flags: u8, // boolean flags
@@ -188,6 +188,7 @@ pub(crate) struct Repr(pub(crate) NodeID);
 /// An explanation for a merge
 #[derive(Clone,Debug)]
 pub(crate) enum Expl<B> {
+    Axiom, // trivial explanation
     Lit(B), // because literal was asserted
     Congruence(NodeID, NodeID), // because terms are congruent
     AreEq(NodeID, NodeID), // because terms are equal
@@ -470,6 +471,9 @@ pub struct UpdateSigPhase<'a,C:Ctx> {
     pub(crate) tmp_sig: &'a mut Signature<C::Fun>,
 }
 
+// FIXME: when merging `a` and `b`, need to call micro-theory `on_signature`
+// on parents of both a and b (not just b)
+
 impl<'a, C:Ctx> MergePhase<'a,C> {
     /// Merge `a` and `b`, if they're not already equal.
     fn merge<Th:MicroTheory<C>>(
@@ -567,7 +571,7 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
         if ra.0 == cc1.nodes.n_true || ra.0 == cc1.nodes.n_false {
             trace!("{}.class: look for propagations", pp::pp2(*cc1,m,&rb.0));
             let rb_t = cc1[rb.0].ast;
-            cc1.nodes.iter_class(rb, |n| {
+            cc1.nodes.iter_class_mut(rb, |n| {
                 trace!("... {}.iter_class: check {}", pp_t(m,&rb_t), pp_t(m,&n.ast));
                 n.root = ra; // while we're there, we can merge eagerly.
 
@@ -672,7 +676,7 @@ impl<'a, C:Ctx> UpdateSigPhase<'a,C> {
             }
         }
         // call theory
-        th.on_signature(m, self, &t);
+        th.on_signature(m, self, &t, n);
     }
 }
 
@@ -713,6 +717,12 @@ impl<C:Ctx> CC1<C> {
         self.find_t(a) == self.find_t(b)
     }
 
+    #[inline]
+    pub(crate) fn iter_class<F>(&self, r: Repr, f: F)
+        where F: for<'b> FnMut(&'b Node<C>) {
+        self.nodes.iter_class(r, f)
+    }
+
     /// Undo one change.
     fn perform_undo(&mut self, m: &C, op: UndoOp) {
         trace!("perform-undo {}", pp::pp2(&self.nodes,m,&op));
@@ -740,7 +750,7 @@ impl<C:Ctx> CC1<C> {
                 // reset `root` pointer for `nb`
                 // reset root for the classes of terms that are now repr again,
                 // if they haven't been removed.
-                self.nodes.iter_class(b, |nb1| {
+                self.nodes.iter_class_mut(b, |nb1| {
                     nb1.root = b;
                 });
             },
@@ -914,6 +924,7 @@ impl<'a,C:Ctx> ExplResolve<'a,C> {
         while let Some(e) = self.expl_st.pop() {
             trace!("expand-expl: {}", pp::pp2(&self.cc1.nodes, m, &e));
             match e {
+                Expl::Axiom => (), // nothing to do
                 Expl::Lit(lit) => {
                     self.cc1.confl.push(lit);
                 },
@@ -1111,8 +1122,22 @@ impl<C:Ctx> Nodes<C> {
         unsafe { (&mut* ref1, &mut *ref2) }
     }
 
+    /// Call `f` with a ref on all nodes of the class of `r`
+    pub(crate) fn iter_class<F>(&self, r: Repr, mut f: F)
+        where F: for<'b> FnMut(&'b Node<C>)
+    {
+        let mut t = r.0;
+        loop {
+            let n = &self[t];
+            f(n);
+
+            t = n.next;
+            if t == r.0 { break } // done the full loop
+        }
+    }
+
     /// Call `f` with a mutable ref on all nodes of the class of `r`
-    pub(crate) fn iter_class<F>(&mut self, r: Repr, mut f: F)
+    pub(crate) fn iter_class_mut<F>(&mut self, r: Repr, mut f: F)
         where F: for<'b> FnMut(&'b mut Node<C>)
     {
         let mut t = r.0;
@@ -1240,6 +1265,7 @@ mod expl {
     impl<C:Ctx> pp::Pretty2<C, Expl<C::B>> for Nodes<C> {
         fn pp2_into(&self, m: &C, expl: &Expl<C::B>, ctx: &mut pp::Ctx) {
             match expl {
+                Expl::Axiom => { ctx.str("axiom"); },
                 Expl::Lit(lit) => {
                     ctx.str("lit(").debug(lit).str(")");
                 },

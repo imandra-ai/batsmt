@@ -150,6 +150,7 @@ pub enum SelectorView<'a, F, AST> {
     Select {
         f: &'a F,
         idx: u32,
+        sub: &'a AST, // in what term?
     },
     Other(&'a AST),
 }
