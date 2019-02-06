@@ -6,7 +6,7 @@ use {
     batsmt_core::{ast_u32::AST, backtrack::{Backtrackable, HashMap as BHMap}},
     batsmt_pretty as pp,
     crate::{
-        cc::{self, MicroTheory, NodeID, },
+        cc::{self, MicroTheory, MicroTheoryArg, NodeID, },
         Ctx, pp_t, IteView, InjectiveView, SelectorView,
         HasIte, HasInjectivity, HasDisjointness, HasSelector, },
 };
@@ -21,16 +21,11 @@ impl<C> Backtrackable<C> for Ite {
 impl<C> MicroTheory<C> for Ite where C: Ctx + HasIte<AST> {
     fn init(_m: &mut C) -> Self { Ite }
 
-    #[inline]
-    fn on_new_term(&mut self, _c: &mut C, _t: &AST, _n: NodeID) {}
-
-    #[inline]
-    fn on_merge(&mut self, _c: &mut C, _acts: &mut cc::MergePhase<C>, _n1: NodeID, _n2: NodeID) {}
-
-    fn on_signature(&mut self, c: &mut C, acts: &mut cc::UpdateSigPhase<C>, t: &AST, n_t: NodeID) {
+    fn on_sig_update(&mut self, c: &mut C, acts: &mut MicroTheoryArg<C>, t: &AST, n_t: NodeID)
+    {
         match c.view_as_ite(t) {
             IteView::Ite(a,b,c) => {
-                let cc::UpdateSigPhase{n_true,n_false,cc1,combine,..} = acts;
+                let MicroTheoryArg{n_true,n_false,cc1,combine,..} = acts;
                 let a = cc1.get_term_id(a);
                 let b = cc1.get_term_id(b);
                 let c = cc1.get_term_id(c);
@@ -66,6 +61,14 @@ impl<C, F:Eq+Hash+Clone> Backtrackable<C> for Injectivity<F> {
     fn pop_levels(&mut self, _: &mut C, n: usize) { self.repr.pop_levels(n) }
 }
 
+impl<F: Eq+Hash+Clone> Injectivity<F>
+{
+    #[inline]
+    fn find_inj(&self, n: NodeID) -> Option<&SVec<(F,AST)>> {
+        self.repr.get(&n)
+    }
+}
+
 impl<C> MicroTheory<C> for Injectivity<<C as HasInjectivity<AST>>::F>
     where C: Ctx + HasInjectivity<AST>
 {
@@ -73,7 +76,7 @@ impl<C> MicroTheory<C> for Injectivity<<C as HasInjectivity<AST>>::F>
         Injectivity{ repr: BHMap::new() }
     }
 
-    fn on_new_term(&mut self, c: &mut C, t: &AST, n: NodeID) {
+    fn on_new_term(&mut self, c: &mut C, _: &mut cc::CC1<C>, t: &AST, n: NodeID) {
         match c.view_as_injective(t) {
             InjectiveView::AppInjective(f, _) => {
                 // add to the table
@@ -85,7 +88,7 @@ impl<C> MicroTheory<C> for Injectivity<<C as HasInjectivity<AST>>::F>
         }
     }
 
-    fn on_merge(&mut self, c: &mut C, acts: &mut cc::MergePhase<C>, n1: NodeID, n2: NodeID) {
+    fn after_merge(&mut self, c: &mut C, acts: &mut MicroTheoryArg<C>, n1: NodeID, n2: NodeID) {
         // TODO: find a shortcut (per-node bitfield? bloom filter?)
         // to pre-filter whether n1 and n2 have at least one injective symbol
 
@@ -130,7 +133,7 @@ impl<C> MicroTheory<C> for Injectivity<<C as HasInjectivity<AST>>::F>
                                     for i in 0..args1.len() {
                                         let n_u1 = acts.cc1.get_term_id(&args1[i]);
                                         let n_u2 = acts.cc1.get_term_id(&args2[i]);
-                                        acts.combine2.push((n_u1, n_u2, expl.clone()))
+                                        acts.combine.push((n_u1, n_u2, expl.clone()))
                                     }
                                 },
                                 _ => unreachable!(),
@@ -141,8 +144,9 @@ impl<C> MicroTheory<C> for Injectivity<<C as HasInjectivity<AST>>::F>
             }
 
             if v2_subset.len() > 0 {
-                self.repr.update(&n1, |v1| {
+                self.repr.update(&n1, |_, v1| {
                     // v1 <- v1 ++ v2
+                    let v1 = v1.unwrap();
                     let mut v1_new = SVec::with_capacity(v1.len() + v2_subset.len());
                     v1_new.extend(v1.iter().cloned());
                     v1_new.extend(v2_subset.drain());
@@ -154,12 +158,6 @@ impl<C> MicroTheory<C> for Injectivity<<C as HasInjectivity<AST>>::F>
             self.repr.insert(n1, v2.clone());
         }
     }
-
-    #[inline]
-    fn on_signature(
-        &mut self, _c: &mut C, _acts: &mut cc::UpdateSigPhase<C>,
-        _t: &AST, _n: NodeID
-    ) {}
 }
 
 pub struct Disjointness<F:Clone+Eq> {
@@ -178,7 +176,7 @@ impl<C> MicroTheory<C> for Disjointness<<C as HasDisjointness<AST>>::F>
         Disjointness{ label: BHMap::new() }
     }
 
-    fn on_new_term(&mut self, c: &mut C, t: &AST, n: NodeID) {
+    fn on_new_term(&mut self, c: &mut C, _: &mut cc::CC1<C>, t: &AST, n: NodeID) {
         match c.get_disjoint_label(t) {
             Some(f) => {
                 // add to the table
@@ -189,14 +187,14 @@ impl<C> MicroTheory<C> for Disjointness<<C as HasDisjointness<AST>>::F>
         }
     }
 
-    fn on_merge(&mut self, c: &mut C, acts: &mut cc::MergePhase<C>, n1: NodeID, n2: NodeID) {
+    fn after_merge(&mut self, c: &mut C, acts: &mut MicroTheoryArg<C>, n1: NodeID, n2: NodeID) {
         // TODO: find a shortcut (per-node bitfield? bloom filter?)
         // to pre-filter whether n1 and n2 have a label
 
         if let Some((f2,t2)) = self.label.get(&n2) {
             if let Some((f1,t1)) = self.label.get(&n1) {
                 if f1 != f2 {
-                    let cc::MergePhase{cc1,n_true,n_false,combine2,..} = acts;
+                    let MicroTheoryArg{cc1,n_true,n_false,combine,..} = acts;
                     trace!("disjointness: failure for {} and {}",
                            pp::pp2(*cc1,c,&n1), pp::pp2(*cc1,c,&n2));
                     // conflict by `false <== n1=n2 & n1=t1 & n2=t2`
@@ -211,7 +209,7 @@ impl<C> MicroTheory<C> for Disjointness<<C as HasDisjointness<AST>>::F>
                         if n2 != n_t2 { v.push(cc::Expl::AreEq(n2, n_t2)) };
                         cc::Expl::Conj(v)
                     };
-                    combine2.push((*n_true, *n_false, expl))
+                    combine.push((*n_true, *n_false, expl))
                 }
             } else {
                 // copy label into n1
@@ -219,18 +217,12 @@ impl<C> MicroTheory<C> for Disjointness<<C as HasDisjointness<AST>>::F>
             }
         }
     }
-
-    #[inline]
-    fn on_signature(
-        &mut self, _c: &mut C, _acts: &mut cc::UpdateSigPhase<C>,
-        _t: &AST, _n: NodeID
-    ) {}
 }
 
 /// Theory of selectors on injective functions
 pub struct Selector<F:Eq+Clone> {
     inj: Injectivity<F>,
-    //sel: BHMap<NodeID, SVec<(F, AST)>>, // class -> selector terms in it
+    sel: BHMap<NodeID, SVec<(F, AST)>>, // class -> parents that are selector-terms
 }
 
 impl<F:Eq+Clone> Selector<F> {
@@ -240,11 +232,11 @@ impl<F:Eq+Clone> Selector<F> {
 impl<C:Ctx, F:Eq+Hash+Clone> Backtrackable<C> for Selector<F> {
     fn push_level(&mut self, c: &mut C) {
         self.inj.push_level(c);
-        //self.sel.push_level();
+        self.sel.push_level();
     }
     fn pop_levels(&mut self, c: &mut C, n: usize) {
         self.inj.pop_levels(c, n);
-        //self.sel.pop_levels(n);
+        self.sel.pop_levels(n);
     }
 }
 
@@ -254,80 +246,112 @@ impl<C> MicroTheory<C> for Selector<<C as HasInjectivity<AST>>::F>
     fn init(m: &mut C) -> Self {
         Selector {
             inj: Injectivity::init(m),
-            //sel: BHMap::new(),
+            sel: BHMap::new(),
         }
     }
 
-    fn on_new_term(&mut self, c: &mut C, t: &AST, n: NodeID) {
-        self.inj.on_new_term(c, t, n);
-        /*
+    fn on_new_term(&mut self, c: &mut C, cc1: &mut cc::CC1<C>, t: &AST, n: NodeID) {
+        self.inj.on_new_term(c, cc1, t, n);
+
         match c.view_as_selector(t) {
-            SelectorView::Select{f, idx: _} => {
-                // add to the table
-                trace!("add {} to the selector entries for {:?}", pp_t(c,t), n);
+            SelectorView::Select{f, idx: _, sub} => {
+                // add to the set of selectors of `repr(sub)`
+                let n_repr = cc1.find_t(sub);
+                trace!("add {} to the selector entries for {:?}", pp_t(c,t), n_repr);
                 let v = SVec::from_elem((f.clone(),t.clone()),1);
                 self.sel.insert(n, v);
             },
             SelectorView::Other(..) => (),
         }
-        */
-    }
-
-    fn on_merge(&mut self, c: &mut C, acts: &mut cc::MergePhase<C>, n1: NodeID, n2: NodeID) {
-        self.inj.on_merge(c, acts, n1, n2);
-
-        /*
-        // merge the set of `sel` symbols from both
-        if let Some(v2) = self.sel.get(&n2) {
-            if self.sel.contains(&n1) {
-                self.sel.update(&n1, |v1| {
-                    let mut v = v1.clone();
-                    for x in v2.iter().cloned() { v.push(x) }
-                    v
-                });
-            } else {
-                self.sel.insert(n1, v2.clone());
-            }
-        }
-        */
     }
 
     #[inline]
-    fn on_signature(
-        &mut self, c: &mut C, acts: &mut cc::UpdateSigPhase<C>,
-        t: &AST, n_t: NodeID,
-    ) {
-        self.inj.on_signature(c, acts, t, n_t);
+    fn on_sig_update(&mut self, c: &mut C, acts: &mut MicroTheoryArg<C>, t: &AST, n: NodeID) {
+        self.inj.on_sig_update(c, acts, t, n);
+    }
 
-        if let SelectorView::Select {f, idx, sub} = c.view_as_selector(t) {
-            // look for `f(…)` in the i-th argument class
+    fn after_merge(&mut self, c: &mut C, acts: &mut MicroTheoryArg<C>, n1: NodeID, n2: NodeID) {
+        self.inj.after_merge(c, acts, n1, n2);
 
-            let cc::UpdateSigPhase{cc1, combine, ..} = acts;
-
-            let n_sub = cc1.get_term_id(sub);
-            let root_sub = cc1.find(n_sub);
-            cc1.iter_class(root_sub, |n2| {
-                let t2 = n2.ast;
-                match c.view_as_injective(&t2) {
-                    InjectiveView::AppInjective(f2, args) if f==f2 => {
-                        debug_assert!((idx as usize) < args.len());
-
-                        let t2_idx = args[idx as usize];
-                        trace!("selector: merge {} and {}", pp_t(c, &t2_idx), pp_t(c,t));
-
-                        let n_i = cc1.get_term_id(&t2_idx);
-                        // expl: either `n_sub==(n2 := f(t1…tn)) => select-f-i(n_sub) == ti`
-                        // or `select-f-i(f(t1…tn)) = ti` by axiom
-                        let expl = if n_sub == n2.id {
-                            cc::Expl::Axiom
-                        } else {
-                            cc::Expl::AreEq(n_sub, n2.id)
-                        };
-                        combine.push((n_t, n_i, expl));
-                    },
-                    _ => (),
+        // merge the set of selector parents from both
+        if let Some(v2) = self.sel.get(&n2) {
+            let mut v2 = v2.clone();
+            self.sel.update(&n1, move |_, v1_opt| {
+                if let Some(v1) = v1_opt {
+                    // append into `v2`
+                    for x in v1.iter().cloned() { v2.push(x) };
+                    v2
+                } else {
+                    v2
                 }
             });
+        }
+    }
+
+    fn before_merge(&mut self, c: &mut C, acts: &mut MicroTheoryArg<C>, a: NodeID, b: NodeID) {
+        self.inj.before_merge(c, acts, a, b);
+
+        let MicroTheoryArg{cc1, combine, ..} = acts;
+        let mut pending_sel = SVec::new(); // selector parent terms
+
+        // check parents of `a` of the shape `sel-f-idx(u)` with
+        // terms of the class of `b` of the shape `f(…)`
+        macro_rules! cross_prod {
+            ($n1: expr, $n2: expr) => {
+                if let Some(inj_2) = self.inj.find_inj($n2) {
+                    if let Some(sel_1) = self.sel.get(&$n1) {
+                        // cross product
+                        for (f2,t2) in inj_2 {
+                            for (f1,t1) in sel_1 {
+                                if f1==f2 {
+                                    pending_sel.push((t1, $n1, t2, $n2));
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+        }
+
+        cross_prod!(a, b);
+        cross_prod!(b, a);
+
+        // `sel_t1 = select-f-idx(sub)` with `sub ~ n1`,
+        // `inj_t2 = f(u2_1… u2_n)` with `inj_t2 ~ n2`
+        //
+        // let's merge `sel_t1` with `u2_idx`
+        for (sel_t1, n1, inj_t2, n2) in pending_sel {
+
+            let (f, idx, sub) = match c.view_as_selector(sel_t1) {
+                SelectorView::Select{f, idx, sub} => { (f.clone(), idx, sub) },
+                SelectorView::Other(..) => unreachable!(),
+            };
+
+            let n_sub = cc1.get_term_id(sub);
+            debug_assert_eq!(cc1.find(n_sub), n1);
+
+            let inj_t2_idx = match c.view_as_injective(inj_t2) {
+                InjectiveView::AppInjective(f2, args) => {
+                    debug_assert_eq!(f, *f2);
+                    args[idx as usize]
+                },
+                InjectiveView::Other(..) => unreachable!(),
+            };
+
+            trace!("selector: merge {} and {}", pp_t(c, &inj_t2_idx), pp_t(c,sel_t1));
+
+            {
+                // expl: either `n_sub==(n2 := f(t1…tn)) => select-f-i(n_sub) == ti`
+                // or `select-f-i(f(t1…tn)) = ti` by axiom
+                let expl = if n_sub == n2 {
+                    cc::Expl::Axiom
+                } else {
+                    cc::Expl::AreEq(n_sub, n2)
+                };
+                let n_sel_t1 = cc1.get_term_id(sel_t1);
+                let n_inj_t2_idx = cc1.get_term_id(&inj_t2_idx);
+                combine.push((n_sel_t1, n_inj_t2_idx, expl));
+            }
         }
     }
 }

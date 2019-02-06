@@ -56,23 +56,33 @@ impl<K:Eq+Hash+Clone,V> HashMap<K,V> {
         }
     }
 
-    /// Update the value of `k`, possibly saving the old value if needed.
+    /// Update or create a value for `k`, possibly saving the old value if needed.
     ///
-    /// Panics if `k` is not present.
+    /// ## Params
+    /// - `k` the key
+    /// - `f` the update function
     pub fn update<F>(&mut self, k: &K, f: F)
-        where F: FnOnce(&V) -> V,
+        where F: FnOnce(&K, Option<&V>) -> V,
               V: Eq + Clone
     {
-        if self.levels.len() == 0 {
-            let v = self.map.get_mut(k).unwrap();
-            let v2 = f(&* v);
-            *v = v2;
-        } else {
-            let v = self.map.get_mut(k).unwrap();
-            let v2 = f(&* v);
+        match self.map.get_mut(k) {
+            None => {
+                let v = f(k, None);
+                self.map.insert(k.clone(), v);
+                if self.levels.len() > 0 {
+                    self.undo.push(Undo::Remove(k.clone()));
+                }
+            },
+            Some(v) => {
+                let v2 = f(k, Some(&* v));
 
-            if *v != v2 {
-                self.undo.push(Undo::Restore(k.clone(), v.clone()));
+                if *v == v2 {
+                    return
+                }
+                if self.levels.len() > 0 {
+                    self.undo.push(Undo::Restore(k.clone(), v.clone()));
+                }
+
                 *v = v2;
             }
         }

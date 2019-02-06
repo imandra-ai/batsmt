@@ -4,12 +4,6 @@
 //! The `CC` type is responsible for enforcing congruence and transitivity
 //! of equality.
 
-// TODO: parametrize by "micro theories" (which just work on merges + expl)
-
-// micro theories:
-// - rule for `not` (t == true |- not t == false, and conversely)
-// - rule for `ite` (t == true |- not t == false, and conversely)
-
 // TODO(perf): backtrackable array allocator for signatures
 // TODO(perf): sparse map for nodes (using a second dense array)?
 
@@ -43,28 +37,39 @@ pub struct CC<C:Ctx, Th: MicroTheory<C> = ()> {
     cc1: CC1<C>,
 }
 
+/// Argument passed to micro theories
+pub struct MicroTheoryArg<'a, C:Ctx> {
+    pub n_true: NodeID,
+    pub n_false: NodeID,
+    pub cc1: &'a mut CC1<C>,
+    pub combine: &'a mut Vec<(NodeID,NodeID, Expl<C::B>)>,
+}
+
 /// A micro-theory, which lives inside the congruence closure
 ///
 /// It works purely by merging classes based on
 /// other merges, or by declaring a set of merges inconsistent.
+#[allow(unused)]
 pub trait MicroTheory<C:Ctx> : backtrack::Backtrackable<C> {
     fn init(m: &mut C) -> Self;
 
     /// `th.on_new_term(c,t,n)` is called when `t` has been added, with node `n`
-    fn on_new_term(&mut self, c: &mut C, t: &C::AST, n: NodeID);
+    fn on_new_term(&mut self, c: &mut C, cc1: &mut CC1<C>, t: &C::AST, n: NodeID) {}
 
-    /// `th.on_merge(c,acts,n1,n2)` is called when `n2` is merged into `n1`.
-    fn on_merge(&mut self, c: &mut C, acts: &mut MergePhase<C>, n1: NodeID, n2: NodeID);
+    /// Called before the merge of `a` and `b`
+    fn before_merge(&mut self, c: &mut C, acts: &mut MicroTheoryArg<C>, a: NodeID, b: NodeID) {}
 
-    /// `th.on_signature(c,acts,t)` is called when the signature of `t` has changed.
-    fn on_signature(&mut self, c: &mut C, acts: &mut UpdateSigPhase<C>, t: &C::AST, n: NodeID);
+    /// Called after the merge of `a` and `b`
+    fn after_merge(&mut self, c: &mut C, acts: &mut MicroTheoryArg<C>, a: NodeID, b: NodeID) {}
+
+    /// Called with all terms whose signature is to be updated
+    fn on_sig_update(&mut self, c: &mut C, acts: &mut MicroTheoryArg<C>, t: &C::AST, n: NodeID) {}
 }
 
 /// Implement `MicroTheory` for a tuple of types themselves micro-theories.
 macro_rules! impl_micro_theory_tuple {
     () => ();
     ( $( $t: ident ,)+ ) => {
-        #[allow(non_snake_case)]
         impl<C:Ctx, $( $t ,)* > MicroTheory<C> for ( $( $t ,)* )
             where $( $t : MicroTheory<C> ),*
         {
@@ -72,25 +77,32 @@ macro_rules! impl_micro_theory_tuple {
                 ($( $t::init(m) ,)* )
             }
 
-            fn on_new_term(&mut self, c: &mut C, t: &C::AST, n: NodeID) {
+            fn on_new_term(&mut self, c: &mut C, cc1: &mut CC1<C>, t: &C::AST, n: NodeID) {
                 let ($( $t ,)*) = self;
                 $(
-                    $t.on_new_term(c, t, n);
+                    $t.on_new_term(c, cc1, t, n);
                 )*
             }
 
-            fn on_merge(&mut self, c: &mut C, acts: &mut MergePhase<C>, n1: NodeID, n2: NodeID) {
+            /// Called before the merge of `a` and `b`
+            fn before_merge(&mut self, c: &mut C, acts: &mut MicroTheoryArg<C>, a: NodeID, b: NodeID)
+            {
                 let ($( $t ,)*) = self;
-                $(
-                    $t.on_merge(c, acts, n1, n2);
-                )*
+                $( $t.before_merge(c, acts, a, b); )*
             }
 
-            fn on_signature(&mut self, c: &mut C, acts: &mut UpdateSigPhase<C>, t: &C::AST, n: NodeID){
+            /// Called after the merge of `a` and `b`
+            fn after_merge(&mut self, c: &mut C, acts: &mut MicroTheoryArg<C>, a: NodeID, b: NodeID)
+            {
                 let ($( $t ,)*) = self;
-                $(
-                    $t.on_signature(c, acts, t, n);
-                )*
+                $( $t.after_merge(c, acts, a, b); )*
+            }
+
+            /// Called with all terms whose signature is to be updated
+            fn on_sig_update(&mut self, c: &mut C, acts: &mut MicroTheoryArg<C>, t: &C::AST, n: NodeID)
+            {
+                let ($( $t ,)*) = self;
+                $( $t.on_sig_update(c, acts, t, n); )*
             }
         }
 
@@ -106,13 +118,10 @@ impl_micro_theory_tuple! { T0, T1, T2, T3, T4, T5, T6, T7, T8, }
 
 impl<C:Ctx> MicroTheory<C> for () {
     fn init(_m: &mut C) -> Self { () }
-    fn on_new_term(&mut self, _c: &mut C, _t: &C::AST, _n: NodeID) {}
-    fn on_merge(&mut self, _c: &mut C, _acts: &mut MergePhase<C>, _n1: NodeID, _n2: NodeID) {}
-    fn on_signature(&mut self, _c: &mut C, _acts: &mut UpdateSigPhase<C>, _t: &C::AST, _n: NodeID) {}
 }
 
 /// internal state, with just the core structure for nodes and parent sets
-pub (crate)struct CC1<C:Ctx> {
+pub struct CC1<C:Ctx> {
     ok: bool, // no conflict?
     alloc_parent_list: ListAlloc<NodeID>,
     nodes: Nodes<C>,
@@ -144,7 +153,7 @@ struct Nodes<C:Ctx>{
 }
 
 #[allow(type_alias_bounds)]
-pub(crate) type Node<C:Ctx> = NodeDef<C::AST, C::B>;
+pub type Node<C:Ctx> = NodeDef<C::AST, C::B>;
 
 /// One node in the congruence closure's E-graph.
 ///
@@ -156,13 +165,13 @@ pub(crate) type Node<C:Ctx> = NodeDef<C::AST, C::B>;
 /// - the proof forest pointer
 /// - an optional mapping from the term to a boolean literal (for propagation)
 #[derive(Clone)]
-pub(crate) struct NodeDef<AST, B> where AST : Sized, B : Sized {
-    pub(crate) id: NodeID,
-    pub(crate) ast: AST, // what AST does this correspond to?
+pub struct NodeDef<AST, B> where AST : Sized, B : Sized {
+    pub id: NodeID,
+    pub ast: AST, // what AST does this correspond to?
     next: NodeID, // next elt in class
     expl: Option<(NodeID, Expl<B>)>, // proof forest
     pub(crate) as_lit: Option<B>, // if this term corresponds to a boolean literal
-    root: Repr, // current representative (initially, itself)
+    root: NodeID, // current representative (initially, itself)
     parents: List<NodeID>,
     flags: u8, // boolean flags
 }
@@ -181,13 +190,9 @@ struct List<T> {
     len: u32, // number of nodes
 }
 
-/// A representative
-#[derive(Debug,Clone,Copy,Eq,PartialEq,Hash,Ord,PartialOrd)]
-pub(crate) struct Repr(pub(crate) NodeID);
-
 /// An explanation for a merge
 #[derive(Clone,Debug)]
-pub(crate) enum Expl<B> {
+pub enum Expl<B> {
     Axiom, // trivial explanation
     Lit(B), // because literal was asserted
     Congruence(NodeID, NodeID), // because terms are congruent
@@ -202,8 +207,8 @@ enum UndoOp {
     RemoveNode(NodeID),
     UnmapLit(NodeID),
     Unmerge {
-        root: Repr, // the new repr
-        old_root: Repr, // merged into `a`
+        root: NodeID, // the new repr
+        old_root: NodeID, // merged into `a`
     }, // unmerge these two reprs
     RemoveExplLink(NodeID,NodeID), // remove explanation link connecting these
 }
@@ -215,7 +220,7 @@ enum UndoOp {
 #[derive(Eq,PartialEq,Hash,Clone,Debug)]
 pub struct Signature<F> {
     f: Option<F>,
-    subs: SVec<Repr>
+    subs: SVec<NodeID>
 }
 
 // implement main interface
@@ -306,6 +311,7 @@ impl<C:Ctx, Th: MicroTheory<C>> CC<C, Th> {
         let CC{
             combine,cc1,pending,th,expl_st,undo,tmp_sig,
             sig_tbl,props,lit_expl,n_true,n_false,..} = self;
+        let mut combine2 = vec!();
         loop {
             if !cc1.ok {
                 combine.clear();
@@ -327,7 +333,8 @@ impl<C:Ctx, Th: MicroTheory<C>> CC<C, Th> {
 
             {
                 let mut merger = MergePhase{
-                    cc1,pending,expl_st,undo,props,lit_expl,combine2: SVec::new(),
+                    cc1,pending,expl_st,undo,props,lit_expl,
+                    combine2: &mut combine2,
                     n_true: *n_true,n_false: *n_false};
                 while combine.len() > 0 {
                     for (t,u,expl) in combine.iter() {
@@ -335,7 +342,7 @@ impl<C:Ctx, Th: MicroTheory<C>> CC<C, Th> {
                     }
                     combine.clear();
                     // micro theories may have more things to propagate
-                    combine.extend_from_slice(&merger.combine2);
+                    combine.extend_from_slice(merger.combine2);
                     merger.combine2.clear();
                 }
             }
@@ -415,7 +422,7 @@ impl<C:Ctx, Th:MicroTheory<C>> CC<C, Th> {
                     view.iter_subterms(|u| {
                         debug_assert!(cc1.nodes.contains(&u)); // postfix order
                         let ur = cc1.find_t(u);
-                        let parents = cc1.nodes.parents_mut(ur.0);
+                        let parents = cc1.nodes.parents_mut(ur);
                         parents.add(&mut cc1.alloc_parent_list, n);
                     });
                     // remove `t` before its children
@@ -426,7 +433,7 @@ impl<C:Ctx, Th:MicroTheory<C>> CC<C, Th> {
                         pending.push(n);
                     }
 
-                    th.on_new_term(m, &t, n);
+                    th.on_new_term(m, cc1, &t, n);
                 },
             }
         }
@@ -454,7 +461,7 @@ pub struct MergePhase<'a,C:Ctx> {
     pub(crate) n_true: NodeID,
     pub(crate) n_false: NodeID,
     pub(crate) pending: &'a mut Vec<NodeID>,
-    pub(crate) combine2: SVec<(NodeID, NodeID, Expl<C::B>)>, // temporary
+    pub(crate) combine2: &'a mut Vec<(NodeID, NodeID, Expl<C::B>)>, // temporary
     pub(crate) expl_st: &'a mut Vec<Expl<C::B>>,
     undo: &'a mut backtrack::Stack<UndoOp>,
     pub(crate) props: &'a mut Vec<C::B>, // local for propagations
@@ -482,10 +489,10 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
     ) {
         let mut ra = self.cc1.nodes.find(a);
         let mut rb = self.cc1.nodes.find(b);
-        debug_assert!(self.cc1.is_root(ra.0), "{}.repr = {}",
-            pp::pp2(self.cc1,m,&a), pp::pp2(self.cc1,m,&ra.0));
-        debug_assert!(self.cc1.is_root(rb.0), "{}.repr = {}",
-            pp::pp2(self.cc1,m,&b), pp::pp2(self.cc1,m,&rb.0));
+        debug_assert!(self.cc1.is_root(ra), "{}.repr = {}",
+            pp::pp2(self.cc1,m,&a), pp::pp2(self.cc1,m,&ra));
+        debug_assert!(self.cc1.is_root(rb), "{}.repr = {}",
+            pp::pp2(self.cc1,m,&b), pp::pp2(self.cc1,m,&rb));
         // debug_assert!(self.cc1.is_root(ra.0), "{}.repr = {}", pp_term(m,&a), pp_term(m,&ra.0));
         // debug_assert!(self.cc1.is_root(rb.0), "{}.repr = {}", pp_term(m,&b), pp_term(m,&rb.0));
 
@@ -494,7 +501,7 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
         }
 
         // access the two nodes
-        let (na, nb) = self.cc1.nodes.get2(ra.0, rb.0);
+        let (na, nb) = self.cc1.nodes.get2(ra, rb);
 
         // NOTE: would be nice to put `unlikely` there once it stabilizes
         if na.len() + nb.len() > u32::MAX as usize {
@@ -503,20 +510,20 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
 
         // merge smaller one into bigger one, except that booleans are
         // always representatives
-        if rb.0 == self.n_true || rb.0 == self.n_false {
+        if rb == self.n_true || rb == self.n_false {
             // conflict: merge true with false (since they are distinct)
-            if ra.0 == self.n_true || ra.0 == self.n_false {
+            if ra == self.n_true || ra == self.n_false {
                 // generate conflict from `expl`, `a == ra`, `b == rb`
                 trace!("generate conflict from merge of true/false from {} and {}",
                        pp::pp2(self.cc1,m,&a), pp::pp2(self.cc1,m,&b));
-                assert_ne!(ra.0, rb.0);
+                assert_ne!(ra, rb);
                 self.cc1.ok = false;
                 self.undo.push_if_nonzero(UndoOp::SetOk);
                 {
                     let mut er = ExplResolve::new(&mut self.cc1, &mut self.expl_st);
                     er.add_expl(expl);
-                    er.explain_eq(m, a, ra.0);
-                    er.explain_eq(m, b, rb.0);
+                    er.explain_eq(m, a, ra);
+                    er.explain_eq(m, b, rb);
                     er.fixpoint(m);
                 }
                 // negation
@@ -527,7 +534,7 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
                 // merge into true/false, not the other way around
                 std::mem::swap(&mut ra, &mut rb);
             }
-        } else if ra.0 == self.n_true || ra.0 == self.n_false {
+        } else if ra == self.n_true || ra == self.n_false {
             // `ra` must be repr
         } else if na.len() < nb.len() {
             // swap a and b
@@ -537,7 +544,15 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
         drop(na);
         drop(nb);
 
-        trace!("merge {} into {}", pp::pp2(self.cc1,m,&rb.0), pp::pp2(self.cc1,m,&ra.0));
+        trace!("merge {} into {}", pp::pp2(self.cc1,m,&rb), pp::pp2(self.cc1,m,&ra));
+
+        // call micro theories
+        {
+            let mut acts = MicroTheoryArg{
+                cc1: &mut self.cc1, n_true: self.n_true, n_false: self.n_false,
+                combine: &mut self.combine2};
+            th.before_merge(m, &mut acts, a, b);
+        }
 
         // update forest tree so that `b --[expl]--> a`.
         // Note that here we link `a` and `b`, not their representatives.
@@ -565,12 +580,12 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
             });
         }
 
-        let MergePhase{cc1, props, lit_expl, n_true, n_false, ..} = self;
+        let MergePhase{cc1, props, lit_expl, n_true, n_false, combine2, ..} = self;
 
         // if ra is {true,false}, propagate lits
-        if ra.0 == cc1.nodes.n_true || ra.0 == cc1.nodes.n_false {
-            trace!("{}.class: look for propagations", pp::pp2(*cc1,m,&rb.0));
-            let rb_t = cc1[rb.0].ast;
+        if ra == cc1.nodes.n_true || ra == cc1.nodes.n_false {
+            trace!("{}.class: look for propagations", pp::pp2(*cc1,m,&rb));
+            let rb_t = cc1[rb].ast;
             cc1.nodes.iter_class_mut(rb, |n| {
                 trace!("... {}.iter_class: check {}", pp_t(m,&rb_t), pp_t(m,&n.ast));
                 n.root = ra; // while we're there, we can merge eagerly.
@@ -582,14 +597,14 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
                         // future expl: `n=b=a=ra` (where ra∈{true,false})
                         let e = LitExpl::Propagated {
                             expl: expl.clone(),
-                            eqns:[(n.id, b), (a, ra.0)],
+                            eqns:[(n.id, b), (a, ra)],
                         };
-                        if ra.0 == *n_true {
+                        if ra == *n_true {
                             trace!("propagate literal {:?} (for true≡{}, {:?})",
                                 lit, pp_t(m,&n.ast), &expl);
                             props.push(lit);
                         } else {
-                            debug_assert_eq!(ra.0, *n_false);
+                            debug_assert_eq!(ra, *n_false);
                             lit = !lit;
                             trace!("propagate literal {:?} (for false≡{}, {:?})",
                                 lit, pp_t(m,&n.ast), &expl);
@@ -602,7 +617,7 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
         }
 
         // set `rb.root` to `ra`
-        cc1[rb.0].root = ra;
+        cc1[rb].root = ra;
 
         // ye ole' switcharoo (of doubly linked lists for the equiv class)
         //
@@ -611,7 +626,7 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
         //
         {
             // access the two nodes, again
-            let (na, nb) = self.cc1.nodes.get2(ra.0, rb.0);
+            let (na, nb) = cc1.nodes.get2(ra, rb);
 
             let next_a = na.next;
             let next_b = nb.next;
@@ -624,14 +639,20 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
         }
 
         // call micro theories
-        th.on_merge(m, self, a, b);
+        {
+            let mut acts = MicroTheoryArg{
+                cc1, n_true: *n_true, n_false: *n_false,
+                combine: combine2};
+            th.after_merge(m, &mut acts, a, b);
+        }
     }
 }
 
 impl<'a, C:Ctx> UpdateSigPhase<'a,C> {
     /// Check and update signature of `t`, possibly adding new merged by congruence.
     fn update_signature<Th:MicroTheory<C>>(&mut self, m: &mut C, th: &mut Th, n: NodeID) {
-        let UpdateSigPhase{tmp_sig: ref mut sig, cc1, sig_tbl, combine, ..} = self;
+        let UpdateSigPhase{
+            tmp_sig: ref mut sig, cc1, sig_tbl, combine, n_true, n_false, ..} = self;
         let t = cc1[n].ast;
         let has_sig =
             m.is_app(&t) // shortcut &&
@@ -675,8 +696,13 @@ impl<'a, C:Ctx> UpdateSigPhase<'a,C> {
                 }
             }
         }
-        // call theory
-        th.on_signature(m, self, &t, n);
+        // call micro theories
+        {
+            let mut arg = MicroTheoryArg{
+                cc1, n_true: *n_true, n_false: *n_false, combine,
+            };
+            th.on_sig_update(m, &mut arg, &t, n);
+        }
     }
 }
 
@@ -693,13 +719,13 @@ impl<C:Ctx> CC1<C> {
     }
 
     #[inline(always)]
-    pub(crate) fn find(&mut self, t: NodeID) -> Repr { self.nodes.find(t) }
+    pub(crate) fn find(&mut self, t: NodeID) -> NodeID { self.nodes.find(t) }
 
     #[inline(always)]
-    pub(crate) fn find_t(&mut self, t: &C::AST) -> Repr { self.nodes.find_t(t) }
+    pub(crate) fn find_t(&mut self, t: &C::AST) -> NodeID { self.nodes.find_t(t) }
 
     #[inline(always)]
-    pub(crate) fn is_root(&mut self, id: NodeID) -> bool { self.find(id).0 == id }
+    pub(crate) fn is_root(&mut self, id: NodeID) -> bool { self.find(id) == id }
 
     #[inline(always)]
     pub(crate) fn is_eq(&mut self, a: NodeID, b: NodeID) -> bool {
@@ -712,13 +738,8 @@ impl<C:Ctx> CC1<C> {
         self.nodes.get_term_id(t)
     }
 
-    #[inline(always)]
-    pub(crate) fn is_eq_t(&mut self, a: &C::AST, b: &C::AST) -> bool {
-        self.find_t(a) == self.find_t(b)
-    }
-
     #[inline]
-    pub(crate) fn iter_class<F>(&self, r: Repr, f: F)
+    pub(crate) fn iter_class<F>(&self, r: NodeID, f: F)
         where F: for<'b> FnMut(&'b Node<C>) {
         self.nodes.iter_class(r, f)
     }
@@ -732,9 +753,9 @@ impl<C:Ctx> CC1<C> {
                 self.confl.clear();
             },
             UndoOp::Unmerge {root: a, old_root: b} => {
-                assert_ne!(a.0,b.0); // crucial invariant
+                assert_ne!(a,b); // crucial invariant
 
-                let (na, nb) = self.nodes.get2(a.0, b.0);
+                let (na, nb) = self.nodes.get2(a, b);
 
                 // inverse switcharoo for the class linked lists
                 {
@@ -778,7 +799,7 @@ impl<C:Ctx> CC1<C> {
                 // remove from children's parents' lists
                 m.view_as_cc_term(&t).iter_subterms(|u| {
                     let ur = self.find_t(u);
-                    let parents = self.nodes.parents_mut(ur.0);
+                    let parents = self.nodes.parents_mut(ur);
                     let _n = parents.remove();
                     debug_assert_eq!(_n, n);
                 });
@@ -1034,37 +1055,37 @@ impl<C:Ctx> Nodes<C> {
 
     /// Find the representative of the given term.
     #[inline]
-    pub(crate) fn find_t(&mut self, t: &C::AST) -> Repr {
+    pub(crate) fn find_t(&mut self, t: &C::AST) -> NodeID {
         let n = self.get_term_id(t);
         self.find(n)
     }
 
     /// Find representative of the given node
     #[inline(always)]
-    pub(crate) fn find(&mut self, t: NodeID) -> Repr {
+    pub(crate) fn find(&mut self, t: NodeID) -> NodeID {
         let root = self[t].root;
 
-        if root.0 == t {
+        if root == t {
             root // fast path
         } else {
-            let root = self.find_rec(root.0, 16); // use recursion
+            let root = self.find_rec(root, 16); // use recursion
             self[t].root = root; // update this pointer
             root
         }
     }
 
     // find + path compression, using recursion up to `limit`
-    fn find_rec(&mut self, t: NodeID, limit: usize) -> Repr {
+    fn find_rec(&mut self, t: NodeID, limit: usize) -> NodeID {
         let root = self[t].root;
-        if root.0 == t {
+        if root == t {
             root
         } else {
             // recurse
             let root = {
                 if limit == 0 {
-                    self.find_loop(root.0)
+                    self.find_loop(root)
                 } else {
-                    self.find_rec(root.0, limit-1)
+                    self.find_rec(root, limit-1)
                 }
             };
             self[t].root = root;
@@ -1073,17 +1094,17 @@ impl<C:Ctx> Nodes<C> {
     }
 
     // find + path compression, using a loop
-    fn find_loop(&mut self, mut t: NodeID) -> Repr {
+    fn find_loop(&mut self, mut t: NodeID) -> NodeID {
         debug_assert_eq!(self.find_stack.len(), 0);
 
         let root = loop {
             let root = self[t].root;
-            if t == root.0 {
+            if t == root {
                 break root
             } else {
                 // seek further
                 self.find_stack.push(t);
-                t = root.0
+                t = root
             }
         };
 
@@ -1123,39 +1144,40 @@ impl<C:Ctx> Nodes<C> {
     }
 
     /// Call `f` with a ref on all nodes of the class of `r`
-    pub(crate) fn iter_class<F>(&self, r: Repr, mut f: F)
+    pub(crate) fn iter_class<F>(&self, r: NodeID, mut f: F)
         where F: for<'b> FnMut(&'b Node<C>)
     {
-        let mut t = r.0;
+        let mut t = r;
         loop {
             let n = &self[t];
             f(n);
 
             t = n.next;
-            if t == r.0 { break } // done the full loop
+            if t == r { break } // done the full loop
         }
     }
 
     /// Call `f` with a mutable ref on all nodes of the class of `r`
-    pub(crate) fn iter_class_mut<F>(&mut self, r: Repr, mut f: F)
+    pub(crate) fn iter_class_mut<F>(&mut self, r: NodeID, mut f: F)
         where F: for<'b> FnMut(&'b mut Node<C>)
     {
-        let mut t = r.0;
+        let mut t = r;
         loop {
             let n = &mut self[t];
             f(n);
 
             t = n.next;
-            if t == r.0 { break } // done the full loop
+            if t == r { break } // done the full loop
         }
     }
 
     /// Call `f` on all parents of all nodes of the class of `r`
     #[inline]
-    pub(crate) fn iter_parents<F>(&mut self, r: Repr, f: F)
+    pub(crate) fn iter_parents<F>(&mut self, r: NodeID, f: F)
         where F: FnMut(&NodeID)
     {
-        self[r.0].parents.for_each(f);
+        debug_assert_eq!(r, self.find(r), "must be root");
+        self[r].parents.for_each(f);
     }
 }
 
@@ -1233,7 +1255,7 @@ mod node {
             let parents = List::new();
             NodeDef {
                 id, ast, next: id, expl: None,
-                root: Repr(id), as_lit: None, parents, flags: 0,
+                root: id, as_lit: None, parents, flags: 0,
             }
         }
 
@@ -1293,8 +1315,8 @@ mod expl {
             match op {
                 UndoOp::SetOk => { ctx.str("set-ok"); },
                 UndoOp::Unmerge{root:a,old_root:b} => {
-                    let a = self[a.0].ast;
-                    let b = self[b.0].ast;
+                    let a = self[*a].ast;
+                    let b = self[*b].ast;
                     ctx.str("unmerge(").pp(&pp_t(m,&a)).str(", ").pp(&pp_t(m,&b)).str(")");
                 },
                 UndoOp::RemoveExplLink(a,b) => {

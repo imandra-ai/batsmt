@@ -1,6 +1,7 @@
 
 //! Theory built on the congruence closure
 
+#[allow(unused_imports)]
 use {
     batsmt_core::{ast, backtrack, },
     batsmt_theory as theory,
