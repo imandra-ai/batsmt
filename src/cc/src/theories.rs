@@ -11,6 +11,7 @@ use {
         HasIte, HasInjectivity, HasDisjointness, HasSelector, },
 };
 
+/// Theory of `if then else`.
 pub struct Ite;
 
 impl<C> Backtrackable<C> for Ite {
@@ -160,6 +161,7 @@ impl<C> MicroTheory<C> for Injectivity<<C as HasInjectivity<AST>>::F>
     }
 }
 
+/// Theory of disjoint labels (e.g constructors or finite domain elements).
 pub struct Disjointness<F:Clone+Eq> {
     label: BHMap<NodeID, (F, AST)>, // label of the class, if any
 }
@@ -219,7 +221,7 @@ impl<C> MicroTheory<C> for Disjointness<<C as HasDisjointness<AST>>::F>
     }
 }
 
-/// Theory of selectors on injective functions
+/// Theory of selectors on injective functions.
 pub struct Selector<F:Eq+Clone> {
     inj: Injectivity<F>,
     sel: BHMap<NodeID, SVec<(F, AST)>>, // class -> parents that are selector-terms
