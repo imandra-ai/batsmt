@@ -89,6 +89,14 @@ mod test_ast {
     }
 
     #[test]
+    fn test_const_not_hashconsing() {
+        let mut m = M::new();
+        let a1 = m.mk_str("a");
+        let a2 = m.mk_str("a");
+        assert_ne!(a1, a2);
+    }
+
+    #[test]
     fn test_view() {
         let mut m = M::new();
         let f = m.mk_str("f");
