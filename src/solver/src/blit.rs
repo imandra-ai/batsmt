@@ -1,7 +1,7 @@
 
 use {
     batsmt_theory::BoolLit,
-    batsat as sat,
+    batsat::{self as sat, intmap::AsIndex},
 };
 
 /// A boolean literal
@@ -29,6 +29,25 @@ impl BLit {
     /// Create a literal from a boolean variable.
     #[inline(always)]
     pub fn from_var(v: sat::Var, sign: bool) -> Self { BLit(sat::Lit::new(v,sign)) }
+
+    /// Create from a raw (signed) integer.
+    /// 
+    /// The integer must not be `0`, and the literal must have already
+    /// been allocated in the SAT solver. Only use on integers obtained from `to_int`.
+    #[inline]
+    pub fn unsafe_from_int(i: i32) -> Self {
+        debug_assert!(i != 0);
+        BLit::from_var(sat::Var::from_index(i.abs() as usize), i > 0)
+    }
+
+    /// Convert the literal into a raw integer.
+    /// 
+    /// Only use in conjunction with `unsafe_from_int`.
+    #[inline]
+    pub fn to_int(&self) -> i32 {
+        let i = self.0.var().as_index() as i32;
+        if self.0.sign() { i } else { -i }
+    }
 }
 
 impl From<sat::Lit> for BLit {

@@ -19,7 +19,11 @@ use {
 };
 
 pub use {
-    crate::symbol::{ SymbolCtx, SymbolManager, str::StrManager as StrSymbolManager, }
+    crate::symbol::{
+        SymbolCtx, SymbolManager,
+        str::StrManager as StrSymbolManager,
+        //str_id::ScopedManager,
+    },
 };
 
 /// Use the `u32` AST.
