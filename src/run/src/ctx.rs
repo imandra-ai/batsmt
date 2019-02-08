@@ -1,6 +1,6 @@
 
 use {
-    batsmt_core::{ast, ast_u32::AST, Manager, AstView},
+    batsmt_core::{ast, ast_u32::AST, AstView},
     batsmt_hast::{HManager, StrSymbolManager},
     batsmt_theory::{self as theory, LitMapBuiltins},
     batsmt_cc::{self as cc, CCView},
@@ -35,7 +35,7 @@ pub struct Ctx {
 }
 
 pub mod ctx {
-    use super::*;
+    use {super::*, batsmt_core::Manager};
 
     impl Ctx {
         /// New context.
