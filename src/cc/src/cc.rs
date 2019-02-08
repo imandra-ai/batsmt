@@ -70,6 +70,7 @@ pub trait MicroTheory<C:Ctx> : backtrack::Backtrackable<C> {
 macro_rules! impl_micro_theory_tuple {
     () => ();
     ( $( $t: ident ,)+ ) => {
+        #[allow(non_snake_case)]
         impl<C:Ctx, $( $t ,)* > MicroTheory<C> for ( $( $t ,)* )
             where $( $t : MicroTheory<C> ),*
         {
