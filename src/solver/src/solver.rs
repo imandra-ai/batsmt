@@ -17,13 +17,6 @@ pub use {
     crate::blit::BLit,
 };
 
-/// used to build SAT clauses efficiently
-struct BClauseBuild<'a,F:FnMut() -> sat::Var> {
-    lits: &'a mut Vec<sat::Lit>,
-    lit_map: &'a mut SatLitMap,
-    f: F,
-}
-
 /// The theory given to the SAT solver
 struct CoreTheory<C: Ctx<B=BLit>, Th: Theory<C>> {
     th: Th,
@@ -377,35 +370,6 @@ mod solver {
                 BLit::from_var(sat.new_var_default(), true)
             };
             get_or_create_lit_(ctx, &mut self.c.lit_map, l, f)
-        }
-    }
-
-    impl<'a, F:FnMut()->sat::Var> BClauseBuild<'a,F> {
-        fn new(lits: &'a mut Vec<sat::Lit>, lit_map: &'a mut SatLitMap, f: F) -> Self {
-            Self { lits, lit_map, f }
-        }
-
-        /// Convert a theory literal into a boolean literal
-        fn convert_th_lit<C>(&mut self, ctx: &C, lit: TheoryLit<C>) -> BLit
-            where C: Ctx<B=BLit>
-        {
-            let f = &mut self.f;
-            let new_lit = || BLit::from_var(f(), true);
-            get_or_create_lit_(ctx, self.lit_map, lit, new_lit)
-        }
-
-        /// Convert the given theory clause into an array of boolean literals.
-        ///
-        /// The result is stored in `lits`
-        fn convert_th_clause<C, Clause>(&mut self, m: &C, c: Clause)
-            where C: Ctx<B=BLit>,
-                  Clause: std::ops::Deref<Target=[TheoryLit<C>]>
-        {
-            self.lits.clear();
-            for lit in c.iter() {
-                let lit = self.convert_th_lit(m, *lit);
-                self.lits.push(lit.0);
-            }
         }
     }
 
