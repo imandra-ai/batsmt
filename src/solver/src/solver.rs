@@ -215,7 +215,40 @@ mod solver {
             }
         }
 
-        /// Solve without assumptions
+        /* TODO
+        pub fn get_model(&self) -> &[(BLit, lbool)] {
+            let mut v = vec!();
+            for (i, v) in self.s0.sat.get_model().iter().enumerate() {
+                let lit = BLit::from_var(sat::Var::from_index(i), true);
+                v.push((lit, v));
+            }
+            v
+        }
+        */
+
+        /// Unsat core
+        pub fn get_unsat_core(&mut self) -> &[sat::Lit] {
+            self.s0.sat.unsat_core()
+        }
+
+        /// Set of literals proved at level 0.
+        #[inline]
+        pub fn proved_at_lvl_0(&self) -> &[sat::Lit] {
+            self.s0.sat.proved_at_lvl_0()
+        }
+
+        /// Value of the given literal at level 0 in the current trail.
+        #[inline]
+        pub fn value_at_lvl_0(&self, lit: BLit) -> lbool {
+            self.s0.sat.value_lvl_0(lit.0)
+        }
+
+        #[inline]
+        pub fn unsat_core_contains_lit(&mut self, lit: sat::Lit) -> bool {
+            self.s0.sat.unsat_core_contains_lit(lit)
+        }
+
+        /// Solve without assumptions.
         pub fn solve(&mut self, m: &mut C) -> Res {
             self.solve_with(m, &[])
         }
