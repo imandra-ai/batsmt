@@ -8,6 +8,8 @@ use {
 #[derive(Debug,Clone,Copy,Eq,PartialEq,Ord,PartialOrd,Hash)]
 pub struct BLit(pub sat::Lit);
 
+pub type SatLit = sat::Lit;
+
 impl std::ops::Not for BLit {
     type Output = Self;
     fn not(self) -> Self::Output { BLit(!self.0) }

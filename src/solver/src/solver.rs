@@ -151,6 +151,19 @@ mod solver {
             self.s0.sat.add_clause_reuse(c);
         }
 
+        /// Allocate new boolean variable with the given default polarity.
+        #[inline]
+        pub fn new_bool_lit_with(&mut self, default: bool) -> sat::Lit {
+            let pol = if default { lbool::TRUE } else { lbool::FALSE };
+            sat::Lit::new(self.s0.sat.new_var(pol, true), true)
+        }
+
+        /// Allocate new boolean variable with default polarity `false`.
+        #[inline]
+        pub fn new_bool_lit(&mut self) -> sat::Lit {
+            self.new_bool_lit_with(false)
+        }
+
         /// Add a clause made from signed terms.
         pub fn add_clause(&mut self, m: &C, c: TheoryClauseRef<C>) {
             trace!("solver.add-clause\n{}", c.pp(m));
