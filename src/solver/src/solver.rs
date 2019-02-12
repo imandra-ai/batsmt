@@ -3,7 +3,7 @@
 
 use {
     std::{fmt, marker::PhantomData, },
-    batsat::{ self as sat, lbool, SolverInterface, },
+    batsat::{ self as sat, SolverInterface, },
     batsmt_theory::{ self as theory,
         Ctx, Theory, TheoryLit, TheoryClauseRef, Trail, LitMap},
     batsmt_pretty::{self as pp, Pretty1},
@@ -13,6 +13,7 @@ use {
 
 pub use {
     batsmt_theory::LitMapBuiltins as Builtins,
+    batsat::lbool,
     crate::blit::BLit,
 };
 
