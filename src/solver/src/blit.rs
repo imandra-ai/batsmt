@@ -39,7 +39,7 @@ impl BLit {
     #[inline]
     pub fn unsafe_from_int(i: i32) -> Self {
         debug_assert!(i != 0);
-        BLit::from_var(sat::Var::from_index(i.abs() as usize), i > 0)
+        BLit::from_var(sat::Var::from_index(i.abs() as usize - 1), i > 0)
     }
 
     /// Convert the literal into a raw integer.
@@ -47,7 +47,7 @@ impl BLit {
     /// Only use in conjunction with `unsafe_from_int`.
     #[inline]
     pub fn to_int(&self) -> i32 {
-        let i = self.0.var().as_index() as i32;
+        let i = 1 + self.0.var().as_index() as i32;
         if self.0.sign() { i } else { -i }
     }
 }
