@@ -158,6 +158,19 @@ mod solver {
             self.new_bool_lit_with(false)
         }
 
+        /// Get or allocate new boolean variable with default polarity `false`, mapped to given term.
+        pub fn new_term_lit(&mut self, ctx: &mut C, t: AST) -> BLit {
+            let Solver0{sat, c, ..} = &mut self.s0;
+            let lm = &mut c.lit_map;
+
+            let f = || {
+                BLit::from_var(sat.new_var_default(), true)
+            };
+
+            let bidir = true; // theory lit
+            lm.get_term_or_else(ctx, &t, true, bidir, f)
+        }
+
         /// Add a clause made from signed terms.
         pub fn add_clause(&mut self, m: &C, c: TheoryClauseRef<C>) {
             trace!("solver.add-clause\n{}", c.pp(m));
