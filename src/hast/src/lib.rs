@@ -175,70 +175,6 @@ impl<'a> fmt::Debug for AppStored<'a> {
     }
 }
 
-/*
-// helper to make a view from a stored node
-#[inline]
-fn view_node<'a, S>(sym: &'a S, n: &'a NodeStored<S>)
-    -> HView<'a, S> where S : SymbolManager
-{
-    match n.kind() {
-        Kind::App => {
-            let k = unsafe {n.as_app()};
-            AstView::App {f: &k.f, args: k.args()}
-        },
-        Kind::Sym => {
-            AstView::Const(unsafe { sym.view(n.as_sym()) })
-        },
-        Kind::Undef => panic!("cannot access undefined AST"),
-    }
-}
-
-mod node_stored {
-    use super::*;
-
-    impl<S:SymbolManager> NodeStored<S> {
-        /// Make a constant node from a symbol
-        pub fn mk_sym(sym: S::Ref) -> Self {
-            NodeStored {data: NodeStoredData{sym}, kind: Kind::Sym }
-        }
-        pub fn mk_app(app: AppStored<'static>) -> Self {
-            NodeStored {kind: Kind::App, data: NodeStoredData { app }}
-        }
-
-        #[inline(always)]
-        pub fn kind(&self) -> Kind { self.kind }
-
-        #[inline(always)]
-        pub fn is_app(&self) -> bool { self.kind() == Kind::App }
-        #[inline(always)]
-        pub fn is_sym(&self) -> bool { self.kind() == Kind::Sym }
-
-        pub unsafe fn as_app(&self) -> &AppStored<'static> {
-            debug_assert!(self.kind() == Kind::App);
-            &self.data.app
-        }
-
-        // view as a symbol
-        pub unsafe fn as_sym(&self) -> S::Ref {
-            debug_assert!(self.kind() == Kind::Sym);
-            self.data.sym
-        }
-
-        /// release resources
-        pub unsafe fn free(&mut self, sym_m: &mut S) {
-            match self.kind {
-                Kind::Undef => (),
-                Kind::App => self.data.app.free(),
-                Kind::Sym => {
-                    let ptr = self.data.sym;
-                    sym_m.free(ptr);
-                },
-            }
-        }
-    }
-}
-*/
-
 #[inline(always)]
 pub fn ast_is_app(t: AST) -> bool { t.idx() & 0b11 == 0 }
 
@@ -263,25 +199,6 @@ pub const fn ast_idx(t: AST) -> u32 { (t.idx() >> 2) }
 
 /// Maximum index that can fit in `AST`
 const AST_MAX_IDX : u32 = (u32::MAX >> 2);
-
-/*
-// free memory for this node, including its hashmap entry if any
-unsafe fn free_node<S:SymbolManager>(
-    tbl_app: &mut FxHashMap<AppStored<'static>, AST>,
-    sym_m: &mut S,
-    mut n: NodeStored<S>)
-{
-    match n.kind() {
-        Kind::App => {
-            let app = n.as_app();
-            // remove from table
-            tbl_app.remove_entry(&app);
-        },
-        _ => (),
-    };
-    n.free(sym_m);
-}
-*/
 
 /// A vector with some additional metadata.
 struct ManagedVec<T> {
