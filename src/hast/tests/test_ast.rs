@@ -24,7 +24,7 @@ mod ast_iter_ref {
             f(&m, t);
 
             match m.view(&t) {
-                View::Const(_) => (),
+                View::Const(_) | View::Index(..) => (),
                 View::App{f: f0,args} => {
                     iter_dag_ref_rec(seen, m, *f0, f);
                     for a in args.iter() {
@@ -413,7 +413,7 @@ mod ast_prop {
 
             let u = ast::map_dag(m, t, |_| (), |m, u, view: ast::View<(),AST>| {
                 match view {
-                    ast::View::Const(()) => *u,
+                    ast::View::Const(()) | ast::View::Index(..) => *u,
                     ast::View::App{f, args} => {
                         m.mk_app(*f, args)
                     },

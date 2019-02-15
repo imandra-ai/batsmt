@@ -108,7 +108,7 @@ mod ctx {
                 CCView::Bool(false)
             } else {
                 match self.m.view(t) {
-                    AstView::Const(_) => CCView::Opaque(t),
+                    AstView::Const(_) | AstView::Index(..) => CCView::Opaque(t),
                     AstView::App{f, args} if *f == self.b().eq => {
                         debug_assert_eq!(args.len(), 2);
                         CCView::Eq(&args[0], &args[1])
