@@ -174,6 +174,9 @@ pub trait Theory<C:Ctx> : Backtrackable<C>{
     /// - `(t,sign)`: the signed theory atom corresponding to `p`.
     /// - `p`: the raw boolean literal whose propagation must be explained.
     fn explain_propagation(&mut self, ctx: &mut C, t: C::AST, sign: bool, p: C::B) -> &[C::B];
+
+    /// Enable/disable boolean propagation.
+    fn enable_propagation(&mut self, _on: bool) {}
 }
 
 /// Statistics.

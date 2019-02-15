@@ -14,7 +14,7 @@ use {
     batsmt_parser::{self as parser, Statement},
     batsmt_tseitin::Tseitin,
     batsmt_solver as solver,
-    batsmt_pretty::{self as pp, Pretty1},
+    batsmt_pretty as pp,
 };
 
 pub use {
@@ -48,6 +48,15 @@ fn main() -> Result<(), Box<Error>> {
 
     let th: cc::CCTheory<Ctx> = cc::CCTheory::new(&mut c);
     let mut solver = solver::Solver::new(c.builtins(), th);
+
+    {
+        let propagate = match env::var("PROPAGATE") {
+            Ok(ref s) if s == "1" || s == "true" => true,
+            Ok(ref s) if s == "0" || s == "false" => false,
+            _ => true, // default
+        };
+        solver.enable_th_propagation(propagate);
+    }
 
     // Tseitin transformation, to handle formulas
     let mut tseitin = Tseitin::new();

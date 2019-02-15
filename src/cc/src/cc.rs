@@ -5,7 +5,6 @@
 //! of equality.
 
 // TODO(perf): backtrackable array allocator for signatures
-// TODO(perf): sparse map for nodes (using a second dense array)?
 
 use {
     std::{ u32, ptr, hash::Hash, fmt::Debug, },
@@ -124,6 +123,7 @@ impl<C:Ctx> MicroTheory<C> for () {
 /// internal state, with just the core structure for nodes and parent sets
 pub struct CC1<C:Ctx> {
     ok: bool, // no conflict?
+    propagate: bool, // do we propagate?
     alloc_parent_list: ListAlloc<NodeID>,
     nodes: Nodes<C>,
     confl: Vec<C::B>, // local for conflict
@@ -283,6 +283,8 @@ impl<C:Ctx, Th: MicroTheory<C>> CCInterface<C> for CC<C, Th> {
     }
 
     fn has_partial_check() -> bool { true }
+
+    fn enable_propagation(&mut self, b: bool) { self.cc1.propagate = b; }
 
     fn impl_descr() -> &'static str { "fast congruence closure"}
 }
@@ -584,7 +586,7 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
         let MergePhase{cc1, props, lit_expl, n_true, n_false, combine2, ..} = self;
 
         // if ra is {true,false}, propagate lits
-        if ra == cc1.nodes.n_true || ra == cc1.nodes.n_false {
+        if cc1.propagate && (ra == cc1.nodes.n_true || ra == cc1.nodes.n_false) {
             trace!("{}.class: look for propagations", pp::pp2(*cc1,m,&rb));
             let rb_t = cc1[rb].ast;
             cc1.nodes.iter_class_mut(rb, |n| {
@@ -712,6 +714,7 @@ impl<C:Ctx> CC1<C> {
     fn new() -> Self {
         CC1 {
             nodes: Nodes::new(),
+            propagate: true,
             ok: true,
             alloc_parent_list: backtrack::Alloc::new(),
             tmp_expl: vec!(),
@@ -737,12 +740,6 @@ impl<C:Ctx> CC1<C> {
     #[inline]
     pub(crate) fn get_term_id(&self, t: &C::AST) -> NodeID {
         self.nodes.get_term_id(t)
-    }
-
-    #[inline]
-    pub(crate) fn iter_class<F>(&self, r: NodeID, f: F)
-        where F: for<'b> FnMut(&'b Node<C>) {
-        self.nodes.iter_class(r, f)
     }
 
     /// Undo one change.
@@ -1142,20 +1139,6 @@ impl<C:Ctx> Nodes<C> {
         let ref2 = (&mut self.nodes[t2.0 as usize]) as *mut _;
         // this is correct because t1 != t2, so the pointers are disjoint.
         unsafe { (&mut* ref1, &mut *ref2) }
-    }
-
-    /// Call `f` with a ref on all nodes of the class of `r`
-    pub(crate) fn iter_class<F>(&self, r: NodeID, mut f: F)
-        where F: for<'b> FnMut(&'b Node<C>)
-    {
-        let mut t = r;
-        loop {
-            let n = &self[t];
-            f(n);
-
-            t = n.next;
-            if t == r { break } // done the full loop
-        }
     }
 
     /// Call `f` with a mutable ref on all nodes of the class of `r`

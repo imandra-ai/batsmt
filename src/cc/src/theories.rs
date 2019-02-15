@@ -228,7 +228,8 @@ pub struct Selector<F:Eq+Clone> {
 }
 
 impl<F:Eq+Clone> Selector<F> {
-    fn injectivity(&self) -> &Injectivity<F> { &self.inj }
+    /// Access the underlying theory of injectivity.
+    pub fn injectivity(&self) -> &Injectivity<F> { &self.inj }
 }
 
 impl<C:Ctx, F:Eq+Hash+Clone> Backtrackable<C> for Selector<F> {

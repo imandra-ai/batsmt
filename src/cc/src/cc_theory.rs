@@ -114,6 +114,8 @@ impl<C:Ctx, Th:MicroTheory<C>> theory::Theory<C> for CCTheory<C, Th> {
         CCI::<C,Th>::has_partial_check()
     }
 
+    fn enable_propagation(&mut self, b: bool) { self.cc.enable_propagation(b) }
+
     #[inline]
     fn add_literal(&mut self, ctx: &mut C, t: C::AST, lit: C::B) {
         self.cc.add_literal(ctx, t,lit);

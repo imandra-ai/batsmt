@@ -3,10 +3,9 @@
 
 use {
     std::{fmt, marker::PhantomData, },
-    batsat::{ self as sat, SolverInterface, },
+    batsat as sat,
     batsmt_theory::{ self as theory,
         Ctx, Theory, TheoryLit, TheoryClauseRef, Trail, LitMap},
-    batsmt_pretty::{self as pp, Pretty1},
     batsmt_core::{ backtrack, ast_u32::{AST, }, },
     crate::{ lit_map::{SatLitMap}, },
 };
@@ -86,7 +85,7 @@ fn get_or_create_lit_<C, F>(
 mod solver {
     use {
         super::*, batsat::SolverInterface,
-        batsmt_pretty::{self as pp, Pretty1},
+        batsmt_pretty::{Pretty1},
         batsmt_theory::LitMap,
     };
 
@@ -137,6 +136,11 @@ mod solver {
         /// Access literal map of this solver.
         #[inline(always)]
         pub fn lit_map_mut(&mut self) -> &mut SatLitMap { &mut self.s0.c.lit_map }
+
+        /// Enable/disable theory propagation(s).
+        pub fn enable_th_propagation(&mut self, b: bool) {
+            self.s0.c.th.enable_propagation(b)
+        }
 
         /// Add a boolean clause.
         #[inline]
