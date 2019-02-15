@@ -168,7 +168,7 @@ impl<'a, C:Ctx> SimpStruct<'a, C> {
                     // just map one level.
                     drop(view_t);
                     match self.m.view(&t) {
-                        AstView::Const(_) => t,
+                        AstView::Const(_) | AstView::Index(..) => t,
                         AstView::App{f, args} => {
                             let mut args: SVec<AST> = args.iter().cloned().collect();
                             let f = self.simplify_rec(*f);

@@ -15,6 +15,7 @@ use {
 #[derive(Debug,Copy,Clone)]
 pub enum View<'a, Sym, Sub> {
     Const(Sym), // symbol view
+    Index(u32), // index into something else
     App {
         f: &'a Sub,
         args: &'a [Sub],
@@ -137,7 +138,7 @@ mod view {
         #[inline(always)]
         pub fn has_subterms(&self) -> bool {
             match self {
-                View::Const(..) => false,
+                View::Const(..) | View::Index(..) => false,
                 View::App{..} => true,
             }
         }
@@ -145,7 +146,7 @@ mod view {
         /// Iterate over the immediate subterms of this view.
         pub fn subterms(&'a self) -> impl 'a + Iterator<Item=&'a Sub> {
             match self {
-                View::Const(_) => ViewIter::Nil,
+                View::Const(_) | View::Index(..) => ViewIter::Nil,
                 View::App{f, args} => ViewIter::App::<Sub>(f, args),
             }
         }
@@ -192,6 +193,7 @@ pub fn pp_ast<M, F>(m: &M, t: &M::AST, f: &mut F, ctx: &mut pp::Ctx)
         View::Const(s) => {
             f(&s, ctx);
         },
+        View::Index(i) => { ctx.display(&i); },
         View::App{f: ref f0, args} if args.len() == 0 => {
             pp_ast(m, f0, f, ctx); // just f
         },
@@ -457,7 +459,7 @@ pub mod iter_dag {
                     $f($m, &t); // process `t`
 
                     match $m.view(&t) {
-                        View::Const(_) => (),
+                        View::Const(..) | View::Index(..) => (),
                         View::App{f,args} => {
                             $self.st.push(f.clone());
                             for a in args.iter() {
@@ -608,7 +610,7 @@ pub mod iter_suffix {
 
                     // explore subterms first
                     match m.view(&t) {
-                        View::Const(_) => (),
+                        View::Const(..) | View::Index(..) => (),
                         View::App{f,args} => {
                             self.push_enter(f.clone());
                             for a in args.iter() { self.push_enter(a.clone()) }
@@ -753,7 +755,13 @@ pub mod map_dag {
                                         // put into cache and return immediately
                                         self.cache.insert(t, r.clone());
                                         self.res.push(r);
-                                    }
+                                    },
+                                    View::Index(i) => {
+                                        let view = View::Index(i);
+                                        let r = f(m, &t, view);
+                                        self.cache.insert(t, r.clone());
+                                        self.res.push(r);
+                                    },
                                     View::App{f, args} => {
                                         // process `f` and `args` before exiting `t`
                                         self.tasks.push(Task::Exit(t.clone()));
@@ -768,7 +776,7 @@ pub mod map_dag {
                     },
                     Task::Exit(t) => {
                         let n = match m.view(&t) {
-                            View::Const(_) => unreachable!(),
+                            View::Const(..) | View::Index(..) => unreachable!(),
                             View::App{f:_, args} => args.len(),
                         };
                         // move arguments from stack to `st.args`

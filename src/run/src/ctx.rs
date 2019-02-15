@@ -64,7 +64,7 @@ pub mod ctx {
             else if t == self.b.false_ { tseitin::View::Bool(true) }
             else {
                 match self.m.view(&t) {
-                    AstView::Const(_) => FView::Atom(t),
+                    AstView::Const(_) | AstView::Index(..) => FView::Atom(t),
                     AstView::App{f, args} if *f == self.b.not_ => {
                         debug_assert_eq!(args.len(), 1);
                         FView::Not(args[0])
@@ -164,7 +164,7 @@ pub mod ctx {
                 CCView::Opaque(t) // shortcut
             } else {
                 match self.m.view(t) {
-                    AstView::Const(_) => CCView::Opaque(t),
+                    AstView::Const(_) | AstView::Index(..) => CCView::Opaque(t),
                     AstView::App{f, args} if *f == self.b.eq => {
                         debug_assert_eq!(args.len(), 2);
                         CCView::Eq(&args[0], &args[1])

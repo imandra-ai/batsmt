@@ -51,7 +51,7 @@ pub fn ast_size_tree<M:ManagerU32>(m: &mut M, t: &AST) -> usize {
         |_| (),
         |_m, _u, view:View<(),usize>| {
             match view {
-                View::Const(()) => 1usize,
+                View::Const(()) | View::Index(..) => 1usize,
                 View::App{f, args} => {
                     args.iter().fold(1 + f, |x,y| x+y) // 1+sum of sizes
                 },

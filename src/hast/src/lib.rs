@@ -112,9 +112,6 @@ impl AppStored<'static> {
 }
 
 impl<'a> AppStored<'a> {
-    #[inline(always)]
-    fn f(&self) -> AST { self.f }
-
     #[inline]
     fn view<S:SymbolCtx>(&self) -> HView<S> {
         AstView::App {f: &self.f, args: self.args()}
@@ -243,23 +240,29 @@ mod node_stored {
 */
 
 #[inline(always)]
-pub fn ast_is_app(t: AST) -> bool { t.idx() & 0b1 == 0 }
+pub fn ast_is_app(t: AST) -> bool { t.idx() & 0b11 == 0 }
 
 #[inline(always)]
-pub fn mk_ast_app(i: u32) -> AST { ast_u32::manager_util::ast_from_u32(i << 1) }
+pub fn mk_ast_app(i: u32) -> AST { ast_u32::manager_util::ast_from_u32(i << 2) }
 
 #[inline(always)]
-pub fn ast_is_const(t: AST) -> bool { t.idx() & 0b1 == 1 }
+pub fn ast_is_const(t: AST) -> bool { t.idx() & 0b11 == 0b01 }
 
 #[inline(always)]
-pub fn mk_ast_const(i: u32) -> AST { ast_u32::manager_util::ast_from_u32((i << 1) | 0b1) }
+pub fn mk_ast_const(i: u32) -> AST { ast_u32::manager_util::ast_from_u32((i << 2) | 0b01) }
+
+#[inline(always)]
+pub fn ast_is_idx(t: AST) -> bool { t.idx() & 0b11 == 0b11 }
+
+#[inline(always)]
+pub fn mk_ast_idx(i: u32) -> AST { ast_u32::manager_util::ast_from_u32((i << 2) | 0b11) }
 
 /// Index in the corresponding vector.
 #[inline(always)]
-pub const fn ast_idx(t: AST) -> u32 { (t.idx() >> 1) }
+pub const fn ast_idx(t: AST) -> u32 { (t.idx() >> 2) }
 
 /// Maximum index that can fit in `AST`
-const AST_MAX_IDX : u32 = (u32::MAX >> 1);
+const AST_MAX_IDX : u32 = (u32::MAX >> 2);
 
 /*
 // free memory for this node, including its hashmap entry if any
@@ -405,9 +408,12 @@ impl<S:SymbolManager> Manager for HManager<S> {
     fn view<'a>(&'a self, &t: &AST) -> HView<'a, S> {
         if ast_is_app(t) {
             self.apps[ast_idx(t) as usize].view::<S>()
-        } else {
+        } else if ast_is_const(t) {
             let view = self.sym_m.view(self.consts[ast_idx(t) as usize]);
             AstView::Const(view)
+        } else {
+            debug_assert!(ast_is_idx(t));
+            AstView::Index(ast_idx(t))
         }
     }
 
@@ -477,6 +483,14 @@ impl<S:SymbolManager> HManager<S> {
             sym_m,
             gc_stack: Vec::new(),
         }
+    }
+
+    /// Create an "index" term from the given symbol.
+    pub fn mk_idx<U>(&mut self, i: u32) -> AST {
+        if i > AST_MAX_IDX {
+            panic!("mk_idx: constant {} is too big (max {})", i, AST_MAX_IDX);
+        }
+        mk_ast_idx(i)
     }
 
     /// Number of terms
