@@ -403,7 +403,7 @@ impl<S:SymbolManager> HManager<S> {
     }
 
     /// Create an "index" term from the given symbol.
-    pub fn mk_idx<U>(&mut self, i: u32) -> AST {
+    pub fn mk_idx(&mut self, i: u32) -> AST {
         if i > AST_MAX_IDX {
             panic!("mk_idx: constant {} is too big (max {})", i, AST_MAX_IDX);
         }
