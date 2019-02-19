@@ -56,8 +56,16 @@ impl<C> MicroTheory<C> for Selector<<C as HasInjectivity<AST>>::F>
                 // add to the set of selectors of `repr(sub)`
                 let n_repr = cc1.find_t(sub);
                 trace!("add {} to the selector entries for {:?}", pp_t(c,t), n_repr);
-                let v = SVec::from_elem((f.clone(),t.clone()),1);
-                self.sel.insert(n, v);
+                self.sel.update(&n_repr, |_, v_opt| {
+                    match v_opt {
+                        None => SVec::from_elem((f.clone(),t.clone()),1),
+                        Some(v) => {
+                            let mut v = v.clone();
+                            v.push((f.clone(),t.clone()));
+                            v
+                        }
+                    }
+                });
             },
             SelectorView::Other(..) => (),
         }

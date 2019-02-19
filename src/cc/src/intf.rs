@@ -162,3 +162,24 @@ pub trait HasSelector<AST> : HasInjectivity<AST> {
     /// View a term as a selector.
     fn view_as_selector<'a>(&'a self, t: &'a AST) -> SelectorView<'a, Self::F, AST>;
 }
+
+pub enum ConstructorView<'a, F, AST> {
+    AppConstructor(&'a F, &'a [AST]),
+    Select {
+        f: &'a F,
+        idx: u32,
+        sub: &'a AST, // in what term?
+    },
+    Other(&'a AST),
+}
+
+/// Injectivity but for constructors (also implying disjointness).
+pub trait HasConstructor<AST> {
+    type F : Eq + Hash + Clone + fmt::Debug;
+
+    /// View the term as an constructor application, if it is.
+    ///
+    /// This means that if `f(t1…tn) = f(u1…un)` then `t1=u1 ∧ … ∧ tn=un`,
+    /// and that `f(…) != g(…)` for any distinct constructors `f` and `g`.
+    fn view_as_constructor<'a>(&'a self, t: &'a AST) -> ConstructorView<'a, Self::F, AST>;
+}

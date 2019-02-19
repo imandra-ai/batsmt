@@ -16,7 +16,8 @@ pub use {
         intf::{
             CC as CCInterface, CCView, Ctx, IteView, HasIte,
             InjectiveView, HasInjectivity, HasDisjointness,
-            SelectorView, HasSelector},
+            SelectorView, HasSelector, ConstructorView, HasConstructor,
+        },
         cc::{CC, MicroTheory},
         naive_cc::NaiveCC,
         cc_theory::{CCTheory},
