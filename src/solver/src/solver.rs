@@ -254,6 +254,12 @@ mod solver {
             self.s0.sat.value_lvl_0(lit.0)
         }
 
+        /// Value of the given literal in the current trail/model.
+        #[inline]
+        pub fn value_lit(&self, lit: BLit) -> lbool {
+            self.s0.sat.value_lit(lit.0)
+        }
+
         #[inline]
         pub fn unsat_core_contains_lit(&mut self, lit: sat::Lit) -> bool {
             self.s0.sat.unsat_core_contains_lit(lit)
