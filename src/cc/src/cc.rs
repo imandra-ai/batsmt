@@ -854,6 +854,10 @@ impl<C:Ctx> CC1<C> {
         to_clean.clear();
 
         // walk in lockstep, until we reached a node already marked
+        //
+        // invariants:
+        // I1: `a.marked() ==> a.expl.is_some()`
+        // I2: `a.marked() ==> to_clean.contains(a)`
         let res = {
             let mut a = a0;
             let mut b = b0;
@@ -861,6 +865,9 @@ impl<C:Ctx> CC1<C> {
             loop {
                 if a==b { break a }
 
+                // if `a` is marked, it means it's on both path, so it must
+                // be the first common ancestor.
+                // I1 prevents the root from being returned here.
                 if nodes[a].marked() { break a }
                 if nodes[b].marked() { break b }
 
@@ -877,7 +884,7 @@ impl<C:Ctx> CC1<C> {
             }
         };
 
-        // cleanup
+        // cleanup (see I2)
         for &a in to_clean.iter() {
             nodes[a].unmark()
         }
