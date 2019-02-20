@@ -1005,6 +1005,7 @@ impl<'a,C:Ctx> ExplResolve<'a,C> {
     }
 
     fn explain_eq_t(&mut self, m: &C, a: &C::AST, b: &C::AST) {
+        if *a == *b { return }
         let na = self.cc1.nodes.get_term_id(a);
         let nb = self.cc1.nodes.get_term_id(b);
         self.explain_eq(m, na, nb);
