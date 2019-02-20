@@ -270,6 +270,12 @@ mod solver {
             self.solve_with(m, &[])
         }
 
+        /// Simplify boolean clauses.
+        pub fn sat_simplify(&mut self) -> Res {
+            let b = self.s0.sat.simplify();
+            if b { Res::SAT } else { Res::UNSAT }
+        }
+
         pub fn n_lits(&self) -> usize { self.s0.sat.num_vars() as usize }
         pub fn n_clauses(&self) -> usize { self.s0.sat.num_clauses() as usize }
         pub fn n_conflicts(&self) -> usize { self.s0.sat.num_conflicts() as usize }
