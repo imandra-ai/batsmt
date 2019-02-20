@@ -7,7 +7,7 @@
 // TODO(perf): backtrackable array allocator for signatures
 
 use {
-    std::{ u32, ptr, hash::Hash, fmt::Debug, },
+    std::{ u32, ptr, hash::Hash, fmt::Debug, marker::PhantomData, },
     batsmt_core::{backtrack, },
     fxhash::FxHashMap,
     batsmt_pretty as pp,
@@ -124,6 +124,7 @@ pub struct CC1<C:Ctx> {
     ok: bool, // no conflict?
     propagate: bool, // do we propagate?
     alloc_parent_list: ListAlloc<NodeID>,
+    alloc_lit_list: ListAlloc<(NodeID,C::B)>,
     nodes: Nodes<C>,
     confl: Vec<C::B>, // local for conflict
     tmp_expl: Vec<NodeID>,
@@ -169,8 +170,8 @@ pub struct NodeDef<AST, B> where AST : Sized, B : Sized {
     pub id: NodeID,
     pub ast: AST, // what AST does this correspond to?
     next: NodeID, // next elt in class
-    expl: Option<(NodeID, Expl<B>)>, // proof forest
-    pub(crate) as_lit: Option<B>, // if this term corresponds to a boolean literal
+    expl: Option<(NodeID, Expl<B>)>, // proof forest //TODO: use allocator?
+    as_lit: List<(NodeID,B)>, // for repr, list of literals in the class
     root: NodeID, // current representative (initially, itself)
     parents: List<NodeID>,
     flags: u8, // boolean flags
@@ -438,15 +439,16 @@ impl<C:Ctx, Th:MicroTheory<C>> CC<C, Th> {
     }
 
     fn map_to_lit(&mut self, m: &C, t: NodeID, lit: C::B) {
-        if ! self.cc1.ok {
-            return;
-        }
+        if ! self.cc1.ok { return; }
 
-        let n = &mut self.cc1[t];
-        if n.as_lit.is_none() {
-            n.as_lit = Some(lit);
-            debug!("map term {} to literal {:?}", pp::pp2(self,m,&t), lit);
+        // add to literal
+        let tr = self.cc1.find(t);
+        let CC1{nodes, alloc_lit_list, ..} = &mut self.cc1;
+        let n = &mut nodes[tr];
+        if n.as_lit.iter().all(|(_,lit2)| *lit2 != lit) {
+            n.as_lit.add(alloc_lit_list, (t,lit));
             self.undo.push_if_nonzero(UndoOp::UnmapLit(t));
+            debug!("map term {} to literal {:?}", pp::pp2(self,m,&t), lit);
         }
     }
 }
@@ -582,36 +584,31 @@ impl<'a, 'b:'a, C:Ctx> MergePhase<'a,'b,C> {
         if cc1.propagate && acts.is_some() &&
             (ra == cc1.nodes.n_true || ra == cc1.nodes.n_false) {
             trace!("{}.class: look for propagations", pp::pp2(*cc1,m,&rb));
-            let rb_t = cc1[rb].ast;
-            cc1.nodes.iter_class_mut(rb, |n| {
-                let acts = &mut (match acts { Some(a) => a, None => unreachable!() });
-                trace!("... {}.iter_class: check {}", pp_t(m,&rb_t), pp_t(m,&n.ast));
-                n.root = ra; // while we're there, we can merge eagerly.
-
+            let acts = &mut (match acts { Some(a) => a, None => unreachable!() });
+            for (n_id, mut lit) in cc1[rb].as_lit.iter() {
+                let n = &cc1[*n_id];
                 // if a=true/false, and `n` has a literal, propagate the literal
                 // assuming it's not known to be true already.
-                if let Some(mut lit) = n.as_lit {
-                    if !lit_expl.contains_key(&lit) {
-                        // future expl: `n=b=a=ra` (where ra∈{true,false})
-                        let e = LitExpl::Propagated {
-                            expl: expl.clone(),
-                            eqns: [(n.id, b), (a, ra)],
-                        };
-                        if ra == *n_true {
-                            trace!("propagate literal {:?} (for true≡{}, {:?})",
-                                lit, pp_t(m,&n.ast), &expl);
-                            acts.propagate(lit);
-                        } else {
-                            debug_assert_eq!(ra, *n_false);
-                            lit = !lit;
-                            trace!("propagate literal {:?} (for false≡{}, {:?})",
-                                lit, pp_t(m,&n.ast), &expl);
-                            acts.propagate(lit);
-                        }
-                        lit_expl.insert(lit, e);
+                if !lit_expl.contains_key(&lit) {
+                    // future expl: `n=b=a=ra` (where ra∈{true,false})
+                    let e = LitExpl::Propagated {
+                        expl: expl.clone(),
+                        eqns: [(n.id, b), (a, ra)],
+                    };
+                    if ra == *n_true {
+                        trace!("propagate literal {:?} (for true≡{}, {:?})",
+                            lit, pp_t(m,&n.ast), &expl);
+                        acts.propagate(lit);
+                    } else {
+                        debug_assert_eq!(ra, *n_false);
+                        lit = !lit;
+                        trace!("propagate literal {:?} (for false≡{}, {:?})",
+                            lit, pp_t(m,&n.ast), &expl);
+                        acts.propagate(lit);
                     }
+                    lit_expl.insert(lit, e);
                 }
-            });
+            }
         }
 
         // set `rb.root` to `ra`
@@ -632,8 +629,9 @@ impl<'a, 'b:'a, C:Ctx> MergePhase<'a,'b,C> {
             na.next = next_b;
             nb.next = next_a;
 
-            // also merge parent lists
-            na.parents.append(&mut nb.parents)
+            // also merge parent/lit lists
+            na.parents.append(&mut nb.parents);
+            na.as_lit.append(&mut nb.as_lit);
         }
 
         // call micro theories
@@ -712,6 +710,7 @@ impl<C:Ctx> CC1<C> {
             propagate: true,
             ok: true,
             alloc_parent_list: backtrack::Alloc::new(),
+            alloc_lit_list: backtrack::Alloc::new(),
             tmp_expl: vec!(),
             confl: vec!(),
         }
@@ -759,6 +758,7 @@ impl<C:Ctx> CC1<C> {
                     nb.next = next_a;
 
                     na.parents.un_append(&mut nb.parents);
+                    na.as_lit.un_append(&mut nb.as_lit);
                 }
 
                 // reset `root` pointer for `nb`
@@ -798,9 +798,12 @@ impl<C:Ctx> CC1<C> {
                 });
             }
             UndoOp::UnmapLit(t) => {
-                let n = &mut self[t];
-                debug_assert!(n.as_lit.is_some());
-                n.as_lit = None;
+                // pop last
+                let tr = self.find(t);
+                let n = &mut self[tr];
+                debug_assert!(n.as_lit.len() > 0);
+                let (_t2,_) = n.as_lit.remove();
+                assert_eq!(_t2, t);
             },
         }
     }
@@ -890,6 +893,7 @@ impl<C:Ctx, Th: MicroTheory<C>> backtrack::Backtrackable<C> for CC<C, Th> {
         self.undo.push_level();
         self.sig_tbl.push_level();
         self.cc1.alloc_parent_list.push_level();
+        self.cc1.alloc_lit_list.push_level();
         self.lit_expl.push_level();
         self.th.push_level(m);
     }
@@ -903,6 +907,7 @@ impl<C:Ctx, Th: MicroTheory<C>> backtrack::Backtrackable<C> for CC<C, Th> {
             self.undo.pop_levels(n, |op| cc1.perform_undo(m, op));
             self.sig_tbl.pop_levels(n);
             cc1.alloc_parent_list.pop_levels(n);
+            cc1.alloc_lit_list.pop_levels(n);
             self.lit_expl.pop_levels(n);
             self.th.pop_levels(m, n);
 
@@ -1151,11 +1156,11 @@ impl<C:Ctx> Nodes<C> {
 
     /// Call `f` on all parents of all nodes of the class of `r`
     #[inline]
-    pub(crate) fn iter_parents<F>(&mut self, r: NodeID, f: F)
+    pub(crate) fn iter_parents<F>(&mut self, r: NodeID, mut f: F)
         where F: FnMut(&NodeID)
     {
         debug_assert_eq!(r, self.find(r), "must be root");
-        self[r].parents.for_each(f);
+        for x in self[r].parents.iter() { f(x); }
     }
 }
 
@@ -1227,13 +1232,13 @@ mod node {
     const FLG_NEEDS_SIG : u8 = 0b1;
     const FLG_MARKED : u8 = 0b10;
 
-    impl<AST, B> NodeDef<AST, B> {
+    impl<AST, B:Clone> NodeDef<AST, B> {
         /// Create a new node with the given ID and AST.
         pub fn new(ast: AST, id: NodeID) -> Self {
             let parents = List::new();
             NodeDef {
                 id, ast, next: id, expl: None,
-                root: id, as_lit: None, parents, flags: 0,
+                root: id, as_lit: List::new(), parents, flags: 0,
             }
         }
 
@@ -1326,29 +1331,6 @@ impl<T:Clone> List<T> {
     #[inline(always)]
     fn len(&self) -> usize { self.len as usize }
 
-    /// Iterate over the elements of the list.
-    #[inline(always)]
-    fn for_each<F>(&self, f: F) where F: FnMut(&T) {
-        if self.len > 0 {
-            self.for_each_loop(f)
-        }
-    }
-
-    fn for_each_loop<F>(&self, mut f: F) where F: FnMut(&T) {
-        debug_assert!(self.len() > 0);
-
-        let mut ptr = self.first;
-        loop {
-            let cell = unsafe{ &* ptr };
-            f(&cell.0);
-
-            ptr = cell.1;
-            if ptr.is_null() {
-                break // done
-            }
-        }
-    }
-
     /// Add `x` into the list.
     fn add(&mut self, alloc: &mut ListAlloc<T>, x: T) {
         // allocate new node
@@ -1428,6 +1410,28 @@ impl<T:Clone> List<T> {
             let n = unsafe{ &mut * last };
             other.first = n.1;
             n.1 = ptr::null_mut();
+        }
+    }
+
+    /// Iterate over the list's elements.
+    fn iter(&self) -> impl Iterator<Item=&T> {
+        ListIter(self.first, PhantomData)
+    }
+}
+
+struct ListIter<'a, T: 'a>(*mut ListC<T>, PhantomData<&'a T>);
+
+impl<'a, T> Iterator for ListIter<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.0.is_null() {
+            None
+        } else {
+            let c = unsafe { &*self.0 };
+            let x = &c.0;
+            *self = ListIter(c.1, PhantomData);
+            Some(x)
         }
     }
 }
