@@ -865,19 +865,22 @@ impl<C:Ctx> CC1<C> {
             loop {
                 if a==b { break a }
 
+                // safe since `a != b`
+                let (na, nb) = nodes.get2(a,b);
+
                 // if `a` is marked, it means it's on both path, so it must
                 // be the first common ancestor.
                 // I1 prevents the root from being returned here.
-                if nodes[a].marked() { break a }
-                if nodes[b].marked() { break b }
+                if na.marked() { break a }
+                if nb.marked() { break b }
 
-                if let Some((a2,_)) = nodes[a].expl {
-                    nodes[a].mark();
+                if let Some((a2,_)) = na.expl {
+                    na.mark();
                     to_clean.push(a);
                     a = a2;
                 }
-                if let Some((b2,_)) = nodes[b].expl {
-                    nodes[b].mark();
+                if let Some((b2,_)) = nb.expl {
+                    nb.mark();
                     to_clean.push(b);
                     b = b2;
                 }
@@ -927,7 +930,7 @@ impl<C:Ctx, Th: MicroTheory<C>> backtrack::Backtrackable<C> for CC<C, Th> {
 /// Temporary structure to resolve explanations.
 struct ExplResolve<'a,C:Ctx> {
     cc1: &'a mut CC1<C>,
-    expl_st: &'a mut Vec<Expl<C::B>>,
+    expl_st: &'a mut Vec<Expl<C::B>>, // set of explanations to unfold
 }
 
 impl<'a,C:Ctx> ExplResolve<'a,C> {
@@ -986,9 +989,6 @@ impl<'a,C:Ctx> ExplResolve<'a,C> {
                 }
             }
         }
-        // cleanup conflict
-        // NOTE: remove? self.cc1.confl.sort_unstable();
-        self.cc1.confl.dedup();
         &self.cc1.confl
     }
 
