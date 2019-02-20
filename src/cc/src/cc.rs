@@ -938,6 +938,7 @@ impl<'a,C:Ctx> ExplResolve<'a,C> {
         ExplResolve { cc1, expl_st }
     }
 
+    #[inline]
     fn add_expl(&mut self, e: Expl<C::B>) {
         self.expl_st.push(e)
     }
@@ -1260,13 +1261,13 @@ mod node {
         #[inline]
         pub fn set_needs_sig(&mut self) { self.flags |= FLG_NEEDS_SIG }
 
-        #[inline]
+        #[inline(always)]
         pub fn marked(&self) -> bool { (self.flags & FLG_MARKED) != 0 }
 
-        #[inline]
+        #[inline(always)]
         pub fn mark(&mut self) { self.flags |= FLG_MARKED }
 
-        #[inline]
+        #[inline(always)]
         pub fn unmark(&mut self) { self.flags &= !FLG_MARKED }
     }
 }
