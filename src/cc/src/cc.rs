@@ -27,7 +27,6 @@ pub struct CC<C:Ctx, Th: MicroTheory<C> = ()> {
     pending: Vec<NodeID>, // update signatures
     combine: Vec<(NodeID,NodeID,Expl<C::B>)>, // merge
     undo: backtrack::Stack<UndoOp>,
-    props: Vec<C::B>, // local for propagations
     expl_st: Vec<Expl<C::B>>, // to expand explanations
     tmp_sig: Signature<C::Fun>, // for computing signatures
     traverse: Vec<TraverseTask<C::AST>>, // for adding terms
@@ -296,24 +295,19 @@ impl<C:Ctx, Th: MicroTheory<C>> CC<C, Th> {
     {
         debug!("check-internal (pending: {}, combine: {})",
             self.pending.len(), self.combine.len());
-        self.fixpoint(m);
-        if self.cc1.ok {
-            for &p in &self.props {
-                self.cc1.ok = self.cc1.ok && acts.propagate(p);
-            }
-        } else {
+        self.fixpoint(m, Some(acts));
+        if ! self.cc1.ok {
             debug_assert!(self.cc1.confl.len() >= 1); // must have some conflict
             let costly = true;
             acts.raise_conflict(&self.cc1.confl, costly)
         }
-        self.props.clear();
     }
 
     /// Main CC algorithm.
-    fn fixpoint(&mut self, m: &mut C) {
+    fn fixpoint(&mut self, m: &mut C, mut acts: Option<&mut dyn Actions<C>>) {
         let CC{
             combine,cc1,pending,th,expl_st,undo,tmp_sig,
-            sig_tbl,props,lit_expl,n_true,n_false,..} = self;
+            sig_tbl,lit_expl,n_true,n_false,..} = self;
         let mut combine2 = vec!();
         loop {
             if !cc1.ok {
@@ -336,7 +330,7 @@ impl<C:Ctx, Th: MicroTheory<C>> CC<C, Th> {
 
             {
                 let mut merger = MergePhase{
-                    cc1,pending,expl_st,undo,props,lit_expl,
+                    cc1,pending,expl_st,undo,lit_expl, acts: &mut acts,
                     combine2: &mut combine2,
                     n_true: *n_true,n_false: *n_false};
                 while combine.len() > 0 {
@@ -376,7 +370,6 @@ impl<C:Ctx, Th:MicroTheory<C>> CC<C, Th> {
             th,
             pending: vec!(),
             combine: vec!(),
-            props: vec!(),
             undo: backtrack::Stack::new(),
             traverse: vec!(),
             tmp_sig: Signature::new(),
@@ -459,7 +452,7 @@ impl<C:Ctx, Th:MicroTheory<C>> CC<C, Th> {
 }
 
 /// Internal structure used during merging of newly equivalent classes.
-pub struct MergePhase<'a,C:Ctx> {
+pub struct MergePhase<'a,'b:'a, C:Ctx> {
     pub(crate) cc1: &'a mut CC1<C>,
     pub(crate) n_true: NodeID,
     pub(crate) n_false: NodeID,
@@ -467,7 +460,7 @@ pub struct MergePhase<'a,C:Ctx> {
     pub(crate) combine2: &'a mut Vec<(NodeID, NodeID, Expl<C::B>)>, // temporary
     pub(crate) expl_st: &'a mut Vec<Expl<C::B>>,
     undo: &'a mut backtrack::Stack<UndoOp>,
-    pub(crate) props: &'a mut Vec<C::B>, // local for propagations
+    acts: &'a mut Option<&'b mut dyn Actions<C>>,
     lit_expl: &'a mut backtrack::HashMap<C::B, LitExpl<C::B>>, // pre-explanations for propagations
 }
 
@@ -484,7 +477,7 @@ pub struct UpdateSigPhase<'a,C:Ctx> {
 // FIXME: when merging `a` and `b`, need to call micro-theory `on_signature`
 // on parents of both a and b (not just b)
 
-impl<'a, C:Ctx> MergePhase<'a,C> {
+impl<'a, 'b:'a, C:Ctx> MergePhase<'a,'b,C> {
     /// Merge `a` and `b`, if they're not already equal.
     fn merge<Th:MicroTheory<C>>(
         &mut self, m: &mut C, th: &mut Th,
@@ -583,13 +576,15 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
             });
         }
 
-        let MergePhase{cc1, props, lit_expl, n_true, n_false, combine2, ..} = self;
+        let MergePhase{cc1, acts, lit_expl, n_true, n_false, combine2, ..} = self;
 
         // if ra is {true,false}, propagate lits
-        if cc1.propagate && (ra == cc1.nodes.n_true || ra == cc1.nodes.n_false) {
+        if cc1.propagate && acts.is_some() &&
+            (ra == cc1.nodes.n_true || ra == cc1.nodes.n_false) {
             trace!("{}.class: look for propagations", pp::pp2(*cc1,m,&rb));
             let rb_t = cc1[rb].ast;
             cc1.nodes.iter_class_mut(rb, |n| {
+                let acts = &mut (match acts { Some(a) => a, None => unreachable!() });
                 trace!("... {}.iter_class: check {}", pp_t(m,&rb_t), pp_t(m,&n.ast));
                 n.root = ra; // while we're there, we can merge eagerly.
 
@@ -600,18 +595,18 @@ impl<'a, C:Ctx> MergePhase<'a,C> {
                         // future expl: `n=b=a=ra` (where ra∈{true,false})
                         let e = LitExpl::Propagated {
                             expl: expl.clone(),
-                            eqns:[(n.id, b), (a, ra)],
+                            eqns: [(n.id, b), (a, ra)],
                         };
                         if ra == *n_true {
                             trace!("propagate literal {:?} (for true≡{}, {:?})",
                                 lit, pp_t(m,&n.ast), &expl);
-                            props.push(lit);
+                            acts.propagate(lit);
                         } else {
                             debug_assert_eq!(ra, *n_false);
                             lit = !lit;
                             trace!("propagate literal {:?} (for false≡{}, {:?})",
                                 lit, pp_t(m,&n.ast), &expl);
-                            props.push(lit);
+                            acts.propagate(lit);
                         }
                         lit_expl.insert(lit, e);
                     }
@@ -891,7 +886,7 @@ impl<C:Ctx> CC1<C> {
 impl<C:Ctx, Th: MicroTheory<C>> backtrack::Backtrackable<C> for CC<C, Th> {
     fn push_level(&mut self, m: &mut C) {
         trace!("push-level");
-        self.fixpoint(m); // be sure to commit changes before saving
+        self.fixpoint(m, None); // be sure to commit changes before saving
         self.undo.push_level();
         self.sig_tbl.push_level();
         self.cc1.alloc_parent_list.push_level();
@@ -911,7 +906,6 @@ impl<C:Ctx, Th: MicroTheory<C>> backtrack::Backtrackable<C> for CC<C, Th> {
             self.lit_expl.pop_levels(n);
             self.th.pop_levels(m, n);
 
-            self.props.clear();
             self.pending.clear();
             self.combine.clear();
         }

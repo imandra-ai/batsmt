@@ -508,6 +508,7 @@ pub struct SimpleActions<C:Ctx> {
 }
 
 impl<C:Ctx> Actions<C> for SimpleActions<C> {
+    #[inline]
     fn has_conflict(&self) -> bool { self.confl.is_some() }
 
     fn propagate(&mut self, p: C::B) -> bool {
