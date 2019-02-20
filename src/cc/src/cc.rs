@@ -974,7 +974,7 @@ impl<'a,C:Ctx> ExplResolve<'a,C> {
             }
         }
         // cleanup conflict
-        self.cc1.confl.sort_unstable();
+        // NOTE: remove? self.cc1.confl.sort_unstable();
         self.cc1.confl.dedup();
         &self.cc1.confl
     }
