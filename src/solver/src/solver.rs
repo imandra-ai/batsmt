@@ -269,6 +269,12 @@ mod solver {
         pub fn solve(&mut self, m: &mut C) -> Res {
             self.solve_with(m, &[])
         }
+
+        pub fn n_lits(&self) -> usize { self.s0.sat.num_vars() as usize }
+        pub fn n_clauses(&self) -> usize { self.s0.sat.num_clauses() as usize }
+        pub fn n_conflicts(&self) -> usize { self.s0.sat.num_conflicts() as usize }
+        pub fn n_props(&self) -> usize { self.s0.sat.num_propagations() as usize }
+        pub fn n_decisions(&self) -> usize { self.s0.sat.num_decisions() as usize }
     }
 
     impl<C,Th> CoreTheory<C, Th>
