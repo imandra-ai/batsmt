@@ -75,12 +75,6 @@ pub trait LitMap<B:BoolLit> {
         where M: ManagerU32,
               F: FnOnce() -> B;
 
-    /// Add a mapping from `t` to `lit`.
-    ///
-    /// if `bidir` also remember that `lit` maps to `t`.
-    fn add_term<M>(&mut self, m: &M, t: &AST, lit: B, bidir: bool)
-        where M: ManagerU32;
-
     /// Map the given literal into a signed term, if any.
     ///
     /// This works only if `lit` (or its negation) was added earlier using

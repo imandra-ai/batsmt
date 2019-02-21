@@ -190,12 +190,11 @@ mod solver {
             self.s0.sat.add_clause_reuse(&mut self.lits);
         }
 
-        // TODO: find how to avoid duplicating work if called in a (refinement) loop
-        // first, add theory literals to the theory
+        // add new theory literals to the theory.
         fn add_initial_literals(&mut self, m: &mut C) {
             debug!("solver.theory.add-lits");
             let core = &mut self.s0.c;
-            for (t,blit) in core.lit_map.iter_theory_lits() {
+            for (t,blit) in core.lit_map.drain_new_theory_lits() {
                 core.th.add_literal(m,t,blit);
             }
         }
