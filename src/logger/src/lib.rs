@@ -6,26 +6,31 @@ use {
     colored::*,
 };
 
+/// Initialize from a string.
+pub fn init_from_str(s: &str) {
+    let lvl = match s {
+        "none" => {
+            return; // disabled
+        },
+        "info" => LevelFilter::Info,
+        "error" => LevelFilter::Error,
+        "warn" => LevelFilter::Warn,
+        "trace" => LevelFilter::Trace,
+        "debug" => LevelFilter::Debug,
+        s => {
+            eprintln!("unknown logging level {:?}", s);
+            return;
+        },
+    };
+    let logger = Logger(lvl, PPLevels::new());
+    log::set_max_level(lvl);
+    log::set_boxed_logger(Box::new(logger)).unwrap();
+}
+
 /// Initialize the logging infrastructure.
 pub fn init() {
     if let Ok(s) = std::env::var("RUST_LOG") {
-        let lvl = match s.as_str() {
-            "none" => {
-                return; // disabled
-            },
-            "info" => LevelFilter::Info,
-            "error" => LevelFilter::Error,
-            "warn" => LevelFilter::Warn,
-            "trace" => LevelFilter::Trace,
-            "debug" => LevelFilter::Debug,
-            s => {
-                eprintln!("unknown logging level {:?}", s);
-                return;
-            },
-        };
-        let logger = Logger(lvl, PPLevels::new());
-        log::set_max_level(lvl);
-        log::set_boxed_logger(Box::new(logger)).unwrap();
+        init_from_str(s.as_str())
     };
 }
 
