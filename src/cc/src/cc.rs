@@ -549,7 +549,7 @@ impl<'a, 'b:'a, C:Ctx> MergePhase<'a,'b,C> {
             let mut acts = MicroTheoryArg{
                 cc1: &mut self.cc1, n_true: self.n_true, n_false: self.n_false,
                 combine: &mut self.combine2};
-            th.before_merge(m, &mut acts, a, b);
+            th.before_merge(m, &mut acts, ra, rb);
         }
 
         // update forest tree so that `b --[expl]--> a`.
@@ -639,7 +639,7 @@ impl<'a, 'b:'a, C:Ctx> MergePhase<'a,'b,C> {
             let mut acts = MicroTheoryArg{
                 cc1, n_true: *n_true, n_false: *n_false,
                 combine: combine2};
-            th.after_merge(m, &mut acts, a, b);
+            th.after_merge(m, &mut acts, ra, rb);
         }
     }
 }

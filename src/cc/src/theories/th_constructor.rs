@@ -29,13 +29,6 @@ impl<C, F:Eq+Hash+Clone> Backtrackable<C> for Constructor<F> {
     fn pop_levels(&mut self, _: &mut C, n: usize) { self.repr.pop_levels(n) }
 }
 
-impl<F: Eq+Hash+Clone> Constructor<F> {
-    #[inline]
-    fn find_st(&self, n: NodeID) -> Option<&ReprState<F>> {
-        self.repr.get(&n)
-    }
-}
-
 impl<C> MicroTheory<C> for Constructor<<C as HasConstructor<AST>>::F>
     where C: Ctx + HasConstructor<AST>
 {
@@ -94,6 +87,11 @@ impl<C> MicroTheory<C> for Constructor<<C as HasConstructor<AST>>::F>
                             for i in 0..args1.len() {
                                 let n_u1 = acts.cc1.get_term_id(&args1[i]);
                                 let n_u2 = acts.cc1.get_term_id(&args2[i]);
+
+                                trace!("injectivity: merge {} and {} (sub-{} of {} and {})",
+                                    pp::pp2(acts.cc1,c,&n_u1), pp::pp2(acts.cc1,c,&n_u2),
+                                    i, pp_t(c,t1), pp_t(c,t2));
+
                                 acts.combine.push((n_u1, n_u2, expl.clone()))
                             }
                         },
