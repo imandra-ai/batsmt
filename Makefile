@@ -1,4 +1,6 @@
 
+J ?= 3
+
 build: release
 
 release:
@@ -27,6 +29,14 @@ test-debug:
 
 test-release:
 	cargo test --release -- $(TEST_FLAGS)
+
+LOGITEST_OPTS = -j $(J)
+DATE=$(shell date +%FT%H:%M)
+logitest-benchs:
+	@mkdir -p snapshots
+	@logitest run -c benchs/conf.toml $(LOGITEST_OPTS) \
+	  --meta `git rev-parse HEAD` --summary snapshots/bench-$(DATE).txt \
+	  --csv snapshots/bench-$(DATE).csv
 
 dev: check test-release build
 

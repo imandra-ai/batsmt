@@ -1,0 +1,32 @@
+
+
+provers = [ "batsmt", "read-status" ]
+default_expect = "sat"
+
+[batsmt]
+
+binary = "./batsmt.sh"
+# TODO: timeout
+cmd = "./batsmt.sh $file"
+unsat = "UNSAT"
+sat = "SAT"
+unknown = "TIMEOUT|UNKNOWN"
+version = "git:."
+
+[read-status]
+
+cmd = "grep -E '(sat|unsat)' $file"
+unsat = "unsat"
+sat = "sat"
+
+[test]
+
+timeout=10
+problems = ".*\\.smt2"
+provers = [ "batsmt", ]
+dir = [ "benchs/sat", "benchs/unsat", ]
+
+expect = "program:read-status"
+
+
+
