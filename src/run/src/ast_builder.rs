@@ -79,6 +79,12 @@ mod ast_builder {
             }
         }
 
+        fn declare_cstor(&mut self, f: Atom, args: &[AST], ret: AST) -> Self::Fun {
+            let f = self.declare_fun(f, args, ret);
+            self.m.set_cstor(&f);
+            f
+        }
+
         fn ite(&mut self, a: AST, b: AST, c: AST) -> AST {
             let f = self.b.ite;
             self.m.m.mk_app(f, &[a,b,c])

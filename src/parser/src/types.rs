@@ -32,6 +32,9 @@ pub trait TermBuilder : SortBuilder {
     /// Declare a function
     fn declare_fun(&mut self, name: Atom, args: &[Self::Sort], ret: Self::Sort) -> Self::Fun;
 
+    /// Declare a constructor
+    fn declare_cstor(&mut self, name: Atom, args: &[Self::Sort], ret: Self::Sort) -> Self::Fun;
+
     /// Build a term by function application
     fn app_fun(&mut self, f: Self::Fun, args: &[Self::Term]) -> Self::Term;
 

@@ -38,6 +38,7 @@ struct FunCell {
     name: Atom,
     args: Option<Vec<Sort>>,
     ret: Sort,
+    cstor: bool,
 }
 
 /// A function
@@ -47,7 +48,10 @@ pub struct Fun(Rc<FunCell>);
 impl Fun {
     /// New fun
     fn new(name: Atom, args: Option<Vec<Sort>>, ret: Sort) -> Self {
-        Fun(Rc::new(FunCell {name, args, ret}))
+        Fun(Rc::new(FunCell {name, args, ret, cstor: false}))
+    }
+    fn new_cstor(name: Atom, args: Option<Vec<Sort>>, ret: Sort) -> Self {
+        Fun(Rc::new(FunCell {name, args, ret, cstor: true}))
     }
     pub fn ret(&self) -> Sort { self.0.ret.clone() }
     pub fn name(&self) -> &str { &self.0.name }
@@ -171,6 +175,11 @@ impl types::TermBuilder for Builder {
     fn declare_fun(&mut self, name: Atom, args: &[Sort], ret: Sort) -> Fun {
         let args = Some(args.iter().map(|s| s.clone()).collect());
         Fun::new(name, args, ret)
+    }
+
+    fn declare_cstor(&mut self, name: Atom, args: &[Sort], ret: Sort) -> Fun {
+        let args = Some(args.iter().map(|s| s.clone()).collect());
+        Fun::new_cstor(name, args, ret)
     }
 
     fn var(&mut self, v: Self::Var) -> Term { v }

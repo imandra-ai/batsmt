@@ -1,16 +1,18 @@
 
 use {
-    batsmt_core::{ast, ast_u32::AST, AstView},
+    batsmt_core::{ast, AstView},
     batsmt_hast::{HManager, StrSymbolManager},
     batsmt_theory::{self as theory, LitMapBuiltins},
-    batsmt_cc::{self as cc, CCView},
+    batsmt_cc::{self as cc, CCView, HasConstructor, ConstructorView as CView, },
     batsmt_solver as solver,
     batsmt_pretty as pp,
-    batsmt_tseitin::{self as tseitin, View as FView, }
+    batsmt_tseitin::{self as tseitin, View as FView, },
+    bit_set::BitSet,
 };
 
 /// The Manager we use.
 pub type M = HManager<StrSymbolManager>;
+pub use batsmt_core::ast_u32::AST;
 
 /// The builtin symbols.
 #[derive(Clone,Debug)]
@@ -32,6 +34,7 @@ pub struct Ctx {
     pub m: M,
     pub lmb: LitMapBuiltins,
     pub b: Builtins,
+    cstor: BitSet,
 }
 
 pub mod ctx {
@@ -43,7 +46,12 @@ pub mod ctx {
             let mut m = HManager::new();
             let b = Builtins::new(&mut m);
             let lmb = b.clone().into();
-            Ctx {m, b, lmb}
+            Ctx {m, b, lmb, cstor: BitSet::new(), }
+        }
+
+        pub fn is_cstor(&self, t: &AST) -> bool { self.cstor.contains(t.idx() as usize) }
+        pub fn set_cstor(&mut self, t: &AST) {
+            self.cstor.insert(t.idx() as usize);
         }
 
         /// Copy of builtins
@@ -186,6 +194,27 @@ pub mod ctx {
                     cc::IteView::Ite(&args[0], &args[1], &args[2])
                 },
                 _ => cc::IteView::Other(t),
+            }
+        }
+    }
+
+    impl HasConstructor<AST> for Ctx {
+        type F = AST;
+
+        fn view_as_constructor<'a>(
+            &'a self, t: &'a AST
+        ) -> CView<'a, Self::F, AST>
+        {
+            match self.view(t) {
+                AstView::Const(_) if self.is_cstor(t) => {
+                    CView::AppConstructor(t, &[])
+                },
+                AstView::App {f, args} if self.is_cstor(f) => {
+                    CView::AppConstructor(f,args)
+                },
+                _ => {
+                    CView::Other(t)
+                },
             }
         }
     }

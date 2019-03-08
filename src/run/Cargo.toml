@@ -17,3 +17,4 @@ batsmt-tseitin = {path = "../tseitin"}
 log = "^0.4"
 batsmt-logger = {path = "../logger"}
 fxhash = "0.2"
+bit-set = "0.5.0"

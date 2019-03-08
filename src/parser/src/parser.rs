@@ -390,12 +390,20 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
                     self.sorts.insert(a.clone(), sort);
                     Statement::DeclareSort(a, n)
                 },
-                "declare-fun" => {
+                "declare-fun" | "declare-cstor" => {
                     let a = self.atom()?;
                     let tys = self.within_parens(|m| m.sort())?;
                     let ret = self.sort()?;
                     // store function
-                    let f = self.build.declare_fun(a.clone(), &tys, ret.clone());
+                    let f = {
+                        let a = a.clone();
+                        let ret = ret.clone();
+                        if &*dir == "declare-fun" {
+                            self.build.declare_fun(a, &tys, ret)
+                        } else {
+                            self.build.declare_cstor(a, &tys, ret)
+                        }
+                    };
                     self.funs.insert(a.clone(), f);
                     Statement::DeclareFun(a, tys, ret)
                 },
