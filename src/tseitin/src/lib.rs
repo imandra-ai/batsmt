@@ -161,10 +161,32 @@ impl<'a, C:Ctx> SimpStruct<'a, C> {
                 View::Distinct(args) if args.len() == 1 => {
                     self.m.mk_formula(View::Bool(true))
                 },
+                View::Distinct(args) => {
+                    // distinct(t1…tn) --> and_{i<j} t_i != t_j
+                    // simplify each subterm first
+                    let mut args: Vec<AST> = args.iter().cloned().collect();
+                    drop(view_t);
+
+                    for i in 0..args.len() {
+                        args[i] = self.simplify_rec(args[i])
+                    }
+                    let mut conj = vec!();
+
+                    for i in 0 .. args.len()-1 {
+                        let t_i = args[i];
+                        for j in i+1 .. args.len() {
+                            let t_j = args[j];
+                            let eqn_i_j = self.m.mk_formula(View::Eq(t_i, t_j));
+                            conj.push(self.m.mk_formula(View::Not(eqn_i_j)));
+                        }
+                    }
+
+                    self.m.mk_formula(View::And(&conj))
+                },
                 View::Eq(t, u) if t==u => {
                     self.m.mk_formula(View::Bool(true))
                 }
-                View::Eq(..) | View::Atom(..) | View::Distinct(..) => {
+                View::Eq(..) | View::Atom(..) => {
                     // just map one level.
                     drop(view_t);
                     match self.m.view(&t) {
@@ -273,9 +295,11 @@ impl<C> Tseitin<C> where C: Ctx {
     ) -> impl Iterator<Item=TheoryClauseRef<C>>
         where LM: LitMap<C::B>
     {
-        self.cs.clear();
+        // first, simplify to flatten connectives and remove `distinct`
+        let t = self.simplify(m, t);
 
         let Tseitin { tmp_ast: args, cs, tmp, tmp2, ..} = self;
+        cs.clear();
 
         // traverse `t` as a DAG
         self.iter.iter_mut(m, &t, |m, u| {
@@ -373,37 +397,7 @@ impl<C> Tseitin<C> where C: Ctx {
                         cs.push(&tmp2);
                     }
                 },
-                View::Distinct(args) if args.len() <= 2 => (),
-                View::Distinct(args2) => {
-                    // eliminate `distinct` into a conjunction of O(n^2) dis-equations
-                    args.extend_from_slice(args2);
-                    drop(view_u);
-                    let mut lmb = LitMapB{lit_map, m};
-                    let lit_distinct = lmb.term_to_lit(u);
-                    drop(lmb);
-
-                    // `∧i args[i]!=args[j] => distinct`
-                    tmp.clear();
-                    tmp.push(lit_distinct);
-
-                    for i in 0 .. args.len()-1 {
-                        let t_i = args[i];
-                        for j in i+1 .. args.len() {
-                            let t_j = args[j];
-                            let eqn_i_j = {
-                                let t = m.mk_formula(View::Eq(t_i, t_j));
-                                TheoryLit::new_t(t, true)
-                            };
-
-                            // `distinct => args[i]!=args[j]`
-                            cs.push(&[!lit_distinct, !eqn_i_j]);
-
-                            // enrich the big conjunction
-                            tmp.push(eqn_i_j);
-                        }
-                    }
-                    cs.push(&tmp);
-                },
+                View::Distinct(_) => panic!("distinct post-simplification"),
             }
         });
 
