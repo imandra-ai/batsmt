@@ -201,7 +201,11 @@ impl<'a, C:Ctx> SimpStruct<'a, C> {
                 },
                 View::Not(u) => {
                     let u = self.simplify_rec(u);
-                    self.m.mk_formula(View::Not(u))
+                    match self.m.view_as_formula(u) {
+                        View::Bool(b) => self.m.mk_formula(View::Bool(!b)),
+                        View::Not(v) => v,
+                        _ => self.m.mk_formula(View::Not(u))
+                    }
                 }
                 View::And(args0) => {
                     let mut args = SVec::new();
