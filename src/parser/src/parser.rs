@@ -332,6 +332,17 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
                 self.io.junk();
                 let a = self.atom()?;
                 match &*a {
+                    "!" => {
+                        let t = self.term()?;
+                        let a = self.atom()?;
+                        if *a == *":named" {
+                            let _ = self.atom()?;
+                            self.expect_char(b')')?;
+                            Ok(t)
+                        } else {
+                            self.io.err_with(format!("expected ':named atom', got '{}'", a))
+                        }
+                    },
                     "ite" => {
                         let t1 = self.term()?;
                         let t2 = self.term()?;
