@@ -69,7 +69,7 @@ pub mod ctx {
     impl tseitin::Ctx for Ctx {
         fn view_as_formula(&self, t: AST) -> FView<AST> {
             if t == self.b.true_ { tseitin::View::Bool(true) }
-            else if t == self.b.false_ { tseitin::View::Bool(true) }
+            else if t == self.b.false_ { tseitin::View::Bool(false) }
             else {
                 match self.m.view(&t) {
                     AstView::Const(_) | AstView::Index(..) => FView::Atom(t),
