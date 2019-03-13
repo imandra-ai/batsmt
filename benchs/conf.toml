@@ -15,9 +15,9 @@ version = "git:."
 
 [read-status]
 
-cmd = "grep -E '(sat|unsat)' $file"
-unsat = "unsat"
-sat = "sat"
+cmd = "grep -E ':status (sat|unsat)' $file"
+unsat = " unsat"
+sat = " sat"
 
 [test]
 
