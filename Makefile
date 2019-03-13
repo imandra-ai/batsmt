@@ -32,11 +32,18 @@ test-release:
 
 LOGITEST_OPTS = -j $(J)
 DATE=$(shell date +%FT%H:%M)
+
 logitest-benchs:
 	@mkdir -p snapshots
 	@logitest run -c benchs/conf.toml $(LOGITEST_OPTS) \
 	  --meta `git rev-parse HEAD` --summary snapshots/bench-$(DATE).txt \
 	  --csv snapshots/bench-$(DATE).csv
+
+logitest-qfuf:
+	@mkdir -p snapshots
+	@logitest run -c benchs/conf.toml $(LOGITEST_OPTS) \
+	  --meta `git rev-parse HEAD` --summary snapshots/bench-qfuf$(DATE).txt \
+	  --csv snapshots/bench-qfuf$(DATE).csv benchs/QF_UF/
 
 dev: check test-release build
 

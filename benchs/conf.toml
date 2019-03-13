@@ -8,8 +8,8 @@ default_expect = "sat"
 binary = "./batsmt.sh"
 # TODO: timeout
 cmd = "./batsmt.sh $file"
-unsat = "UNSAT"
-sat = "SAT"
+unsat = "^UNSAT"
+sat = "^SAT"
 unknown = "TIMEOUT|UNKNOWN"
 version = "git:."
 
