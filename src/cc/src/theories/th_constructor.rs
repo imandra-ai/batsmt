@@ -115,10 +115,9 @@ impl<C> MicroTheory<C> for Constructor<<C as HasConstructor<AST>>::F>
                         cc::Expl::Conj(v)
                     };
                     combine.push((*n_true, *n_false, expl));
-                    return
                 };
 
-                // t1 and t2 are equal, just keep t1
+                // t1 and t2 are equal, just keep t1's constructor
             } else {
                 // copy into v1
                 self.repr.insert(n1, (*st2).clone());

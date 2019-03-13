@@ -344,6 +344,7 @@ impl<C:Ctx, Th: MicroTheory<C>> CC<C, Th> {
                     merger.combine2.clear();
                 }
             }
+            debug_assert!(combine.is_empty());
 
             if pending.is_empty() {
                 break; // done
@@ -551,6 +552,7 @@ impl<'a, 'b:'a, C:Ctx> MergePhase<'a,'b,C> {
                 combine: &mut self.combine2};
             th.before_merge(m, &mut acts, ra, rb);
         }
+        if !self.cc1.ok { return; }
 
         // update forest tree so that `b --[expl]--> a`.
         // Note that here we link `a` and `b`, not their representatives.
