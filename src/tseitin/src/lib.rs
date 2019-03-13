@@ -119,7 +119,7 @@ impl<'a,C,LM> LitMapB<'a,C,LM>
 }
 
 #[derive(Copy,Clone,Debug,PartialEq)]
-enum Conn { And, Or, Imply }
+enum Conn { And, Or, }
 
 struct SimpStruct<'a, C:Ctx> {
     m: &'a mut C,
@@ -127,18 +127,14 @@ struct SimpStruct<'a, C:Ctx> {
 }
 
 /// Push each element `t` of `args` into `v`, but if `t=conn(u1…un)` then flatten `u1…un` into `v`
-fn flatten_conn<C:Ctx>(m: &C, conn: Conn, v: &mut SVec<AST>, args: &[AST]) {
-    for (i,t) in args.iter().enumerate() {
+fn flatten_conn_rec<C:Ctx>(m: &C, conn: Conn, v: &mut SVec<AST>, args: &[AST]) {
+    for t in args.iter() {
         match m.view_as_formula(*t) {
             View::And(args2) if conn == Conn::And => {
-                flatten_conn(m, conn, v, args2)
+                flatten_conn_rec(m, conn, v, args2)
             },
             View::Or(args2) if conn == Conn::Or => {
-                flatten_conn(m, conn, v, args2)
-            },
-            View::Imply(args2) if conn == Conn::Imply && i == args.len()-1 => {
-                // only flatten last term
-                flatten_conn(m, conn, v, args2)
+                flatten_conn_rec(m, conn, v, args2)
             },
             View::Bool(true) if conn == Conn::And => (), // skip
             View::Bool(false) if conn == Conn::Or => (), // skip
@@ -147,6 +143,13 @@ fn flatten_conn<C:Ctx>(m: &C, conn: Conn, v: &mut SVec<AST>, args: &[AST]) {
             }
         }
     }
+}
+
+/// Push each element `t` of `args` into `v`, but if `t=conn(u1…un)` then flatten `u1…un` into `v`
+fn flatten_conn<C:Ctx>(m: &C, conn: Conn, v: &mut SVec<AST>, args: &[AST]) {
+    flatten_conn_rec(m, conn, v, args);
+    v.sort_unstable();
+    v.dedup();
 }
 
 impl<'a, C:Ctx> SimpStruct<'a, C> {
@@ -158,8 +161,14 @@ impl<'a, C:Ctx> SimpStruct<'a, C> {
             let view_t = self.m.view_as_formula(t);
             let u = match view_t {
                 View::Bool(..) => t,
-                View::Distinct(args) if args.len() == 1 => {
+                View::Distinct(&[_]) => {
                     self.m.mk_formula(View::Bool(true))
+                },
+                View::Distinct(&[a,b]) => {
+                    let a = self.simplify_rec(a);
+                    let b = self.simplify_rec(b);
+                    let eq = self.m.mk_formula(View::Eq(a,b));
+                    self.m.mk_formula(View::Not(eq))
                 },
                 View::Distinct(args) => {
                     // distinct(t1…tn) --> and_{i<j} t_i != t_j
@@ -167,9 +176,7 @@ impl<'a, C:Ctx> SimpStruct<'a, C> {
                     let mut args: Vec<AST> = args.iter().cloned().collect();
                     drop(view_t);
 
-                    for i in 0..args.len() {
-                        args[i] = self.simplify_rec(args[i])
-                    }
+                    for u in args.iter_mut() { *u = self.simplify_rec(*u) }
                     let mut conj = vec!();
 
                     for i in 0 .. args.len()-1 {
@@ -228,17 +235,19 @@ impl<'a, C:Ctx> SimpStruct<'a, C> {
                     }
                 },
                 View::Imply(args0) => {
-                    assert!(args0.len() >= 1);
-                    let mut args = SVec::new();
-                    flatten_conn(self.m, Conn::Imply, &mut args, args0);
-                    for u in args.iter_mut() { *u = self.simplify_rec(*u) }
+                    // transform into `or`
+                    let n = args0.len();
+                    assert!(n >= 2);
+                    let mut disj: Vec<AST> = args0.iter().cloned().collect();
+                    drop(view_t);
 
-                    let n = args.len();
-                    if self.m.is_true(args[n-1]) || args[..n-1].iter().any(|&u| self.m.is_false(u)) {
-                        self.m.mk_formula(View::Bool(true)) // shortcut
-                    } else {
-                        self.m.mk_formula(View::Imply(&args))
+                    for u in disj[.. n-1].iter_mut() {
+                        *u = self.m.mk_formula(View::Not(*u))
                     }
+
+                    let u = self.m.mk_formula(View::Or(&disj));
+                    // and simplify the disjunction as is, including flattening
+                    self.simplify_rec(u)
                 },
                 View::Ite(a,b,c) => {
                     let a = self.simplify_rec(a);
@@ -252,6 +261,7 @@ impl<'a, C:Ctx> SimpStruct<'a, C> {
                     }
                 },
             };
+            if t != u { trace!("(simp_rec :from {} :to {})", pp_ast(self.m,&t), pp_ast(self.m,&u)); }
             self.map.insert(t, u);
             u
         }
