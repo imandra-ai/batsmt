@@ -8,6 +8,7 @@ edition = "2018"
 
 log = "^0.4"
 smallvec = "0.6"
+fxhash = "^0.2.1"
 batsmt-core = {path = "../core"}
 batsmt-theory = {path = "../theory"}
 batsmt-pretty = {path = "../pretty"} # TODO: remove?

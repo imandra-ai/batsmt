@@ -39,16 +39,19 @@ mod ast_builder {
             if self.sorts.contains_key(&s) {
                 panic!("sort {:?} already declared", &s);
             } else {
-                let ast = self.m.m.mk_str(&s);
+                let ast = self.m.m.mk_str(&s, None);
                 self.sorts.insert(s, (ast, arity));
                 ast
             }
         }
     }
 
+    #[derive(Clone,Debug)]
+    pub struct Fun { f: AST, ty_ret: AST }
+
     impl<'a> parser::TermBuilder for AstBuilder<'a> {
         type Term = AST;
-        type Fun = AST;
+        type Fun = Fun;
         type Var = AST; // expand let on the fly
 
         fn var(&mut self, v: AST) -> AST { v }
@@ -65,33 +68,34 @@ mod ast_builder {
                 Not => self.b.not_,
                 Distinct => self.b.distinct,
             };
-            self.m.m.mk_app(f, args)
+            self.m.m.mk_app(f, args, Some(self.b.bool_))
         }
 
         fn declare_fun(&mut self, f: Atom, args: &[AST], ret: AST) -> Self::Fun {
             if self.funs.contains_key(&f) {
                 panic!("fun {:?} already declared", &f);
             } else {
-                let ast = self.m.m.mk_str(&*f);
+                let ty = if args.len() == 0 { Some(ret) } else { None };
+                let ast = self.m.m.mk_str(&*f, ty);
                 let args = args.iter().map(|t| t.clone()).collect();
                 self.funs.insert(f, (ast, args, ret));
-                ast
+                Fun {f: ast, ty_ret: ret}
             }
         }
 
         fn declare_cstor(&mut self, f: Atom, args: &[AST], ret: AST) -> Self::Fun {
             let f = self.declare_fun(f, args, ret);
-            self.m.set_cstor(&f);
+            self.m.set_cstor(&f.f);
             f
         }
 
         fn ite(&mut self, a: AST, b: AST, c: AST) -> AST {
             let f = self.b.ite;
-            self.m.m.mk_app(f, &[a,b,c])
+            self.m.m.mk_app(f, &[a,b,c], self.m.m.ty(&b))
         }
 
-        fn app_fun(&mut self, f: AST, args: &[AST]) -> AST {
-            self.m.m.mk_app(f, args)
+        fn app_fun(&mut self, f: Self::Fun, args: &[AST]) -> AST {
+            self.m.m.mk_app(f.f, args, Some(f.ty_ret))
         }
 
         fn bind(&mut self, _v: Atom, t: AST) -> AST { t }

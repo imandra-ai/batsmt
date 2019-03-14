@@ -34,6 +34,10 @@ pub mod manager_util {
     #[inline(always)]
     pub fn ast_from_u32(x: u32) -> AST {
         assert_ne!(x, u32::MAX, "overflow in AST creation");
+        ast_from_u32_unchecked(x)
+    }
+
+    pub const fn ast_from_u32_unchecked(x: u32) -> AST {
         AST(x)
     }
 }

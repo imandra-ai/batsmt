@@ -49,11 +49,17 @@ pub trait Manager : Sized {
     /// Is this term a constant?
     fn is_const(&self, t: &Self::AST) -> bool { self.view(t).is_const() }
 
+    /// Access the type of this term, if any.
+    ///
+    /// Logic terms tend to have types, but other ASTs (e.g. unapplied functions,
+    /// or types themselves) won't.
+    fn ty(&self, t: &Self::AST) -> Option<Self::AST>;
+
     /// Create an application.
-    fn mk_app(&mut self, f: Self::AST, args: &[Self::AST]) -> Self::AST;
+    fn mk_app(&mut self, f: Self::AST, args: &[Self::AST], ty: Option<Self::AST>) -> Self::AST;
 
     /// Create a constant from the given symbol.
-    fn mk_const<U>(&mut self, s: U) -> Self::AST
+    fn mk_const<U>(&mut self, s: U, ty: Option<Self::AST>) -> Self::AST
         where U: std::borrow::Borrow<Self::SymView> + Into<Self::SymBuilder> ;
 
     /// Special AST node that should not be confused with anything else.
@@ -94,13 +100,16 @@ mod manager {
         { self.m().view(t) }
 
         #[inline(always)]
-        fn mk_app(&mut self, f: Self::AST, args: &[Self::AST]) -> Self::AST
-        { self.m_mut().mk_app(f,args) }
+        fn mk_app(&mut self, f: Self::AST, args: &[Self::AST], ty: Option<Self::AST>) -> Self::AST
+        { self.m_mut().mk_app(f,args, ty) }
+
+        #[inline]
+        fn ty(&self, t: &Self::AST) -> Option<Self::AST> { self.m().ty(t) }
 
         #[inline(always)]
-        fn mk_const<U>(&mut self, s: U) -> Self::AST
+        fn mk_const<U>(&mut self, s: U, ty: Option<Self::AST>) -> Self::AST
             where U: std::borrow::Borrow<Self::SymView> + Into<Self::SymBuilder>
-            { self.m_mut().mk_const(s) }
+            { self.m_mut().mk_const(s, ty) }
 
         #[inline(always)]
         fn sentinel(&mut self) -> Self::AST { self.m_mut().sentinel() }

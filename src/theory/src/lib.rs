@@ -56,11 +56,32 @@ pub trait Ctx : ast_u32::ManagerU32 + BoolLitCtx {
 /// The conversion to SAT literals of the latter
 /// is done automatically and theories
 /// should not have to worry about it.
-#[derive(Eq,PartialEq)]
 pub enum TheoryLit<C:Ctx> {
     T(C::AST, bool), // theory lit
     BLazy(C::AST, bool), // to be turned into B
     B(C::B),
+}
+
+impl<C:Ctx> Eq for TheoryLit<C> {}
+impl<C:Ctx> PartialEq for TheoryLit<C> {
+    fn eq(&self, other: &TheoryLit<C>) -> bool {
+        match (self, other) {
+            (TheoryLit::T(t1,s1), TheoryLit::T(t2,s2)) => t1 == t2 && s1 == s2,
+            (TheoryLit::BLazy(t1,s1), TheoryLit::BLazy(t2,s2)) => t1 == t2 && s1 == s2,
+            (TheoryLit::B(b1), TheoryLit::B(b2)) => b1 == b2,
+            _ => false,
+        }
+    }
+}
+
+impl<C:Ctx> std::hash::Hash for TheoryLit<C> {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        match self {
+            TheoryLit::T(t1,s1) => { "t".hash(h); t1.hash(h); s1.hash(h); }
+            TheoryLit::BLazy(t1,s1) => { "b".hash(h); t1.hash(h); s1.hash(h); },
+            TheoryLit::B(b1) => { "b".hash(h); b1.hash(h); },
+        }
+    }
 }
 
 /// A temporary theory-level clause, such as a lemma or theory conflict.

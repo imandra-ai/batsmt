@@ -42,6 +42,7 @@ struct AppStored<'a> {
     f: AST,
     len: u16,
     args: ArrOrVec<AST>,
+    ty: AST,
     phantom: PhantomData<&'a ()>,
 }
 
@@ -64,7 +65,7 @@ fn check_len_u16(len: usize) {
 }
 
 impl AppStored<'static> {
-    pub fn new(f: AST, args: &[AST]) -> Self {
+    pub fn new(f: AST, args: &[AST], ty: AST) -> Self {
         let len = args.len();
         check_len_u16(len);
 
@@ -87,7 +88,7 @@ impl AppStored<'static> {
             };
         let r = AppStored {
             f, len: len as u16, args: new_args,
-            phantom: PhantomData,
+            ty, phantom: PhantomData,
         };
         debug_assert_eq!(r.args(), args, "expected {:?} got {:?}", args, r.args());
         r
@@ -95,7 +96,7 @@ impl AppStored<'static> {
 
     pub(crate) const SENTINEL : Self =
         AppStored {
-            f: AST::SENTINEL, len: 0, phantom: PhantomData,
+            f: AST::SENTINEL, len: 0, phantom: PhantomData, ty: AST::SENTINEL,
             args: ArrOrVec{ arr: [AST::SENTINEL; N_SMALL_APP] }
         };
 
@@ -128,7 +129,7 @@ impl<'a> AppStored<'a> {
     }
 
     // Temporary-lived key, borrowing the given slice
-    fn mk_ref(f: AST, args: &[AST]) -> Self {
+    fn mk_ref(f: AST, args: &[AST], ty: AST) -> Self {
         let len = args.len();
         check_len_u16(len);
         let new_args =
@@ -140,7 +141,7 @@ impl<'a> AppStored<'a> {
                 ArrOrVec{ptr: args.as_ptr()}
             };
         let r = AppStored {
-            f, len: len as u16, args: new_args,
+            f, len: len as u16, args: new_args, ty,
             phantom: PhantomData,
         };
         debug_assert_eq!(r.args(), args, "expected {:?} got {:?}", args, r.args());
@@ -148,7 +149,7 @@ impl<'a> AppStored<'a> {
     }
 
     fn to_owned(self) -> AppStored<'static> {
-        AppStored::new(self.f, self.args())
+        AppStored::new(self.f, self.args(), self.ty)
     }
 }
 
@@ -307,10 +308,17 @@ impl<T: Clone> ManagedVec<T> {
     }
 }
 
+/// A constant stored in the vector
+#[derive(Clone)]
+struct ConstStored<S:Clone> {
+    sym: S,
+    ty: AST,
+}
+
 /// The AST manager, responsible for storing and creating AST nodes
 pub struct HManager<S:SymbolManager> {
     apps: ManagedVec<AppStored<'static>>,
-    consts: ManagedVec<S::Ref>,
+    consts: ManagedVec<ConstStored<S::Ref>>,
     tbl_app: FxHashMap<AppStored<'static>, AST>, // hashconsing of applications
     sym_m: S,
     gc_stack: Vec<AST>, // temporary vector for GC marking
@@ -326,7 +334,7 @@ impl<S:SymbolManager> Manager for HManager<S> {
         if ast_is_app(t) {
             self.apps[ast_idx(t) as usize].view::<S>()
         } else if ast_is_const(t) {
-            let view = self.sym_m.view(self.consts[ast_idx(t) as usize]);
+            let view = self.sym_m.view(self.consts[ast_idx(t) as usize].sym);
             AstView::Const(view)
         } else {
             debug_assert!(ast_is_idx(t));
@@ -340,15 +348,27 @@ impl<S:SymbolManager> Manager for HManager<S> {
     #[inline(always)]
     fn is_const(&self, &t: &AST) -> bool { ast_is_const(t) }
 
+    fn ty(&self, &t: &AST) -> Option<AST> {
+        let ty = if ast_is_app(t) {
+            self.apps[ast_idx(t) as usize].ty
+        } else if ast_is_const(t) {
+            self.consts[ast_idx(t) as usize].ty
+        } else {
+            AST::SENTINEL
+        };
+        if ty == AST::SENTINEL { None } else { Some(ty) }
+    }
+
     /// `m.mk_app(f, args)` creates the application of `f` to `args`.
     ///
     /// If the term is structurally equal to an existing term, then this
     /// ensures the exact same AST is returned ("hashconsing").
     /// If `args` is empty, return `f`.
-    fn mk_app(&mut self, f: AST, args: &[AST]) -> AST {
+    fn mk_app(&mut self, f: AST, args: &[AST], ty: Option<AST>) -> AST {
         if args.len() == 0 { return f }
 
-        let k = AppStored::mk_ref(f, args);
+        let ty = ty.unwrap_or(AST::SENTINEL);
+        let k = AppStored::mk_ref(f, args, ty);
 
         // borrow multiple fields
         let HManager {apps, tbl_app, ..} = self;
@@ -375,12 +395,13 @@ impl<S:SymbolManager> Manager for HManager<S> {
     /// will result in two distinct ASTs (as if the second one
     /// was shadowing the first). Use an auxiliary hashtable if
     /// you want sharing.
-    fn mk_const<U>(&mut self, s: U) -> AST
+    fn mk_const<U>(&mut self, s: U, ty: Option<AST>) -> AST
         where U: std::borrow::Borrow<Self::SymView> + Into<Self::SymBuilder>
     {
+        let ty = ty.unwrap_or(AST::SENTINEL);
         let r = self.sym_m.build(s);
         let (n, slot) = self.consts.allocate_id();
-        *slot = r;
+        *slot = ConstStored{sym: r, ty};
         mk_ast_const(n)
     }
 
@@ -395,7 +416,7 @@ impl<S:SymbolManager> HManager<S> {
         let sym_m = S::new();
         HManager {
             apps: ManagedVec::new(AppStored::SENTINEL),
-            consts: ManagedVec::new(sym_m.sentinel()),
+            consts: ManagedVec::new(ConstStored{sym: sym_m.sentinel(), ty: AST::SENTINEL}),
             tbl_app,
             sym_m,
             gc_stack: Vec::new(),
@@ -448,7 +469,11 @@ impl<S:SymbolManager> HManager<S> {
                 let app = &self.apps[ast_idx(ast) as usize];
                 // explore subterms, too
                 self.gc_stack.push(app.f);
+                self.gc_stack.push(app.ty);
                 for &a in app.args() { self.gc_stack.push(a) };
+            } else if ast_is_app(ast) {
+                let c = &self.consts[ast_idx(ast) as usize];
+                self.gc_stack.push(c.ty);
             }
         }
     }
@@ -466,7 +491,7 @@ impl<S:SymbolManager> HManager<S> {
         });
 
         count += consts.gc_retain_roots(|s| {
-            sym_m.free(s)
+            sym_m.free(s.sym)
         });
         count
     }
@@ -492,8 +517,8 @@ impl<'a, S> HManager<S>
           &'a str: std::borrow::Borrow<S::View>
 {
     /// Make a symbol node from a string
-    pub fn mk_str(&mut self, s: &'a str) -> AST {
-        self.mk_const(s)
+    pub fn mk_str(&mut self, s: &'a str, ty: Option<AST>) -> AST {
+        self.mk_const(s, ty)
     }
 }
 
@@ -503,8 +528,8 @@ impl<S> HManager<S>
           String: std::borrow::Borrow<S::View>
 {
     /// Make a symbol node from a owned string
-    pub fn mk_string(&mut self, s: String) -> AST {
-        self.mk_const(s)
+    pub fn mk_string(&mut self, s: String, ty: Option<AST>) -> AST {
+        self.mk_const(s, ty)
     }
 }
 

@@ -67,7 +67,11 @@ fn main() -> Result<(), Box<Error>> {
         // process statement
         match s {
             Statement::Assert(t) => {
-                let cs = tseitin.clauses(&mut c, solver.lit_map_mut(), *t);
+                let (cs, lits) = tseitin.clauses(&mut c, solver.lit_map_mut(), *t);
+                for lit in lits {
+                    trace!("add side lit {}", pp::pp1(lit, &c));
+                    solver.add_lit(&mut c, lit.clone());
+                }
                 for clause in cs {
                     solver.add_clause(&mut c, clause);
                 }

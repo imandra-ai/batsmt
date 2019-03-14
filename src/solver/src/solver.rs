@@ -175,6 +175,12 @@ mod solver {
             lm.get_term_or_else(ctx, &t, true, bidir, f)
         }
 
+        /// Declare the given literal, so it's decided by the SAT solver.
+        pub fn add_lit(&mut self, m: &C, lit: TheoryLit<C>) {
+            let blit = self.s0.get_or_create_lit(m, lit);
+            trace!("solver.add-th-lit\n{}\nas {:?}", lit.pp(m), blit);
+        }
+
         /// Add a clause made from signed terms.
         pub fn add_clause(&mut self, m: &C, c: TheoryClauseRef<C>) {
             trace!("solver.add-clause\n{}", c.pp(m));

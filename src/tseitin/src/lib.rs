@@ -11,6 +11,7 @@ use {
         ast_u32::{self, AST, }, gc, AstView,
         ast::{self, AstMap, iter_dag::State as AstIter},
     },
+    fxhash::FxHashSet,
     batsmt_theory::{
         self as theory, TheoryLit, TheoryClauseSet, TheoryClauseRef,
         LitMap, pp_ast, },
@@ -18,6 +19,7 @@ use {
 
 /// A boolean-centric view of formulas.
 pub enum View<'a, AST> {
+    TyBool,
     Bool(bool),
     Not(AST),
     And(&'a [AST]),
@@ -76,6 +78,7 @@ pub struct Tseitin<C:Ctx> {
     tmp2: Vec<TheoryLit<C>>, // temp clause
     tmp_ast: Vec<AST>, // for arguments
     cs: TheoryClauseSet<C>, // clauses
+    lits: FxHashSet<TheoryLit<C>>, // lits
 }
 
 /// Temporary structure
@@ -109,6 +112,7 @@ impl<'a,C,LM> LitMapB<'a,C,LM>
             View::Distinct(..) => {
                 TheoryLit::new_b(t,sign) // encoded away
             },
+            View::TyBool => panic!("type bool doesn't map to a literal"),
             View::Not(..) => panic!("should not have a negation"), // unfold-not
             View::Atom(..) | View::Eq(..) | View::Ite(..) => {
                 // theory literal
@@ -160,7 +164,7 @@ impl<'a, C:Ctx> SimpStruct<'a, C> {
             //trace!("simplify-rec {}", pp::pp1(self.m, &t));
             let view_t = self.m.view_as_formula(t);
             let u = match view_t {
-                View::Bool(..) => t,
+                View::Bool(..) | View::TyBool => t,
                 View::Distinct(&[_]) => {
                     self.m.mk_formula(View::Bool(true))
                 },
@@ -202,7 +206,7 @@ impl<'a, C:Ctx> SimpStruct<'a, C> {
                             let mut args: SVec<AST> = args.iter().cloned().collect();
                             let f = self.simplify_rec(*f);
                             for u in args.iter_mut() { *u = self.simplify_rec(*u) }
-                            self.m.mk_app(f, &args[..])
+                            self.m.mk_app(f, &args[..], self.m.ty(&t))
                         }
                     }
                 },
@@ -268,6 +272,18 @@ impl<'a, C:Ctx> SimpStruct<'a, C> {
     }
 }
 
+/// Boolean-typed term?
+fn has_ty_bool<C:Ctx>(c: &C, t: &AST) -> bool {
+    match c.ty(t) {
+        Some(b) =>
+            match c.view_as_formula(b) {
+                View::TyBool => true,
+                _ => false
+            },
+        None => false
+    }
+}
+
 impl<C> Tseitin<C> where C: Ctx {
     /// Create a new Tseitin transformation
     pub fn new() -> Self {
@@ -275,6 +291,7 @@ impl<C> Tseitin<C> where C: Ctx {
             tmp: Vec::new(),
             tmp2: Vec::new(),
             tmp_ast: vec!(),
+            lits: FxHashSet::default(),
             iter: ast::iter_dag::new(),
             simp_map: ast::HashMap::new(),
             cs: TheoryClauseSet::new(),
@@ -299,20 +316,20 @@ impl<C> Tseitin<C> where C: Ctx {
         u
     }
 
-    /// `tseitin.clauses(t)` turns the boolean term `t` into a set of clauses.
+    /// `tseitin.clauses(t)` turns the boolean term `t` into a set of clauses and literals.
     ///
     /// The clauses define boolean connectives occurring inside `t`.
     /// ## params
     /// - `t` is the formula to normalize
     pub fn clauses<LM>(
         &mut self, m: &mut C, lit_map: &mut LM, t: AST
-    ) -> impl Iterator<Item=TheoryClauseRef<C>>
+    ) -> (impl Iterator<Item=TheoryClauseRef<C>>, impl Iterator<Item=&TheoryLit<C>>)
         where LM: LitMap<C::B>
     {
         // first, simplify to flatten connectives and remove `distinct`
         let t = self.simplify(m, t);
 
-        let Tseitin { tmp_ast: args, cs, tmp, tmp2, ..} = self;
+        let Tseitin { tmp_ast: args, cs, lits: all_lits, tmp, tmp2, ..} = self;
         cs.clear();
 
         // traverse `t` as a DAG
@@ -322,9 +339,23 @@ impl<C> Tseitin<C> where C: Ctx {
             args.clear();
             tmp.clear();
             match view_u {
-                View::Atom(_) => return,
-                View::Not(_) => return,
-                View::Eq(..) => return,
+                View::TyBool => (),
+                View::Atom(_) => {
+                    drop(view_u);
+                    if has_ty_bool(m, u) {
+                        // map to a literal
+                        let lit = TheoryLit::new_t(*u, true);
+                        all_lits.insert(lit);
+                    }
+                }, 
+                View::Not(a) => {
+                    let lit = TheoryLit::new_t(a, true);
+                    all_lits.insert(lit);
+                },
+                View::Eq(..) => {
+                    let lit = TheoryLit::new_t(*u, true);
+                    all_lits.insert(lit);
+                },
                 View::Bool(true) => {
                     cs.push(&[TheoryLit::new_b(*u, true)]) // clause [true]
                 },
@@ -335,7 +366,7 @@ impl<C> Tseitin<C> where C: Ctx {
                 View::Ite(a,_,_) => {
                     let mut lmb = LitMapB{lit_map, m};
                     let lit = lmb.term_to_lit(&a);
-                    cs.push(&[lit, !lit]); // trivial, but will force `lit` to be decided on
+                    all_lits.insert(lit);
                 },
                 View::And(args2) => {
                     args.extend_from_slice(args2);
@@ -422,7 +453,7 @@ impl<C> Tseitin<C> where C: Ctx {
             self.cs.push(&[top_lit]);
         }
 
-        self.cs.iter()
+        (self.cs.iter(), self.lits.iter())
     }
 
 }

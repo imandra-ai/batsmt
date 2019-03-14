@@ -70,6 +70,7 @@ pub mod ctx {
         fn view_as_formula(&self, t: AST) -> FView<AST> {
             if t == self.b.true_ { tseitin::View::Bool(true) }
             else if t == self.b.false_ { tseitin::View::Bool(false) }
+            else if t == self.b.bool_ { tseitin::View::TyBool }
             else {
                 match self.m.view(&t) {
                     AstView::Const(_) | AstView::Index(..) => FView::Atom(t),
@@ -102,36 +103,38 @@ pub mod ctx {
             }
         }
         fn mk_formula(&mut self, v: FView<AST>) -> AST {
+            let sb = Some(self.b.bool_);
             match v {
                 FView::Atom(t) => t,
+                FView::TyBool => self.b.bool_,
                 FView::Bool(true) => self.b.true_,
                 FView::Bool(false) => self.b.false_,
                 FView::Eq(t,u) if t == u => self.b.true_,
-                FView::Eq(t,u) => self.m.mk_app(self.b.eq, &[t, u]),
-                FView::Distinct(args) => self.m.mk_app(self.b.distinct, args),
-                FView::Ite(a,b,c) => self.m.mk_app(self.b.ite, &[a,b,c]),
+                FView::Eq(t,u) => self.m.mk_app(self.b.eq, &[t, u], sb),
+                FView::Distinct(args) => self.m.mk_app(self.b.distinct, args, sb),
+                FView::Ite(a,b,c) => self.m.mk_app(self.b.ite, &[a,b,c], self.m.ty(&b)),
                 FView::Not(t) => {
                     match self.view_as_formula(t) {
                         FView::Bool(true) => self.b.false_,
                         FView::Bool(false) => self.b.true_,
                         FView::Not(u) => u,
-                        _ => self.m.mk_app(self.b.not_, &[t]),
+                        _ => self.m.mk_app(self.b.not_, &[t], sb),
                     }
                 },
                 FView::And(args) => {
                     if args.len() == 0 { self.b.true_ }
                     else if args.len() == 1 { args[0] }
-                    else { self.m.mk_app(self.b.and_, args) }
+                    else { self.m.mk_app(self.b.and_, args, sb) }
                 },
                 FView::Or(args) => {
                     if args.len() == 0 { self.b.false_ }
                     else if args.len() == 1 { args[0] }
-                    else { self.m.mk_app(self.b.or_, args) }
+                    else { self.m.mk_app(self.b.or_, args, sb) }
                 },
                 FView::Imply(args) => {
                     assert_ne!(args.len(), 0);
                     if args.len() == 1 { args[0] }
-                    else { self.m.mk_app(self.b.imply_, args) }
+                    else { self.m.mk_app(self.b.imply_, args, sb) }
                 },
             }
         }
@@ -230,17 +233,18 @@ mod builtins {
     impl Builtins {
         /// New builtins structure.
         pub(super) fn new(m: &mut M) -> Self {
+            let bool_ = m.mk_str("Bool", None);
             Builtins {
-                ite: m.mk_str("ite"),
-                bool_: m.mk_str("Bool"),
-                true_: m.mk_str("true"),
-                false_: m.mk_str("false"),
-                eq: m.mk_str("="),
-                and_: m.mk_str("and"),
-                or_: m.mk_str("or"),
-                imply_: m.mk_str("=>"),
-                not_: m.mk_str("not"),
-                distinct: m.mk_str("distinct"),
+                ite: m.mk_str("ite", None),
+                bool_,
+                true_: m.mk_str("true", Some(bool_)),
+                false_: m.mk_str("false", Some(bool_)),
+                eq: m.mk_str("=", None),
+                and_: m.mk_str("and", None),
+                or_: m.mk_str("or", None),
+                imply_: m.mk_str("=>", None),
+                not_: m.mk_str("not", None),
+                distinct: m.mk_str("distinct", None),
             }
         }
     }
