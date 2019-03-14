@@ -13,6 +13,7 @@ pub enum CCView<'a,Fun,AST> {
     Apply(&'a Fun, &'a [AST]),
     ApplyHO(&'a AST, &'a [AST]),
     Eq(&'a AST, &'a AST),
+    Not(&'a AST),
     Distinct(&'a [AST]),
     Opaque(&'a AST), // a foreign term
 }
@@ -22,6 +23,7 @@ impl<'a,Fun,AST> CCView<'a,Fun,AST> {
     pub fn iter_subterms<F>(&self, mut f: F) where F: FnMut(&'a AST) {
         match self {
             CCView::Bool(_) | CCView::Opaque(..) => (),
+            CCView::Not(a) => f(a),
             CCView::Eq(a,b) => {
                 f(a);
                 f(b);
@@ -40,7 +42,8 @@ impl<'a,Fun,AST> CCView<'a,Fun,AST> {
     pub(crate) fn needs_sig(&self) -> bool {
         match self {
             CCView::Opaque(..) | CCView::Bool(..) => false,
-            CCView::Eq(..) | CCView::Apply(_, ..) | CCView::Distinct(..) | CCView::ApplyHO(..) => true,
+            CCView::Not(..) | CCView::Eq(..) | CCView::Apply(_, ..)
+            | CCView::Distinct(..) | CCView::ApplyHO(..) => true,
         }
     }
 }

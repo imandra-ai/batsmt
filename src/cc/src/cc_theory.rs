@@ -40,10 +40,11 @@ impl<C:Ctx, Th: MicroTheory<C>> CCTheory<C, Th> {
 
         // update congruence closure
         for (ast,sign,lit) in trail.iter() {
-            // convert `ast is {true,false}` into a merge/distinct op
+            // convert `ast is {true,false}` into merge ops
             match m.view_as_cc_term(&ast) {
                 CCView::Eq(a,b) => {
                     if sign {
+                        // `a=b`
                         self.cc.merge(m, *a, *b, lit);
                     } else {
                         // `(a=b)=false`
@@ -58,12 +59,10 @@ impl<C:Ctx, Th: MicroTheory<C>> CCTheory<C, Th> {
                     let args = SVec8::from_slice(args);
                     self.cc.distinct(m, &args, lit)
                 },
-                _ if sign => {
-                    self.cc.merge(m, ast, m.get_bool_term(true), lit)
-                },
                 _ => {
-                    self.cc.merge(m, ast, m.get_bool_term(false), lit)
-                }
+                    let u = m.get_bool_term(sign);
+                    self.cc.merge(m, ast, u, lit)
+                },
             }
 
             done_sth = true;

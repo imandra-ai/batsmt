@@ -228,7 +228,6 @@ pub struct Signature<F> {
 impl<C:Ctx, Th: MicroTheory<C>> CCInterface<C> for CC<C, Th> {
     fn merge(&mut self, m: &mut C, t1: C::AST, t2: C::AST, lit: C::B) {
         debug!("merge {} and {} (expl {:?})", pp_t(m,&t1), pp_t(m,&t2), lit);
-        // FIXME debug!("merge {} and {} (expl {:?})", pp_term(m,&t1), pp_term(m,&t2), lit);
         let n1 = self.add_term(m, t1);
         let n2 = self.add_term(m, t2);
         let expl = Expl::Lit(lit);
@@ -237,12 +236,6 @@ impl<C:Ctx, Th: MicroTheory<C>> CCInterface<C> for CC<C, Th> {
 
     fn distinct(&mut self, _m: &mut C, _ts: &[C::AST], _lit: C::B) {
         unimplemented!("distinct is not supported yet")
-        /*
-        let mut v = SVec::with_capacity(ts.len());
-        v.extend_from_slice(ts);
-        let expl = Expl::Lit(lit);
-        self.tasks.push_back(Task::Distinct(v,expl))
-        */
     }
 
     fn add_literal(&mut self, m: &mut C, t: C::AST, lit: C::B) {
@@ -665,6 +658,17 @@ impl<'a, C:Ctx> UpdateSigPhase<'a,C> {
                 if cc1.nodes.is_eq(a,b) {
                     trace!("merge {} with true by eq-rule", pp_t(m,&t));
                     let expl = Expl::AreEq(a,b);
+                    combine.push((n, cc1.nodes.n_true, expl))
+                }
+                false
+            },
+            CCView::Not(a) => {
+                let a = cc1.nodes.get_term_id(a);
+                if cc1.is_eq(a, cc1.nodes.n_true) {
+                    let expl = Expl::AreEq(a, cc1.nodes.n_true);
+                    combine.push((n, cc1.nodes.n_false, expl))
+                } else if cc1.is_eq(a, cc1.nodes.n_false) {
+                    let expl = Expl::AreEq(a, cc1.nodes.n_false);
                     combine.push((n, cc1.nodes.n_true, expl))
                 }
                 false

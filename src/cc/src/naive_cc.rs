@@ -214,6 +214,10 @@ impl<'a, C:Ctx> Solve<'a, C> {
                     }
                     self.update_term(&t);
                 },
+                CCView::Not(&a) => {
+                    self.add_term(a);
+                    self.parents.get_mut(&self.find(a)).unwrap().push(t);
+                },
                 CCView::Eq(a,b) => {
                     for &&u in [a,b].iter() {
                         self.add_term(u);
@@ -363,6 +367,10 @@ impl<'a, C:Ctx> Solve<'a, C> {
             CCView::ApplyHO(f, args) => {
                 self.update_term_with_args(t, &[*f]);
                 self.update_term_with_args(t, args)
+            },
+            CCView::Not(a) => {
+                if self.is_eq(a, &self.true_) { self.push_congruence(*t, self.false_) }
+                else if self.is_eq(a, &self.false_) { self.push_congruence(*t, self.true_) }
             },
             CCView::Eq(a,b) => {
                 if self.is_eq(a,b) {
