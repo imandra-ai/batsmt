@@ -118,6 +118,7 @@ dependencies = [
  "batsmt-core 0.1.0",
  "batsmt-pretty 0.1.0",
  "batsmt-theory 0.1.0",
+ "fxhash 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "smallvec 0.6.9 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
