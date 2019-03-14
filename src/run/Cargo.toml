@@ -18,3 +18,4 @@ log = "^0.4"
 batsmt-logger = {path = "../logger"}
 fxhash = "0.2"
 bit-set = "0.5.0"
+jemallocator = "0.1.8"

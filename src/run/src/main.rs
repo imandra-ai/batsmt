@@ -21,6 +21,9 @@ pub use {
     crate::ctx::{M, Ctx, Builtins},
 };
 
+#[global_allocator]
+static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 fn main() -> Result<(), Box<Error>> {
     batsmt_logger::init();
     let chrono = Chrono::new();
@@ -87,3 +90,4 @@ fn main() -> Result<(), Box<Error>> {
 
     Ok(())
 }
+
