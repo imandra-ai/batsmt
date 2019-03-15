@@ -99,7 +99,7 @@ impl<'a,C,LM> LitMapB<'a,C,LM>
                 TheoryLit::new_b(t, sign)
             },
             View::And(..) | View::Or(..) | View::Imply(..) => {
-                TheoryLit::new_b(t, sign)
+                TheoryLit::new_t(t, sign)
             },
             View::Distinct(args) if args.len() == 2 => {
                 // turn `distinct(a,b)` into `!(a=b)`
