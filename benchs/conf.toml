@@ -5,7 +5,7 @@ default_expect = "sat"
 
 [batsmt]
 
-binary = "./batsmt.sh"
+binary = "./target/release/batsmt-run"
 # TODO: timeout
 cmd = "./batsmt.sh $file"
 unsat = "^UNSAT"
