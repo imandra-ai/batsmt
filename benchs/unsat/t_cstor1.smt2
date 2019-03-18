@@ -1,5 +1,6 @@
 
 ; test for constructors
+; :status unsat
 
 (declare-sort nat 0)
 (declare-cstor zero () nat)
