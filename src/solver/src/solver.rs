@@ -31,10 +31,10 @@ struct CoreTheory<C: Ctx<B=BLit>, Th: Theory<C>> {
 struct TheoryTmp<'a, C: Ctx<B=BLit>, Th: Theory<C>>(&'a mut CoreTheory<C,Th>, &'a mut C);
 
 /// Temporary structure passed to the theory.
-struct TmpAct<'a, A: sat::TheoryArgument> {
+struct TmpAct<'a, 'b: 'a> {
     ok: bool,
     stats: &'a mut theory::Stats,
-    acts: &'a mut A,
+    acts: &'a mut sat::theory::TheoryArg<'b>,
     lits: &'a mut Vec<sat::Lit>,
     lit_map: &'a mut SatLitMap,
 }
@@ -297,8 +297,7 @@ mod solver {
         }
 
         // internal checking
-        fn check<A>(&mut self, m: &mut C, partial: bool, a: &mut A)
-            where A: sat::theory::TheoryArgument
+        fn check<'a>(&mut self, m: &mut C, partial: bool, a: &mut sat::theory::TheoryArg<'a>)
         {
             // no need to parse the trail or do anything, if the theory doesn't support partial
             // checks
@@ -371,15 +370,11 @@ mod solver {
         }
 
         // main check
-        fn final_check<A>(&mut self, a: &mut A)
-            where A: sat::theory::TheoryArgument
-        {
+        fn final_check(&mut self, a: &mut sat::theory::TheoryArg) {
             self.0.check(self.1, false, a)
         }
 
-        fn partial_check<A>(&mut self, a: &mut A)
-            where A: sat::theory::TheoryArgument
-        {
+        fn partial_check(&mut self, a: &mut sat::theory::TheoryArg) {
             self.0.check(self.1, true, a)
         }
 
@@ -442,9 +437,8 @@ mod solver {
     }
 }
 
-impl<'a,C,A> theory::Actions<C> for TmpAct<'a,A>
-    where C: Ctx<B=BLit>,
-          A: sat::TheoryArgument
+impl<'a,'b,C> theory::Actions<C> for TmpAct<'a,'b>
+    where C: Ctx<B=BLit>
 {
     #[inline(always)]
     fn propagate(&mut self, b: C::B) -> bool {
