@@ -48,18 +48,18 @@ mod test_ast {
     #[test]
     fn test_mk_str() {
         let mut m = M::new();
-        let a = m.mk_str("a");
-        let b = m.mk_str("b");
+        let a = m.mk_str("a", None);
+        let b = m.mk_str("b", None);
         assert_ne!(a,b);
-        let a2 = m.mk_str("a");
+        let a2 = m.mk_str("a", None);
         assert_ne!(a,a2);
     }
 
     #[test]
     fn test_view_const() {
         let mut m = M::new();
-        let a = m.mk_str("a");
-        let b = m.mk_str("b");
+        let a = m.mk_str("a", None);
+        let b = m.mk_str("b", None);
         assert!(match m.view(&a) { View::Const(s) => s == "a", _ => false });
         assert!(match m.view(&b) { View::Const(s) => s == "b", _ => false });
     }
@@ -67,23 +67,23 @@ mod test_ast {
     #[test]
     fn test_mk_fun() {
         let mut m = M::new();
-        let f = m.mk_str("f");
-        let g = m.mk_str("g");
-        let a = m.mk_str("a");
-        let b = m.mk_str("b");
-        let t1 = m.mk_app(f, &[a,b]);
-        let t2 = m.mk_app(f, &[a,b]);
-        let t3 = m.mk_app(f, &[b,a]);
-        let t4 = m.mk_app(g, &[t1]);
-        let t5 = m.mk_app(g, &[t2]);
+        let f = m.mk_str("f", None);
+        let g = m.mk_str("g", None);
+        let a = m.mk_str("a", None);
+        let b = m.mk_str("b", None);
+        let t1 = m.mk_app(f, &[a,b], None);
+        let t2 = m.mk_app(f, &[a,b], None);
+        let t3 = m.mk_app(f, &[b,a], None);
+        let t4 = m.mk_app(g, &[t1], None);
+        let t5 = m.mk_app(g, &[t2], None);
         assert_eq!(t1,t2);
         assert_ne!(t1,t3);
         assert_ne!(t2,t3);
         assert_eq!(t4,t5);
 
-        let t10 = m.mk_app(f, &[a; 10]);
-        let t11 = m.mk_app(f, &[a; 10]);
-        let t12 = m.mk_app(f, &[b; 10]);
+        let t10 = m.mk_app(f, &[a; 10], None);
+        let t11 = m.mk_app(f, &[a; 10], None);
+        let t12 = m.mk_app(f, &[b; 10], None);
         assert_eq!(t10,t11);
         assert_ne!(t10,t12);
     }
@@ -91,26 +91,26 @@ mod test_ast {
     #[test]
     fn test_const_not_hashconsing() {
         let mut m = M::new();
-        let a1 = m.mk_str("a");
-        let a2 = m.mk_str("a");
+        let a1 = m.mk_str("a", None);
+        let a2 = m.mk_str("a", None);
         assert_ne!(a1, a2);
     }
 
     #[test]
     fn test_view() {
         let mut m = M::new();
-        let f = m.mk_str("f");
-        let g = m.mk_str("g");
-        let a = m.mk_str("a");
-        let b = m.mk_str("b");
-        let t1 = m.mk_app(f, &[a,b]);
-        let t2 = m.mk_app(f, &[b,a]);
-        let t4 = m.mk_app(g, &[t1]);
+        let f = m.mk_str("f", None);
+        let g = m.mk_str("g", None);
+        let a = m.mk_str("a", None);
+        let b = m.mk_str("b", None);
+        let t1 = m.mk_app(f, &[a,b], None);
+        let t2 = m.mk_app(f, &[b,a], None);
+        let t4 = m.mk_app(g, &[t1], None);
         assert!(match m.view(&t1) { View::App{f:f2, args} => *f2 == f && args==&[a,b], _ => false });
         assert!(match m.view(&t2) { View::App{f:f2, args} => *f2 == f && args==&[b,a], _ => false });
         assert!(match m.view(&t4) { View::App{f:f2, args} => *f2 == g && args==&[t1], _ => false });
-        let t10 = m.mk_app(f, &[a; 10]);
-        let t11 = m.mk_app(f, &[b; 10]);
+        let t10 = m.mk_app(f, &[a; 10], None);
+        let t11 = m.mk_app(f, &[b; 10], None);
         assert!(match m.view(&t10) { View::App{f:f2, args} => *f2 == f && args==&[a;10], _ => false });
         assert!(match m.view(&t11) { View::App{f:f2, args} => *f2 == f && args==&[b;10], _ => false });
     }
@@ -143,19 +143,19 @@ mod test_ast {
             while terms.len () < s.n {
                 for &t1 in terms[i..].iter() {
                     for &t2 in terms.iter() {
-                        let t = m.mk_app(f, &[t1,t2]);
+                        let t = m.mk_app(f, &[t1,t2], None);
                         tmp.push(t);
                         n_app_created += 1;
-                        let t = m.mk_app(g, &[t1,t2]);
+                        let t = m.mk_app(g, &[t1,t2], None);
                         tmp.push(t);
                         n_app_created += 1;
                     }
 
                     if s.long_apps {
-                        let t = m.mk_app(f, &[t1; 5]);
+                        let t = m.mk_app(f, &[t1; 5], None);
                         tmp.push(t);
                         n_app_created += 1;
-                        let t = m.mk_app(g, &[t1; 5]);
+                        let t = m.mk_app(g, &[t1; 5], None);
                         tmp.push(t);
                         n_app_created += 1;
                     }
@@ -179,10 +179,10 @@ mod test_ast {
     impl StressApp {
         fn new(n: usize) -> Self {
             let mut m = M::new();
-            let f = m.mk_str("f");
-            let g = m.mk_str("g");
-            let a = m.mk_str("a");
-            let b = m.mk_str("b");
+            let f = m.mk_str("f", None);
+            let g = m.mk_str("g", None);
+            let a = m.mk_str("a", None);
+            let b = m.mk_str("b", None);
             let terms = vec![a,b];
             StressApp{n, long_apps: false, verbose: false, f, g, a, b, m, terms, }
         }
@@ -226,9 +226,9 @@ mod test_ast {
             let a = alive[8]; // last terms, their application should be dead
             let b = alive[9];
             assert_ne!(a,b);
-            let t1 = m.mk_app(f, &[a,b]);
-            let t2 = m.mk_app(f, &[a,b]);
-            let t3 = m.mk_app(f, &[b,a]);
+            let t1 = m.mk_app(f, &[a,b], None);
+            let t2 = m.mk_app(f, &[a,b], None);
+            let t3 = m.mk_app(f, &[b,a], None);
             assert_eq!(t1, t2);
             assert_ne!(t1, t3);
             s.terms.push(t1);
@@ -343,14 +343,14 @@ mod ast_prop {
             })))
         }
         fn app(&self, f: AST, args: &[AST]) -> AST {
-            self.0.borrow_mut().m.mk_app(f, args)
+            self.0.borrow_mut().m.mk_app(f, args, None)
         }
         fn string(&self, s: String) -> AST {
             let mut c = self.0.borrow_mut();;
             match c.consts.get(&s) {
                 Some(t) => *t,
                 None => {
-                    let t = c.m.mk_string(s.clone());
+                    let t = c.m.mk_string(s.clone(), None);
                     c.consts.insert(s, t);
                     t
                 }
@@ -415,7 +415,7 @@ mod ast_prop {
                 match view {
                     ast::View::Const(()) | ast::View::Index(..) => *u,
                     ast::View::App{f, args} => {
-                        m.mk_app(*f, args)
+                        m.mk_app(*f, args, None)
                     },
                 }
             });

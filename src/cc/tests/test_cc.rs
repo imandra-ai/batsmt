@@ -48,9 +48,11 @@ mod term_lit {
 
 #[derive(Copy,Clone,Debug)]
 struct Builtins {
+    bool_: AST,
     true_: AST,
     false_: AST,
     eq: AST,
+    ty_u: AST, // default type for everyone
 }
 
 struct Ctx{
@@ -138,19 +140,19 @@ mod prop_cc {
     }
 
     impl AstGenCell {
-        fn string(&mut self, s: String) -> AST {
+        fn string(&mut self, s: String, ty: Option<AST>) -> AST {
             let c = &self.consts;
             match c.get(&s) {
                 Some(t) => *t,
                 None => {
-                    let t = self.m.m_mut().mk_string(s.clone());
+                    let t = self.m.m_mut().mk_string(s.clone(), ty);
                     drop(c); // before the borrow
                     self.consts.insert(s, t);
                     t
                 }
             }
         }
-        fn str(&mut self, s: &str) -> AST { self.string(s.to_string()) }
+        fn str(&mut self, s: &str, ty: Option<AST>) -> AST { self.string(s.to_string(), ty) }
         fn b(&self) -> Builtins { self.b.unwrap() }
     }
 
@@ -160,17 +162,22 @@ mod prop_cc {
             let m = Ctx{m, b:None};
             let mut cell = AstGenCell { m, consts, b: None };
             // make builtins
+            let bool_ = cell.str("Bool", None);
             let b = Builtins{
-                true_: cell.str("true"),
-                false_: cell.str("false"),
-                eq: cell.str("="),
+                true_: cell.str("true", Some(bool_)),
+                false_: cell.str("false", Some(bool_)),
+                eq: cell.str("=", None),
+                ty_u: cell.str("ty_u", None),
+                bool_,
             };
             cell.m.b = Some(b);
             cell.b = Some(b);
             AstGen(Rc::new(std::cell::RefCell::new(cell)))
         }
         fn app(&self, f: AST, args: &[AST]) -> AST {
-            self.0.borrow_mut().m.mk_app(f, args)
+            let mut m = self.0.borrow_mut();
+            let ty_u = m.b().ty_u;
+            m.m.mk_app(f, args, Some(ty_u))
         }
     }
 
@@ -197,9 +204,10 @@ mod prop_cc {
     /// Random generator of terms
     fn gen_term(m: &AstGen) -> BoxedStrategy<AST> {
         let m = m.clone();
+        let ty_u = m.0.borrow_mut().b().ty_u;
         let leaf = {
             let m2 = m.clone();
-            "f|g|a|b|c|d".prop_map(move |s| m2.0.borrow_mut().string(s))
+            "f|g|a|b|c|d".prop_map(move |s| m2.0.borrow_mut().string(s, Some(ty_u)))
         };
         // see https://docs.rs/proptest/*/proptest/#generating-recursive-data
         leaf.prop_recursive(
@@ -271,7 +279,7 @@ mod prop_cc {
             if sign {
                 ncc.merge(ctx,t1,t2,lit)
             } else {
-                let eqn = ctx.mk_app(ctx.b().eq, &[t1,t2]); // `t1=t2`
+                let eqn = ctx.mk_app(ctx.b().eq, &[t1,t2], Some(ctx.b().bool_)); // `t1=t2`
                 ncc.merge(ctx,eqn, ctx.b().false_, lit)
             }
         }
@@ -320,7 +328,7 @@ mod prop_cc {
                     Op::AssertNeq(t1,t2) => {
                         let ctx = &mut m.m;
                         let lit = TermLit::mk_neq(t1,t2);
-                        let eqn = ctx.mk_app(ctx.b().eq, &[t1,t2]); // term `t1=t2`
+                        let eqn = ctx.mk_app(ctx.b().eq, &[t1,t2], Some(ctx.b().bool_)); // term `t1=t2`
                         st.push((eqn, ctx.b().false_, lit));
 
                         ncc.merge(ctx, eqn, ctx.b().false_, lit);
@@ -380,7 +388,7 @@ mod prop_cc {
                     Op::AssertEq(t1,t2) | Op::AssertNeq(t1,t2) => {
                         let ctx = &mut m.m;
                         let lit = TermLit::mk_eq(t1,t2);
-                        let eqn = ctx.mk_app(ctx.b().eq, &[t1,t2]);
+                        let eqn = ctx.mk_app(ctx.b().eq, &[t1,t2], Some(ctx.b().bool_));
                         cc.add_literal(ctx, eqn, lit);
                     },
                     _ => (),
@@ -413,7 +421,7 @@ mod prop_cc {
                     Op::AssertNeq(t1,t2) => {
                         let ctx = &mut m.m;
                         let lit = TermLit::mk_neq(t1,t2);
-                        let eqn = ctx.mk_app(ctx.b().eq, &[t1,t2]); // term `t1=t2`
+                        let eqn = ctx.mk_app(ctx.b().eq, &[t1,t2], Some(ctx.b().bool_)); // term `t1=t2`
                         cc.merge(ctx,eqn, ctx.b().false_, lit);
                         ncc.merge(ctx,eqn, ctx.b().false_, lit);
                         stack.push(lit);
