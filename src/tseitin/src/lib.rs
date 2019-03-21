@@ -376,7 +376,6 @@ impl<C> Tseitin<C> where C: Ctx {
                         tmp.push(lmb.term_to_lit(t));
                     }
                     let lit_and = lmb.term_to_lit(u); // pure bool
-                    debug_assert!(lit_and.is_pure_bool());
 
                     // `lit_and => args[i]`
                     for &sub in tmp.iter() {
@@ -400,7 +399,6 @@ impl<C> Tseitin<C> where C: Ctx {
                         tmp.push(lmb.term_to_lit(t));
                     }
                     let lit_or = lmb.term_to_lit(u); // pure bool
-                    debug_assert!(lit_or.is_pure_bool());
 
                     // `args[i] => lit_or`
                     for &sub in tmp.iter() {
