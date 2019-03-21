@@ -31,7 +31,6 @@ pub struct CC<C:Ctx, Th: MicroTheory<C> = ()> {
     tmp_sig: Signature<C::Fun>, // for computing signatures
     traverse: Vec<TraverseTask<C::AST>>, // for adding terms
     sig_tbl: backtrack::HashMap<Signature<C::Fun>, NodeID>,
-    lit_expl: backtrack::HashMap<C::B, LitExpl<C::B>>, // pre-explanations for propagations
     cc1: CC1<C>,
 }
 
@@ -122,22 +121,11 @@ impl<C:Ctx> MicroTheory<C> for () {
 /// internal state, with just the core structure for nodes and parent sets
 pub struct CC1<C:Ctx> {
     ok: bool, // no conflict?
-    propagate: bool, // do we propagate?
     alloc_parent_list: ListAlloc<NodeID>,
     alloc_lit_list: ListAlloc<(NodeID,C::B)>,
     nodes: Nodes<C>,
     confl: Vec<C::B>, // local for conflict
     tmp_expl: Vec<NodeID>,
-}
-
-/// Explanation for the propagation of a boolean literal.
-#[derive(Debug)]
-enum LitExpl<B> {
-    Propagated {
-        // we propagated it from given merges
-        eqns: [(NodeID,NodeID); 2],
-        expl: Expl<B>,
-    },
 }
 
 /// Unique Node ID.
@@ -164,14 +152,12 @@ pub type Node<C:Ctx> = NodeDef<C::AST, C::B>;
 /// - pointer to next element of the class (circular list)
 /// - a linked list of parent terms
 /// - the proof forest pointer
-/// - an optional mapping from the term to a boolean literal (for propagation)
 #[derive(Clone)]
 pub struct NodeDef<AST, B> where AST : Sized, B : Sized {
     pub id: NodeID,
     pub ast: AST, // what AST does this correspond to?
     next: NodeID, // next elt in class
     expl: Option<(NodeID, Expl<B>)>, // proof forest //TODO: use allocator?
-    as_lit: List<(NodeID,B)>, // for repr, list of literals in the class
     root: NodeID, // current representative (initially, itself)
     parents: List<NodeID>,
     flags: u8, // boolean flags
@@ -206,7 +192,6 @@ pub enum Expl<B> {
 enum UndoOp {
     SetOk,
     RemoveNode(NodeID),
-    UnmapLit(NodeID),
     Unmerge {
         root: NodeID, // the new repr
         old_root: NodeID, // merged into `a`
@@ -257,27 +242,13 @@ impl<C:Ctx, Th: MicroTheory<C>> CCInterface<C> for CC<C, Th> {
         self.check_internal(m, acts)
     }
 
-    fn explain_prop(&mut self, m: &C, p: C::B) -> &[C::B] {
-        trace!("explain prop {:?}", p);
-        let e = self.lit_expl.get(&p).expect("no explanation recorded");
-        trace!("pre-explanation is {:?}", e);
-        match e {
-            LitExpl::Propagated{eqns,expl} => {
-                let mut er = ExplResolve::new(&mut self.cc1, &mut self.expl_st);
-                er.add_expl(expl.clone());
-                for (a,b) in eqns.iter() {
-                    er.explain_eq(m, *a, *b)
-                }
-                er.fixpoint(m);
-                trace!("... final explanation: {:?}", &self.cc1.confl[..]);
-                &self.cc1.confl[..]
-            },
-        }
+    fn explain_prop(&mut self, _m: &C, _p: C::B) -> &[C::B] {
+        unimplemented!("no propagation here sir")
     }
 
     fn has_partial_check() -> bool { true }
 
-    fn enable_propagation(&mut self, b: bool) { self.cc1.propagate = b; }
+    fn enable_propagation(&mut self, _b: bool) {}
 
     fn impl_descr() -> &'static str { "fast congruence closure"}
 }
@@ -301,7 +272,7 @@ impl<C:Ctx, Th: MicroTheory<C>> CC<C, Th> {
     fn fixpoint(&mut self, m: &mut C, mut acts: Option<&mut dyn Actions<C>>) {
         let CC{
             combine,cc1,pending,th,expl_st,undo,tmp_sig,
-            sig_tbl,lit_expl,n_true,n_false,..} = self;
+            sig_tbl,n_true,n_false,..} = self;
         let mut combine2 = vec!();
         loop {
             if !cc1.ok {
@@ -324,7 +295,7 @@ impl<C:Ctx, Th: MicroTheory<C>> CC<C, Th> {
 
             {
                 let mut merger = MergePhase{
-                    cc1,pending,expl_st,undo,lit_expl, acts: &mut acts,
+                    cc1,pending,expl_st,undo,acts: &mut acts,
                     combine2: &mut combine2,
                     n_true: *n_true,n_false: *n_false};
                 while combine.len() > 0 {
@@ -370,7 +341,6 @@ impl<C:Ctx, Th:MicroTheory<C>> CC<C, Th> {
             tmp_sig: Signature::new(),
             sig_tbl: backtrack::HashMap::new(),
             expl_st: vec!(),
-            lit_expl: backtrack::HashMap::new(),
             cc1,
         }
     }
@@ -432,19 +402,8 @@ impl<C:Ctx, Th:MicroTheory<C>> CC<C, Th> {
         n0.unwrap()
     }
 
-    fn map_to_lit(&mut self, m: &C, t: NodeID, lit: C::B) {
-        if ! self.cc1.ok { return; }
-
-        // add to literal
-        let tr = self.cc1.find(t);
-        let CC1{nodes, alloc_lit_list, ..} = &mut self.cc1;
-        let n = &mut nodes[tr];
-        if n.as_lit.iter().all(|(_,lit2)| *lit2 != lit) {
-            n.as_lit.add(alloc_lit_list, (t,lit));
-            self.undo.push_if_nonzero(UndoOp::UnmapLit(t));
-            debug!("map term {} to literal {:?}", pp::pp2(self,m,&t), lit);
-        }
-    }
+    // we do not care
+    fn map_to_lit(&mut self, _m: &C, _t: NodeID, _lit: C::B) {}
 }
 
 /// Internal structure used during merging of newly equivalent classes.
@@ -457,7 +416,6 @@ pub struct MergePhase<'a,'b:'a, C:Ctx> {
     pub(crate) expl_st: &'a mut Vec<Expl<C::B>>,
     undo: &'a mut backtrack::Stack<UndoOp>,
     acts: &'a mut Option<&'b mut dyn Actions<C>>,
-    lit_expl: &'a mut backtrack::HashMap<C::B, LitExpl<C::B>>, // pre-explanations for propagations
 }
 
 /// Internal structure used during update of term signatures.
@@ -573,38 +531,7 @@ impl<'a, 'b:'a, C:Ctx> MergePhase<'a,'b,C> {
             });
         }
 
-        let MergePhase{cc1, acts, lit_expl, n_true, n_false, combine2, ..} = self;
-
-        // if ra is {true,false}, propagate lits
-        if cc1.propagate && acts.is_some() &&
-            (ra == cc1.nodes.n_true || ra == cc1.nodes.n_false) {
-            trace!("{}.class: look for propagations", pp::pp2(*cc1,m,&rb));
-            let acts = &mut (match acts { Some(a) => a, None => unreachable!() });
-            for (n_id, mut lit) in cc1[rb].as_lit.iter() {
-                let n = &cc1[*n_id];
-                // if a=true/false, and `n` has a literal, propagate the literal
-                // assuming it's not known to be true already.
-                if !lit_expl.contains_key(&lit) {
-                    // future expl: `n=b=a=ra` (where ra∈{true,false})
-                    let e = LitExpl::Propagated {
-                        expl: expl.clone(),
-                        eqns: [(n.id, b), (a, ra)],
-                    };
-                    if ra == *n_true {
-                        trace!("propagate literal {:?} (for true≡{}, {:?})",
-                            lit, pp_t(m,&n.ast), &expl);
-                        acts.propagate(lit);
-                    } else {
-                        debug_assert_eq!(ra, *n_false);
-                        lit = !lit;
-                        trace!("propagate literal {:?} (for false≡{}, {:?})",
-                            lit, pp_t(m,&n.ast), &expl);
-                        acts.propagate(lit);
-                    }
-                    lit_expl.insert(lit, e);
-                }
-            }
-        }
+        let MergePhase{cc1, acts:_, n_true, n_false, combine2, ..} = self;
 
         // set `rb.root` to `ra`
         cc1[rb].root = ra;
@@ -626,7 +553,6 @@ impl<'a, 'b:'a, C:Ctx> MergePhase<'a,'b,C> {
 
             // also merge parent/lit lists
             na.parents.append(&mut nb.parents);
-            na.as_lit.append(&mut nb.as_lit);
         }
 
         // call micro theories
@@ -713,7 +639,6 @@ impl<C:Ctx> CC1<C> {
     fn new() -> Self {
         CC1 {
             nodes: Nodes::new(),
-            propagate: true,
             ok: true,
             alloc_parent_list: backtrack::Alloc::new(),
             alloc_lit_list: backtrack::Alloc::new(),
@@ -764,7 +689,6 @@ impl<C:Ctx> CC1<C> {
                     nb.next = next_a;
 
                     na.parents.un_append(&mut nb.parents);
-                    na.as_lit.un_append(&mut nb.as_lit);
                 }
 
                 // reset `root` pointer for `nb`
@@ -803,14 +727,6 @@ impl<C:Ctx> CC1<C> {
                     debug_assert_eq!(_n, n);
                 });
             }
-            UndoOp::UnmapLit(t) => {
-                // pop last
-                let tr = self.find(t);
-                let n = &mut self[tr];
-                debug_assert!(n.as_lit.len() > 0);
-                let (_t2,_) = n.as_lit.remove();
-                assert_eq!(_t2, t);
-            },
         }
     }
 
@@ -910,7 +826,6 @@ impl<C:Ctx, Th: MicroTheory<C>> backtrack::Backtrackable<C> for CC<C, Th> {
         self.sig_tbl.push_level();
         self.cc1.alloc_parent_list.push_level();
         self.cc1.alloc_lit_list.push_level();
-        self.lit_expl.push_level();
         self.th.push_level(m);
     }
 
@@ -924,7 +839,6 @@ impl<C:Ctx, Th: MicroTheory<C>> backtrack::Backtrackable<C> for CC<C, Th> {
             self.sig_tbl.pop_levels(n);
             cc1.alloc_parent_list.pop_levels(n);
             cc1.alloc_lit_list.pop_levels(n);
-            self.lit_expl.pop_levels(n);
             self.th.pop_levels(m, n);
 
             self.pending.clear();
@@ -1253,7 +1167,7 @@ mod node {
             let parents = List::new();
             NodeDef {
                 id, ast, next: id, expl: None,
-                root: id, as_lit: List::new(), parents, flags: 0,
+                root: id, parents, flags: 0,
             }
         }
 
@@ -1321,10 +1235,6 @@ mod expl {
                     let a = self[*a].ast;
                     let b = self[*b].ast;
                     ctx.str("remove-expl-link(").pp(&pp_t(m,&a)).str(", ").pp(&pp_t(m,&b)).str(")");
-                },
-                UndoOp::UnmapLit(t) => {
-                    let t = self[*t].ast;
-                    ctx.str("unmap-lit(").pp(&pp_t(m,&t)).str(")");
                 },
                 UndoOp::RemoveNode(t) => {
                     let t = self[*t].ast;
