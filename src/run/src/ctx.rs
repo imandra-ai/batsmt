@@ -1,6 +1,6 @@
 
 use {
-    batsmt_core::{ast, AstView},
+    batsmt_core::{ast, AstView, ast_u32::HashMap as ASTMap, },
     batsmt_hast::{HManager, StrSymbolManager},
     batsmt_theory::{self as theory, LitMapBuiltins},
     batsmt_cc::{self as cc, CCView, HasConstructor, ConstructorView as CView, },
@@ -35,10 +35,11 @@ pub struct Ctx {
     pub lmb: LitMapBuiltins,
     pub b: Builtins,
     cstor: BitSet,
+    funs: ASTMap<(Vec<AST>, AST)>, // fun -> ty args, ty ret
 }
 
 pub mod ctx {
-    use {super::*, batsmt_core::Manager};
+    use {super::*, ast::AstMap, batsmt_core::Manager};
 
     impl Ctx {
         /// New context.
@@ -46,7 +47,7 @@ pub mod ctx {
             let mut m = HManager::new();
             let b = Builtins::new(&mut m);
             let lmb = b.clone().into();
-            Ctx {m, b, lmb, cstor: BitSet::new(), }
+            Ctx {m, b, lmb, cstor: BitSet::new(), funs: ASTMap::new(), }
         }
 
         pub fn is_cstor(&self, t: &AST) -> bool { self.cstor.contains(t.idx() as usize) }
@@ -60,6 +61,25 @@ pub mod ctx {
         { self.b.clone().into() }
 
         pub fn lmb(&self) -> LitMapBuiltins { self.lmb.clone() }
+
+        pub fn declare_fun(&mut self, f: AST, ty_args: &[AST], ty_ret: AST) {
+            if self.funs.contains(&f) {
+                panic!("function already declared: {}", pp::pp1(&self.m, &f));
+            }
+            self.funs.insert(f, (ty_args.iter().cloned().collect(), ty_ret));
+        }
+
+        pub fn app_fun(&mut self, f: AST, args: &[AST]) -> AST {
+            match self.funs.get(&f) {
+                None => panic!("undeclared function {}", pp::pp1(&self.m, &f)),
+                Some((ty_args, ty_ret)) => {
+                    if args.len() != ty_args.len() {
+                        panic!("wrong arity for {}", pp::pp1(&self.m, &f));
+                    }
+                    self.m.mk_app(f, args, Some(*ty_ret))
+                }
+            }
+        }
     }
 
     impl theory::BoolLitCtx for Ctx {
@@ -162,8 +182,20 @@ pub mod ctx {
     impl cc::Ctx for Ctx {
         type Fun = cc::intf::Void;
 
-        fn get_bool_term(&self, b: bool) -> AST {
-            if b { self.b.true_ } else { self.b.false_ }
+        fn make_cc_term(&mut self, v: CCView<Self::Fun, Self::AST>) -> AST {
+            match v {
+                CCView::Bool(b) => if b { self.b.true_ } else { self.b.false_ },
+                CCView::Apply {..} => unreachable!(),
+                CCView::ApplyHO(f, args) => self.app_fun(*f, args),
+                CCView::Not(t) => self.m.mk_app(self.b.not_, &[*t], Some(self.b.bool_)),
+                CCView::Eq(a,b) => self.m.mk_app(self.b.eq, &[*a,*b], Some(self.b.bool_)),
+                CCView::Distinct(..) => unimplemented!("no distinct :((("),
+                CCView::Opaque(t) => *t,
+            }
+        }
+
+        fn mk_eq(&mut self, t1: &AST, t2: &AST) -> AST {
+            self.m.mk_app(self.b.eq, &[*t1, *t2], Some(self.b.bool_))
         }
 
         fn view_as_cc_term<'a>(&'a self, t: &'a AST) -> CCView<'a,Self::Fun,AST> {

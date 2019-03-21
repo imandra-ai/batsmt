@@ -11,7 +11,7 @@ pub struct AstBuilder<'a> {
     m: &'a mut Ctx,
     b: crate::Builtins,
     sorts: FxHashMap<Atom, (AST, u8)>,
-    funs: FxHashMap<Atom, (AST, Vec<AST>, AST)>, // sort
+    funs: FxHashMap<Atom, AST>,
 }
 
 mod ast_builder {
@@ -77,8 +77,8 @@ mod ast_builder {
             } else {
                 let ty = if args.len() == 0 { Some(ret) } else { None };
                 let ast = self.m.m.mk_str(&*f, ty);
-                let args = args.iter().map(|t| t.clone()).collect();
-                self.funs.insert(f, (ast, args, ret));
+                self.m.declare_fun(ast, args, ret);
+                self.funs.insert(f, ast);
                 Fun {f: ast, ty_ret: ret}
             }
         }

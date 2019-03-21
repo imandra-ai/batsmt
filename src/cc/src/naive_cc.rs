@@ -101,7 +101,7 @@ impl<C:Ctx> backtrack::Backtrackable<C> for NaiveCC<C> {
 
 // main algorithm
 impl<'a, C:Ctx> Solve<'a, C> {
-    fn new(m: &'a C, confl: &'a mut Vec<C::B>) -> Self {
+    fn new(m: &'a mut C, confl: &'a mut Vec<C::B>) -> Self {
         let true_ = m.get_bool_term(true);
         let false_ = m.get_bool_term(false);
         let mut s = Solve {
@@ -116,7 +116,7 @@ impl<'a, C:Ctx> Solve<'a, C> {
         // be sure to add true and false
         s.add_term(s.true_);
         s.add_term(s.false_);
-        debug_assert_ne!(m.get_bool_term(true), m.get_bool_term(false));
+        debug_assert_ne!(true_, false_);
         s
     }
 
@@ -312,7 +312,8 @@ impl<'a, C:Ctx> Solve<'a, C> {
             match self.m.view_as_cc_term(&t) {
                 CCView::Eq(a,b) if self.is_eq(a,b) => {
                     // `a=b` where a and b are merged --> merge with true
-                    new_congr.push((t, self.m.get_bool_term(true)));
+                    let true_ = self.true_;
+                    new_congr.push((t, true_));
                 },
                 _ => ()
             }
@@ -375,7 +376,7 @@ impl<'a, C:Ctx> Solve<'a, C> {
             CCView::Eq(a,b) => {
                 if self.is_eq(a,b) {
                     // `a=b` where a and b are merged --> merge with true
-                    let u = self.m.get_bool_term(true);
+                    let u = self.true_;
                     self.push_congruence(*t, u)
                 }
             }

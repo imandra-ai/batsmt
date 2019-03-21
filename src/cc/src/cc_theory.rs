@@ -48,7 +48,8 @@ impl<C:Ctx, Th: MicroTheory<C>> CCTheory<C, Th> {
                         self.cc.merge(m, *a, *b, lit);
                     } else {
                         // `(a=b)=false`
-                        self.cc.merge(m, ast, m.get_bool_term(false), lit);
+                        let false_ = m.get_bool_term(false);
+                        self.cc.merge(m, ast, false_, lit);
                     }
                 },
                 CCView::Distinct(args) => {

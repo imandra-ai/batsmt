@@ -58,8 +58,18 @@ pub trait Ctx : theory::Ctx {
     /// View a term as an equality or function application.
     fn view_as_cc_term<'a>(&'a self, t: &'a Self::AST) -> CCView<'a, Self::Fun, Self::AST>;
 
-    /// Obtain true/false terms.
-    fn get_bool_term(&self, b: bool) -> Self::AST;
+    /// Build a term from a congruence closure view.
+    fn make_cc_term(&mut self, v: CCView<Self::Fun, Self::AST>) -> Self::AST;
+
+    fn get_bool_term(&mut self, b: bool) -> Self::AST {
+        self.make_cc_term(CCView::Bool(b))
+    }
+    fn mk_eq(&mut self, t1: &Self::AST, t2: &Self::AST) -> Self::AST {
+        self.make_cc_term(CCView::Eq(t1,t2))
+    }
+    fn mk_not(&mut self, t1: &Self::AST) -> Self::AST {
+        self.make_cc_term(CCView::Not(t1))
+    }
 }
 
 /// An empty type, convenient when there is no notion of `Fun` in terms.

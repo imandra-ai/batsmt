@@ -7,8 +7,9 @@
 // TODO(perf): backtrackable array allocator for signatures
 
 use {
-    std::{ u32, ptr, hash::Hash, fmt::Debug, marker::PhantomData, },
+    std::{ u32, env, ptr, hash::Hash, fmt::Debug, marker::PhantomData, },
     batsmt_core::{backtrack, },
+    batsmt_theory::{TheoryLit, },
     fxhash::FxHashMap,
     batsmt_pretty as pp,
     crate::{ Ctx, Actions, CCInterface, CCView, SVec, pp_t, },
@@ -125,6 +126,7 @@ pub struct CC1<C:Ctx> {
     alloc_lit_list: ListAlloc<(NodeID,C::B)>,
     nodes: Nodes<C>,
     confl: Vec<C::B>, // local for conflict
+    dyn_ack: bool,
     tmp_expl: Vec<NodeID>,
 }
 
@@ -470,7 +472,8 @@ impl<'a, 'b:'a, C:Ctx> MergePhase<'a,'b,C> {
                 self.cc1.ok = false;
                 self.undo.push_if_nonzero(UndoOp::SetOk);
                 {
-                    let mut er = ExplResolve::new(&mut self.cc1, &mut self.expl_st);
+                    let MergePhase{cc1,expl_st,acts,..} = self;
+                    let mut er = ExplResolve::new(cc1, acts, expl_st);
                     er.add_expl(expl);
                     er.explain_eq(m, a, ra);
                     er.explain_eq(m, b, rb);
@@ -637,11 +640,18 @@ impl<'a, C:Ctx> UpdateSigPhase<'a,C> {
 // query the graph
 impl<C:Ctx> CC1<C> {
     fn new() -> Self {
+        let dyn_ack = match env::var("DYN_ACK").ok() {
+            Some(ref s) if s == "1" || s == "true" => true,
+            Some(ref s) if s == "0" || s == "false" => false,
+            None => true, // default
+            _ => panic!("invalid option for dyn_acc")
+        };
         CC1 {
             nodes: Nodes::new(),
             ok: true,
             alloc_parent_list: backtrack::Alloc::new(),
             alloc_lit_list: backtrack::Alloc::new(),
+            dyn_ack,
             tmp_expl: vec!(),
             confl: vec!(),
         }
@@ -848,17 +858,19 @@ impl<C:Ctx, Th: MicroTheory<C>> backtrack::Backtrackable<C> for CC<C, Th> {
 }
 
 /// Temporary structure to resolve explanations.
-struct ExplResolve<'a,C:Ctx> {
+struct ExplResolve<'a,'b:'a,C:Ctx> {
     cc1: &'a mut CC1<C>,
     expl_st: &'a mut Vec<Expl<C::B>>, // set of explanations to unfold
+    acts: &'a mut Option<&'b mut dyn Actions<C>>,
 }
 
-impl<'a,C:Ctx> ExplResolve<'a,C> {
+impl<'a,'b:'a,C:Ctx> ExplResolve<'a,'b,C> {
     /// Create the temporary structure.
-    fn new(cc1: &'a mut CC1<C>, expl_st: &'a mut Vec<Expl<C::B>>) -> Self {
+    fn new(cc1: &'a mut CC1<C>, acts: &'a mut Option<&'b mut dyn Actions<C>>,
+           expl_st: &'a mut Vec<Expl<C::B>>) -> Self {
         expl_st.clear();
         cc1.confl.clear();
-        ExplResolve { cc1, expl_st }
+        ExplResolve { cc1, expl_st, acts, }
     }
 
     #[inline]
@@ -869,7 +881,7 @@ impl<'a,C:Ctx> ExplResolve<'a,C> {
     /// Main loop for turning explanations into a conflict.
     ///
     /// Pushes the resulting literals into `self.cc1.confl`.
-    fn fixpoint(mut self, m: &C) -> &'a Vec<C::B> {
+    fn fixpoint(mut self, m: &mut C) -> &'a Vec<C::B> {
         while let Some(e) = self.expl_st.pop() {
             trace!("expand-expl: {}", pp::pp2(&self.cc1.nodes, m, &e));
             match e {
@@ -888,23 +900,52 @@ impl<'a,C:Ctx> ExplResolve<'a,C> {
                     // explain why arguments are pairwise equal
                     let a = self.cc1[a].ast;
                     let b = self.cc1[b].ast;
+                    debug_assert_ne!(a,b);
+                    let mut goals = SVec::new();
                     match (m.view_as_cc_term(&a), m.view_as_cc_term(&b)) {
                         (CCView::Apply(f1, args1), CCView::Apply(f2, args2)) =>
                         {
                             debug_assert_eq!(f1, f2);
                             for i in 0 .. args1.len() {
-                                self.explain_eq_t(m, &args1[i], &args2[i]);
+                                if args1[i] != args2[i] { goals.push((args1[i], args2[i])) }
                             }
                         },
                         (CCView::ApplyHO(f1, args1), CCView::ApplyHO(f2, args2)) =>
                         {
                             debug_assert_eq!(args1.len(), args2.len());
-                            self.explain_eq_t(m, f1, f2);
+                            if f1 != f2 { goals.push((*f1,*f2)) }
                             for i in 0 .. args1.len() {
-                                self.explain_eq_t(m, &args1[i], &args2[i]);
+                                if args1[i] != args2[i] { goals.push((args1[i], args2[i])) }
                             }
                         },
                         _ => unreachable!(),
+                    }
+
+                    // explain
+                    for (t1,t2) in &goals {
+                        self.explain_eq_t(m, t1, t2);
+                    }
+
+                    // instantiate congruence lemma (dynamic Ackermannization)
+                    if self.cc1.dyn_ack && goals.len()>0 && self.acts.is_some() {
+                        let acts = match self.acts { Some(a) => a, _ => unreachable!() };
+
+                        // push clause `t1=t2, … => a=b`
+                        let mut cl = Vec::with_capacity(goals.len()+1);
+
+                        let mut add_lit_ = |m: &mut C, t1: &C::AST, t2: &C::AST, b: bool| {
+                            let eq = m.mk_eq(t1,t2);
+                            trace!("dyn-ack: add lit {}={}", pp_t(&*m, &eq), b);
+                            let lit = TheoryLit::new_t(eq, b);
+                            cl.push(acts.map_lit(m, lit));
+                        };
+
+                        add_lit_(m, &a, &b, true);
+                        for (t1,t2) in &goals {
+                            add_lit_(m, t1, t2, false);
+                        }
+                        debug!("dyn-ack: add congruence lemma {:?}", &cl);
+                        acts.add_lemma(&cl[..]);
                     }
                 }
             }
