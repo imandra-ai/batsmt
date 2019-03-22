@@ -212,7 +212,7 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
         Ok(s)
     }
 
-    // parse a list of `A`, then consume closing parenthesis
+    // parse a list of `A`, without consuming closing parenthesis
     fn many_until_paren<A, F>(&mut self, mut f: F) -> Result<Vec<A>>
         where F: FnMut(&mut Self) -> Result<A>
     {
@@ -221,7 +221,6 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
             self.io.skip_spaces()?;
             if self.io.get()? == b')' {
                 // done, exit
-                self.io.junk();
                 break;
             } else {
                 let a = f(self)?;
@@ -237,7 +236,9 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
     {
         self.io.skip_spaces()?;
         self.expect_char(b'(')?;
-        self.many_until_paren(f)
+        let x = self.many_until_paren(f)?;
+        self.expect_char(b')')?;
+        Ok(x)
     }
 
     // parse a sort
@@ -355,7 +356,8 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
                     },
                     _ => {
                         // function application
-                        let args = self.many_until_paren(|m| m.term())?;
+                        let args = self.terms()?;
+                        self.expect_char(b')')?;
                         self.find_fun_apply(&a, &args)
                     }
                 }
@@ -372,6 +374,11 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
                 }
             }
         }
+    }
+
+    // parse terms
+    fn terms(&mut self) -> Result<Vec<B::Term>> {
+        self.many_until_paren(|m| m.term())
     }
 
     // entry point for a toplevel statement, or None (for EOF)
@@ -423,6 +430,10 @@ impl<'a, R : io::Read, B : TermBuilder> ParserState<'a, R, B> {
                     Statement::Assert(t)
                 },
                 "check-sat" => Statement::CheckSat,
+                "check-sat-assumptions" => {
+                    let v = self.terms()?;
+                    Statement::CheckSatAssumptions(v)
+                },
                 "exit" => Statement::Exit,
                 _ => {
                     self.io.err_with(format!("unknown directive {:?}", dir))?

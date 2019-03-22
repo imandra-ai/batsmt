@@ -61,6 +61,7 @@ pub enum Statement<Term, Sort> {
     DeclareFun(Atom,Vec<Sort>,Sort),
     Assert(Term),
     CheckSat,
+    CheckSatAssumptions(Vec<Term>),
     Exit,
 }
 
@@ -81,6 +82,10 @@ impl<T,S> Statement<T,S> {
             },
             Assert(t) => Assert(ft(t)),
             CheckSat => CheckSat,
+            CheckSatAssumptions(v) => {
+                let v = v.into_iter().map(|x| ft(x)).collect();
+                CheckSatAssumptions(v)
+            },
             Exit => Exit,
         }
     }
@@ -127,6 +132,12 @@ pub fn pp_stmt<T,S,FT,FS>(st: &Statement<T,S>, mut ft: FT, mut fs: FS, ctx: &mut
             });
         },
         &Statement::CheckSat => { ctx.str("(check-sat)"); },
+        &Statement::CheckSatAssumptions(ref v) => {
+            ctx.sexp(|ctx| {
+                ctx.str("check-sat-assumptions");
+                for t in v { ctx.space(); ft(t,ctx); }
+            });
+        },
         &Statement::Exit => { ctx.str("(exit)"); },
     }
 }

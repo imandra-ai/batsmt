@@ -81,6 +81,14 @@ fn main() -> Result<(), Box<Error>> {
                 let r = solver.solve(&mut c);
                 println!("{:?}", r)
             },
+            Statement::CheckSatAssumptions(v) => {
+                tseitin.reclaim_unused_memory();
+                // map assumptions to literals
+                let lits: Vec<_> =
+                    v.iter().map(|t| solver.new_term_lit(&mut c, *t).0).collect();
+                let r = solver.solve_with(&mut c, &lits[..]);
+                println!("{:?}", r)
+            },
             Statement::Exit => {
                 break;
             }
