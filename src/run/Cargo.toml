@@ -18,3 +18,7 @@ log = "^0.4"
 batsmt-logger = {path = "../logger"}
 fxhash = "0.2"
 bit-set = "0.5.0"
+tracy-client = { version="0.9", features=["enable"] }
+tracing-tracy = { version="0.3", features=["enable"] }
+tracing = "0.1.21"
+tracing-subscriber = "*"

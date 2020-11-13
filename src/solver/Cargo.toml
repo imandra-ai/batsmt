@@ -11,3 +11,5 @@ batsmt-pretty = { path = "../pretty" }
 batsmt-theory = { path = "../theory" }
 batsat = { git="https://github.com/c-cube/batsat", version = "^0.3", features=["logging"] }
 log = "0.4"
+tracing = "0.1.21"
+tracing-tracy = { version="0.3", features=["enable"] }

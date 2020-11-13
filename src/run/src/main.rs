@@ -1,27 +1,27 @@
-
 // A test binary
 
-#[macro_use] extern crate log;
+#[macro_use]
+extern crate log;
 
-mod ctx;
 mod ast_builder;
 mod ast_printer;
+mod ctx;
 
 use {
-    std::{env,fs,error::Error},
-    batsmt_core::{Chrono, gc::HasInternalMemory, },
     batsmt_cc as cc,
+    batsmt_core::{gc::HasInternalMemory, Chrono},
     batsmt_parser::{self as parser, Statement},
+    batsmt_pretty as pp, batsmt_solver as solver,
     batsmt_tseitin::Tseitin,
-    batsmt_solver as solver,
-    batsmt_pretty as pp,
+    std::{env, error::Error, fs},
 };
 
-pub use {
-    crate::ctx::{M, Ctx, Builtins},
-};
+pub use crate::ctx::{Builtins, Ctx, M};
 
 fn main() -> Result<(), Box<Error>> {
+    let sub = tracing_subscriber::FmtSubscriber::new();
+    //let tr = tracing_tracy::TracyLayer::new().with_stackdepth(16);
+    tracing::subscriber::set_global_default(sub);
     batsmt_logger::init();
     let chrono = Chrono::new();
 
@@ -35,18 +35,23 @@ fn main() -> Result<(), Box<Error>> {
             None => {
                 info!("parse stdin");
                 parser::parse_stdin(&mut builder)?
-            },
+            }
             Some(file) => {
                 info!("parse file {:?}", file);
                 let file = fs::File::open(file)?;
                 parser::parse(&mut builder, file)?
-            },
+            }
         }
     };
 
-    info!("parsed {} statements (after {}s)", stmts.len(), chrono.as_f64());
+    info!(
+        "parsed {} statements (after {}s)",
+        stmts.len(),
+        chrono.as_f64()
+    );
 
-    let th: cc::CCTheory<Ctx, (cc::theories::Ite, cc::theories::Constructor<ctx::AST>)> = cc::CCTheory::new(&mut c);
+    let th: cc::CCTheory<Ctx, (cc::theories::Ite, cc::theories::Constructor<ctx::AST>)> =
+        cc::CCTheory::new(&mut c);
     let mut solver = solver::Solver::new(c.builtins(), th);
 
     {
@@ -75,20 +80,22 @@ fn main() -> Result<(), Box<Error>> {
                 for clause in cs {
                     solver.add_clause(&mut c, clause);
                 }
-            },
+            }
             Statement::CheckSat => {
                 tseitin.reclaim_unused_memory();
                 let r = solver.solve(&mut c);
                 println!("{:?}", r)
-            },
+            }
             Statement::CheckSatAssumptions(v) => {
                 tseitin.reclaim_unused_memory();
                 // map assumptions to literals
-                let lits: Vec<_> =
-                    v.iter().map(|t| solver.new_term_lit(&mut c, *t).0).collect();
+                let lits: Vec<_> = v
+                    .iter()
+                    .map(|t| solver.new_term_lit(&mut c, *t).0)
+                    .collect();
                 let r = solver.solve_with(&mut c, &lits[..]);
                 println!("{:?}", r)
-            },
+            }
             Statement::Exit => {
                 break;
             }
